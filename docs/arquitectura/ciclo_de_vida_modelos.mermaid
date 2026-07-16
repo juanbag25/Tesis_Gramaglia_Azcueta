@@ -1,0 +1,35 @@
+%% Ciclo de vida de modelos: deteccion, disparo por drift, reentrenamiento y OTA
+%% Clases L (local-local), E (edge+worker), W (worker-heavy)
+sequenceDiagram
+    autonumber
+    participant MI as Plantillas (sensado)
+    participant CI as Cintura (hub / detector)
+    participant HO as Host (laptop/celular)
+    participant WK as Worker (laptop/nube)
+    participant SB as Supabase (DB + storage)
+
+    Note over CI: Clase L (Mahalanobis EMA)<br/>infiere y se reentrena en el micro, dato a dato
+    MI->>CI: crudo 100 Hz (UDP) + sync
+    CI->>CI: features bilaterales + score L
+    CI-->>MI: feedback vibrotactil si hay anomalia
+    CI->>HO: score + features (BLE notif)
+    HO->>SB: persistir features/scores
+
+    Note over CI: Mahalanobis tambien es SENSOR DE DRIFT
+    CI->>HO: flag de drift (BLE)
+    HO->>SB: registrar drift + encolar retrain_job
+
+    Note over WK: Clases E/W se reentrenan fuera del micro
+    SB->>WK: job (drift/schedule/manual) + datos
+    WK->>WK: reentrenar (E: AE int8 / W: LSTM, iForest)
+    WK->>SB: subir artefacto + version + metricas
+    SB->>HO: nuevo modelo disponible
+    HO->>CI: OTA A/B (pesos/firmware) + checksum
+    CI->>CI: validar, conmutar slot, guardar last-known-good
+    alt modelo nuevo OK
+        CI->>HO: ACK version activa
+        HO->>SB: marcar deployment activo
+    else fallo / mal desempeno
+        CI->>CI: rollback a last-known-good
+        CI->>HO: reportar rollback
+    end

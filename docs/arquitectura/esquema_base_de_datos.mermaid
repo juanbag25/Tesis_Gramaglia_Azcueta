@@ -1,0 +1,117 @@
+%% Esquema de base de datos - Supabase (PostgreSQL + TimescaleDB + object storage)
+erDiagram
+    PATIENTS ||--o{ SESSIONS : "tiene"
+    PATIENTS ||--o{ MODELS : "personaliza"
+    PATIENTS ||--o{ FEATURE_VECTORS : "genera"
+    PATIENTS ||--o{ ANOMALY_SCORES : "genera"
+    SESSIONS ||--o{ RAW_BLOBS : "produce"
+    SESSIONS ||--o{ GAIT_EVENTS : "produce"
+    SESSIONS ||--o{ FEATURE_VECTORS : "produce"
+    SESSIONS ||--o{ ANOMALY_SCORES : "produce"
+    SESSIONS ||--o{ ANOMALY_RAW_SNIPPETS : "retiene"
+    DEVICES ||--o{ RAW_BLOBS : "captura"
+    DEVICES ||--o{ GAIT_EVENTS : "detecta"
+    DEVICES ||--o{ MODEL_DEPLOYMENTS : "aloja"
+    MODELS ||--o{ MODEL_DEPLOYMENTS : "se_despliega"
+    MODELS ||--o{ ANOMALY_SCORES : "produce"
+    MODELS ||--o{ RETRAIN_JOBS : "entra_sale"
+    ANOMALY_SCORES ||--o{ ANOMALY_RAW_SNIPPETS : "dispara"
+
+    PATIENTS {
+        uuid id PK
+        text external_code
+        int birth_year
+        text affected_side
+        jsonb clinical_notes
+    }
+    DEVICES {
+        uuid id PK
+        text role "insole_left|insole_right|waist"
+        text hw_revision
+        text firmware_version
+    }
+    SESSIONS {
+        uuid id PK
+        uuid patient_id FK
+        text mode "capture|edge"
+        text feature_set_version
+        text environment "lab|clinic|home"
+        timestamptz started_at
+        timestamptz ended_at
+    }
+    RAW_BLOBS {
+        uuid id PK
+        uuid session_id FK
+        uuid device_id FK
+        text storage_url "parquet"
+        bigint n_samples
+        text checksum
+    }
+    ANOMALY_RAW_SNIPPETS {
+        uuid id PK
+        uuid session_id FK
+        uuid score_id FK
+        text storage_url
+        timestamptz start_time
+        timestamptz end_time
+    }
+    GAIT_EVENTS {
+        timestamptz time "hypertable"
+        uuid session_id FK
+        text foot
+        text type "IC|TO"
+        real confidence
+    }
+    FEATURE_VECTORS {
+        timestamptz time "hypertable"
+        uuid session_id FK
+        text scope "left|right|bilateral"
+        text feature_set_version
+        jsonb features
+        bigint stride_id
+    }
+    ANOMALY_SCORES {
+        timestamptz time "hypertable"
+        uuid session_id FK
+        uuid model_id FK
+        double score
+        boolean is_anomaly
+        double drift_metric
+    }
+    MODELS {
+        uuid id PK
+        uuid patient_id FK "null=global"
+        text algo
+        text class "L|E|W"
+        text inference_target "micro|worker"
+        text retrain_target "micro|worker"
+        text granularity "online|periodic|async"
+        int version
+        int parent_version
+        text artifact_url
+        text checksum
+        jsonb metrics
+        text status
+    }
+    MODEL_DEPLOYMENTS {
+        uuid id PK
+        uuid model_id FK
+        uuid device_id FK
+        text status "active|rolled_back"
+        timestamptz deployed_at
+    }
+    FIRMWARE_IMAGES {
+        uuid id PK
+        text version
+        text target_role "insole|waist"
+        text storage_url
+        text checksum
+    }
+    RETRAIN_JOBS {
+        uuid id PK
+        text trigger "drift|schedule|manual"
+        uuid model_in FK
+        uuid model_out FK
+        text status
+        text worker
+    }

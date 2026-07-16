@@ -1,0 +1,60 @@
+%% Arquitectura del sistema de plantillas inteligentes bilaterales (post-ACV)
+%% Topologia + flujos de datos, feedback, sincronizacion y despliegue de modelos
+flowchart TB
+
+    subgraph BORDE["PLANO DE BORDE - 3x Raspberry Pi Pico 2 W (C/C++)"]
+        direction TB
+        PI["PLANTILLA IZQ<br/>MPU-6050 + 3 FSR + motor PWM<br/>100 Hz - timestamp + seq por muestra<br/>deteccion IC propia"]
+        PD["PLANTILLA DER<br/>MPU-6050 + 3 FSR + motor PWM<br/>100 Hz - timestamp + seq por muestra<br/>deteccion IC propia"]
+        CI["UNIDAD CINTURA - HUB<br/>MPU-6050<br/>AP WiFi - maestro de sync (beacon+drift)<br/>fusion bilateral - features - detector L/E<br/>sensor de drift - uplink BLE"]
+    end
+
+    subgraph HOST["PLANO HOST + COMPUTO"]
+        direction TB
+        LT["HOST<br/>Laptop (minima) / Celular (maxima)<br/>ingesta + buffer local + puente OTA"]
+        WK["WORKER DE REENTRENAMIENTO<br/>Laptop (minima) / Nube (maxima)<br/>entrena clases E/W - cuantiza int8"]
+    end
+
+    subgraph CLOUD["PERSISTENCIA - SUPABASE"]
+        direction TB
+        DB[("PostgreSQL + TimescaleDB<br/>metadata - features - scores - eventos - registry")]
+        OBJ[("Object Storage<br/>crudo Parquet - artefactos de modelos - firmware")]
+        AUTH["Auth + RLS por paciente"]
+    end
+
+    %% Flujos de sensado (plantillas -> cintura) por WiFi
+    PI -->|"WiFi: UDP stream (100 Hz)"| CI
+    PD -->|"WiFi: UDP stream (100 Hz)"| CI
+    PI -.->|"WiFi: TCP control"| CI
+    PD -.->|"WiFi: TCP control"| CI
+
+    %% Sincronizacion
+    CI -->|"beacon de sync (broadcast)"| PI
+    CI -->|"beacon de sync (broadcast)"| PD
+
+    %% Feedback vibrotactil (cintura -> plantillas)
+    CI -->|"comando de feedback (WiFi)"| PI
+    CI -->|"comando de feedback (WiFi)"| PD
+
+    %% Uplink cintura -> host (BLE)
+    CI ==>|"BLE: GATT notif (stream)"| LT
+    CI -.->|"BLE: writes ACK (control/modelos)"| LT
+
+    %% Host -> persistencia
+    LT -->|"HTTPS: crudo/features/scores"| DB
+    LT -->|"HTTPS: blobs"| OBJ
+
+    %% Ciclo de modelos
+    WK -->|"pull datos"| DB
+    WK -->|"push artefacto modelo"| OBJ
+    WK -->|"registrar version + metricas"| DB
+    DB -->|"job de reentrenamiento (drift/schedule)"| WK
+    OBJ -->|"artefacto"| LT
+    LT ==>|"OTA A/B: pesos + firmware (checksum, rollback)"| CI
+
+    classDef micro fill:#e8f0fe,stroke:#3b6fd6,stroke-width:1px,color:#10233f;
+    classDef host fill:#fff4e6,stroke:#d68b2c,stroke-width:1px,color:#3f2a10;
+    classDef cloud fill:#eafaf0,stroke:#2fa564,stroke-width:1px,color:#0f3320;
+    class PI,PD,CI micro;
+    class LT,WK host;
+    class DB,OBJ,AUTH cloud;

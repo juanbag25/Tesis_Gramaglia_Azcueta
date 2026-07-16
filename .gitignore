@@ -1,0 +1,50 @@
+# === Secretos / configuración local ===
+.env
+.env.*
+*.local
+secrets/
+*.key
+*.pem
+
+# === Firmware C/C++ (Pico SDK) ===
+build/
+*.o
+*.elf
+*.uf2
+*.bin
+*.hex
+*.map
+cmake-build-*/
+
+# === Python (worker / host) ===
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# === Datos y modelos (no versionar; van a object storage / DB) ===
+data/
+datasets/
+*.parquet
+*.csv
+*.npz
+*.tflite
+models_artifacts/
+*.ckpt
+*.pt
+*.h5
+
+# === Node (si alguna app lo usa) ===
+node_modules/
+dist/
+
+# === Sistema operativo / editores ===
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
