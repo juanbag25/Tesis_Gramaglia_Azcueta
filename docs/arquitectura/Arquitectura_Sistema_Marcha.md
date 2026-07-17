@@ -3,8 +3,26 @@
 
 **Proyecto:** TESIS — Detección de anomalías de marcha en pacientes post-ACV con plantillas bilaterales, feedback vibrotáctil e inferencia en el borde.
 **Versión del documento:** 1.0 (borrador para revisión)
-**Autor:** Juan Bautista Gramaglia
+**Autores:** Tobías Azcueta Busco · Juan Bautista Gramaglia
 **Fecha:** julio 2026
+
+---
+
+## 0. Estructura de la documentación (vistas)
+
+Esta arquitectura se documenta en **cuatro vistas** a distinto nivel de abstracción, más una capa transversal de tecnología. Este documento maestro funciona como **índice y overview**: mantiene lo transversal (objetivos, resumen, objetivos de rendimiento, seguridad, evolución mínima→máxima, resumen de decisiones) y enlaza las vistas, donde vive el detalle.
+
+| Vista | Contenido | Archivo |
+|---|---|---|
+| **1 — Sistema** | Nodos, topología, transporte, sync (alto nivel), modos, evolución | `vistas/1_vista_sistema.md` |
+| **2 — Dispositivo / Firmware** | Adquisición, eventos, módulo de features (ejecución), inferencia on-device, feedback, OTA | `vistas/2_vista_firmware.md` |
+| **3 — Datos y ML** | Catálogo/definición de features, taxonomía de modelos, calibración/baseline, ciclo de vida | `vistas/3_vista_datos_ml.md` |
+| **4 — Backend y aplicación** | Supabase, worker, app host, dashboard clínico, seguridad | `vistas/4_vista_backend_app.md` |
+| **Transversal — Stack** | Librerías/módulos por componente | `stack_tecnologico.md` |
+
+**Regla de layering:** cada algoritmo/feature se **define una vez en la Vista 3** (fórmula, parámetros, versionado) y se **ejecuta en la Vista 2** (firmware) y en el worker.
+
+> **Nota:** la migración del contenido detallado desde las secciones §1–§17 de abajo hacia las vistas es **incremental**; hasta completarse, esas secciones siguen siendo la fuente, y cada vista indica qué sección del maestro le corresponde.
 
 ---
 
@@ -185,16 +203,23 @@ Sobre el backbone de reloj, se **empareja zancadas por eventos de contacto inici
 
 ## 8. Pipeline de datos y cómputo
 
-### 8.1 Dos modos de operación
+### 8.1 Cómputo distribuido de features
 
-El sistema opera en **dos modos** con una **única definición de features compartida** (misma fórmula en la PC y en el micro, para evitar discrepancias):
+El cálculo de features está **distribuido** para repartir cómputo entre los micros (resuelve CP-02):
 
-- **Modo captura** (fase de entrenamiento/evaluación): las plantillas envían **señal cruda** a la cintura, y la cintura la reenvía al host, que la persiste. Objetivo: construir dataset y evaluar algoritmos de forma asincrónica. El ancho de banda del crudo sobre WiFi (~3,6 KB/s de payload) es despreciable.
-- **Modo edge** (uso real): la cintura calcula **features + detección on-device** y sólo emite features/scores (y crudo puntual ante anomalías, §10.3). Es lo que habilita el uso sin computadora cerca (máxima) y los algoritmos de clase L/E.
+- **Cada plantilla** calcula sus **features por-pie** (bloques A, B, C, E, F, G, H, sobre su propia señal) y detecta sus **eventos IC/TO**. Corre en **ambos modos**, con una **única definición de features compartida** plantilla↔cintura↔worker, versionada por `feature_set_version`.
+- **La cintura** hace la **fusión bilateral**: features de simetría (bloque D, comparando el feature-por-pie izq vs der) y **double support** (solapamiento de los intervalos [IC, TO] de ambos pies, calculado a partir de los **eventos** ya alineados por el backbone de sync — no requiere el crudo de ambos pies co-localizado). Corre el detector y decide el feedback.
 
-### 8.2 La cintura como hub de cómputo
+Que las plantillas calculen en ambos modos preserva la **simetría de cómputo** captura↔edge: la carga del micro es la misma, y captura es un ensayo fiel del borde. Lo que distingue a los modos es **qué se transmite y se almacena**:
 
-Como ambos flujos convergen en la cintura, ésta es el **hub de cómputo on-device**: recibe el crudo de ambas plantillas, mantiene la línea de tiempo común, **detecta eventos**, **calcula las features bilaterales**, **corre los detectores** de clase L/E y **decide el feedback**. Las plantillas quedan como **sensores de alta calidad** (opcionalmente detectan su propio IC), lo que simplifica su firmware. La carga de la cintura es liviana: el cálculo de features es por zancada (~1 Hz de decisiones) y la inferencia int8 sobre un vector de ~25 features es mínima.
+- **Modo captura** (dataset/evaluación): las plantillas calculan features por-pie y además se sube el **crudo continuo** → host → object storage (para poder **re-extraer** features off-device si cambia la definición). El ancho de banda del crudo sobre WiFi es despreciable.
+- **Modo edge** (uso real): las plantillas envían **features por-pie + eventos** a la cintura (mucho menos tráfico que crudo); la cintura fusiona, infiere y emite **features/scores en vivo** + **crudo por snippets ante anomalía** (§10.3), desde un **buffer circular que mantiene cada plantilla** y que envía cuando la cintura lo solicita.
+
+La re-extracción off-device desde el crudo almacenado sigue disponible como **capacidad de análisis**. *Nota práctica:* en el prototipado temprano se puede capturar crudo y calcular off-device hasta que el feature set esté implementado en el micro.
+
+### 8.2 La cintura como hub de fusión y decisión
+
+La cintura es el punto donde converge la información de ambos pies. Con el cómputo distribuido (§8.1), su rol es la **fusión y la decisión**: recibe **features por-pie + eventos** de las plantillas (o crudo, en captura), mantiene la **línea de tiempo común**, calcula las **features bilaterales** (simetría, double support), **corre los detectores** de clase L/E (o delega en el host, clase H), actúa como **sensor de drift** y **decide el feedback**. Las plantillas dejan de ser sensores "tontos": calcular sus features por-pie **reparte el cómputo** y descarga a la cintura, que es el nodo más exigido (radio AP+BLE + inferencia). La carga sigue siendo liviana: features por zancada (~1 Hz de decisiones) e inferencia int8 sobre un vector de ~25 features.
 
 ### 8.3 Camino de feedback vibrotáctil
 
@@ -203,6 +228,33 @@ El detector corre en la cintura, pero el **motor vibrador está en las plantilla
 ### 8.4 Features (referencia)
 
 El conjunto consolidado es de **41 features en 8 bloques** (A espacio-temporales, B variabilidad, C fuerza/FSR, D simetría, E COP-1D, F cinemática IMU, G smoothness/LDLJ, H frecuencia/entropía). La definición canónica vive en un **módulo compartido** versionado (`feature_set_version`) usado tanto por el firmware (C/C++) como por el worker (Python), de modo que el crudo histórico siempre pueda re-procesarse con la misma semántica.
+
+### 8.5 Dónde corre cada operación
+
+| Operación | Modo captura (dataset/eval) | Modo edge (uso real) |
+|---|---|---|
+| Muestreo 100 Hz | Plantillas | Plantillas |
+| Detección de eventos (IC/TO) | Plantilla o cintura *(CP-03)* | Plantilla o cintura *(CP-03)* |
+| Cálculo de features por-pie | **Plantillas (on-device)** | **Plantillas (on-device)** |
+| Fusión bilateral (simetría, double support) | **Cintura** | **Cintura** |
+| Inferencia en tiempo real (feedback) | Opcional, en host, sólo para evaluar (no feedback clínico) | **Cintura (hub)** o **host** — clases L/E/H; nunca en el worker |
+| Inferencia batch/offline (análisis, re-scoring, reportes) | Worker | Worker — clase W |
+| Reentrenamiento | L: cintura · E/H/W: worker (laptop) | L: cintura · E/H/W: worker (nube) |
+| Almacenamiento de crudo | Continuo → host → object storage | Snippet por anomalía → host → storage |
+| Almacenamiento features/scores | → DB | Continuo → host → DB |
+| Feedback vibrotáctil | (opcional) | Cintura decide → motor de la plantilla |
+
+En una línea: **tiempo real y feedback = cintura (o host si el modelo no entra); entrenamiento pesado y análisis offline = worker; el host es puente + almacenamiento** (y, en clase H, motor de inferencia en tiempo real).
+
+### 8.6 Adquisición determinística (muestreo exacto a 100 Hz)
+
+El muestreo debe ser **exacto y periódico** pese a la actividad del radio: el jitter arruina las features de derivada/espectro (COP velocity, jerk, PSD) y ensucia la sincronización. Un `sleep()` —o un timer que "levanta un flag" para que el loop lea— **no** alcanzan: introducen jitter de software (latencia de interrupción, scheduling, radio). El estándar de industria es que **un periférico de hardware dispare la conversión y el DMA la almacene, sin CPU en el lazo de tiempo**. Todo esto es **interno al RP2350 y se configura por firmware; no requiere componentes extra en el PCB.**
+
+- **FSR (ADC):** el ADC corre en **free-running** por su propio reloj (divisor interno) a ~**1 kHz**, empujando cada muestra a la FIFO; un canal **DMA** la copia solo a un buffer en RAM (cadena `ADC → FIFO → DREQ → DMA → RAM`). Como el divisor del ADC no baja de ~730 Hz, se **sobremuestrea a 1 kHz y se decima (promedio ×10) a 100 Hz**, lo que además **reduce el ruido del FSR** (√10 ≈ 3,2×). El buffer de sobremuestreo es diminuto (~120 B) y el 1 kHz **se decima al vuelo y se descarta**: nunca se almacena ni se transmite (sólo viaja el 100 Hz).
+- **IMU (MPU-6050):** se lee en el **tick maestro de 100 Hz** (un solo timestamp por tupla FSR+IMU), con el IMU a ODR interno alto + DLPF para que cada lectura sea fresca. La lectura por **FIFO / DATA_READY** (espaciado uniforme por el reloj interno del IMU) queda como alternativa a validar (**CP-07**; DATA_READY sumaría un cable INT→GPIO en el PCB).
+- **Común:** cada muestra se sella con el **timer de µs** (instante real) + **nº de secuencia**; la adquisición corre en un **core dedicado** (aislada del radio); el buffer DMA evita pérdidas ante picos del radio.
+
+Esto complementa ADR-004: la adquisición garantiza la **periodicidad intra-dispositivo**; el beacon + corrección de drift garantizan la **alineación entre dispositivos**.
 
 ---
 
@@ -214,11 +266,14 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 
 | Clase | Inferencia | Reentrena | Granularidad | Ejemplos candidatos | ¿Usa OTA? |
 |---|---|---|---|---|---|
-| **L — Local-Local** | Micro | **Micro** | Dato a dato (online) | Mahalanobis (EMA de media + covarianza), z-score/EWMA, probabilísticos simples, running stats | No (se auto-actualiza) |
-| **E — Edge + Worker** | Micro (int8) | **Worker** | Periódico / async | Autoencoder denso int8, LSTM chico cuantizado | Sí (recibe pesos) |
-| **W — Worker-heavy** | Worker (o micro si entra) | **Worker** | Periódico / async | LSTM autoencoder grande, Isolation Forest, gradient-based | Sí (si despliega al micro) |
+| **L — Local-Local** | Cintura (hub) | **Cintura** | Dato a dato (online) | Mahalanobis (EMA de media + covarianza), z-score/EWMA, probabilísticos simples, running stats | No (se auto-actualiza) |
+| **E — Edge + Worker** | Cintura (hub, int8) | **Worker** | Periódico / async | Autoencoder denso int8, LSTM chico cuantizado | Sí (recibe pesos) |
+| **H — Host** | **Host** (celular/laptop), tiempo real | **Worker** | Periódico / async | Modelos que no entran en la cintura pero sí en el host | Sí (al host) |
+| **W — Worker-heavy** | **Worker** (batch/offline, **no** tiempo real) | **Worker** | Periódico / async | LSTM AE grande, Isolation Forest, análisis/reportes | — |
 
-Cada fila de la tabla `models` declara `(class, inference_target, retrain_target, granularity)`. Sumar un modelo nuevo = declarar su clase; la infraestructura ya soporta el camino. Las asignaciones de ejemplo son un primer pase y se ajustan a medida que se valida.
+**Ubicación de la inferencia en tiempo real:** la inferencia que dispara el feedback corre en **`hub`** (preferido) o en **`host`** (fallback si el modelo no entra en la cintura), **nunca en `worker`/nube** (latencia + conectividad). El `worker` sólo infiere **batch/offline** (evaluación de algoritmos, re-scoring histórico, reportes). Salvedad de la clase H para la máxima: el modelo debe entrar en el **celular** (más débil que una laptop); si sólo entra en la laptop, es tiempo real sólo en la mínima.
+
+El campo `inference_target ∈ {hub, host, worker}` y `retrain_target ∈ {micro, worker}`. Cada fila de la tabla `models` declara `(class, inference_target, retrain_target, granularity)`. Sumar un modelo nuevo = declarar su clase; la infraestructura ya soporta el camino. Las asignaciones de ejemplo son un primer pase y se ajustan a medida que se valida.
 
 ### 9.2 Mahalanobis como detector y sensor de drift
 
@@ -369,8 +424,8 @@ create table models (
   id uuid primary key default gen_random_uuid(),
   patient_id uuid references patients(id),   -- null = modelo global
   algo text,                                 -- 'mahalanobis','dense_ae','lstm_ae','iforest'...
-  class text check (class in ('L','E','W')),
-  inference_target text check (inference_target in ('micro','worker')),
+  class text check (class in ('L','E','H','W')),
+  inference_target text check (inference_target in ('hub','host','worker')),
   retrain_target text check (retrain_target in ('micro','worker')),
   granularity text check (granularity in ('online','periodic','async')),
   version int,
@@ -467,7 +522,7 @@ Los únicos puntos de variación (app del host y ubicación del worker) están *
 | 2 | Uplink cintura↔host | BLE desde la mínima | Firmware de cintura reutilizado 100 %; de-riskea la coexistencia temprano; BW sobra |
 | 3 | Transporte | UDP stream + TCP control (WiFi); GATT notif + writes ACK (BLE) | Canal rápido-tolerante + canal confiable; evita head-of-line blocking en el stream |
 | 4 | Sincronización | Backbone reloj (timestamp+seq+beacon+drift) + emparejado por IC | Simetría bilateral necesita timeline a nivel de muestra; IC como refinamiento gratuito |
-| 5 | Cálculo de features | Dual-mode (captura vs edge), definición compartida PC↔micro | Dataset primero sin perder el camino edge; una sola semántica de features |
+| 5 | Cálculo de features | Distribuido: features por-pie en plantillas, fusión bilateral en cintura | Reparte cómputo, descarga la cintura, menos tráfico en edge (resuelve CP-02) |
 | 6 | Hub de cómputo | Cintura | Ambos pies convergen ahí; carga liviana |
 | 7 | Hosting/DB | Supabase (Postgres+Timescale+storage+auth) | Mínima operación, Postgres real, escalado limpio |
 | 8 | Modelo de datos | Postgres + TimescaleDB + object storage | Relacional + series + blobs, un solo mundo SQL |
@@ -476,6 +531,8 @@ Los únicos puntos de variación (app del host y ubicación del worker) están *
 | 11 | Firmware | C/C++ con Pico SDK | ML on-device + coexistencia + 100 Hz duro |
 | 12 | Ruteo de modelos | Clase declarada en el registry (L/E/W) | Agnóstico al modelo; sumar modelo = declarar clase |
 | 13 | OTA | Pesos + firmware completo (A/B) desde el inicio | Fix/inferencia remotos en casa del paciente; rollback seguro |
+| 14 | Inferencia en tiempo real | En `hub` o `host`, nunca en el worker/nube (clase H) | Baja latencia + offline para el feedback; escalón de cómputo sin ir a la nube |
+| 15 | Adquisición / muestreo | ADC HW-paced + DMA, sobremuestreo 1 kHz → decimación a 100 Hz; IMU en tick maestro | Muestreo exacto sin CPU en el lazo (jitter ~ns) + mejora SNR; sin cambios de PCB |
 
 ---
 

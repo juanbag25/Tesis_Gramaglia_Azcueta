@@ -8,11 +8,13 @@ Juan desarrolla una tesis de maestría centrada en un sistema de **plantillas in
 
 ## Estado actual (2026-07-16)
 
-- **Hardware definido:** Raspberry Pi Pico 2 W (RP2350, Cortex-M33 @150 MHz, 520 KB SRAM), 3 FSR + IMU 6-DOF (MPU-6050) por pie, motor vibrador PWM, muestreo 100 Hz. Unidad de cintura con Pico 2 W + MPU-6050.
+- **Hardware definido:** Raspberry Pi Pico 2 W (RP2350, Cortex-M33 @150 MHz, 520 KB SRAM), **3 FSR (modular: soportar N)** + IMU 6-DOF **MPU-6050** (confirmado; el anteproyecto decía BMI270 → CP-11) por pie, motor vibrador PWM, muestreo 100 Hz. **Unidad de cintura** con Pico 2 W + MPU-6050 (hub + su IMU capta datos de tronco/lower-back).
+- **Fuentes oficiales incorporadas:** `docs/Anteproyecto_Tesis.pdf` (autores: Azcueta Busco, Gramaglia; tutores: Ramele, Papastylianou) y el marco teórico real. La arquitectura fue revisada contra ambos y el núcleo coincide.
 - **Feature set consolidado:** 41 features en 8 bloques (A–H). Detalle en `docs/investigacion/features_anomaly_detection_stroke.md`.
 - **Algoritmos candidatos:** Mahalanobis, Isolation Forest, autoencoder denso, LSTM autoencoder. Arquitectura jerárquica donde Mahalanobis es detector + sensor de drift.
-- **Arquitectura informática definida (v1.0):** ver `docs/arquitectura/`. Todas las decisiones registradas en `docs/decisiones/bitacora_decisiones.md`.
-- **Repo estructurado:** docs + src (scaffolding) + memoria. Sin código todavía.
+- **Arquitectura definida y reorganizada en 4 vistas** (`docs/arquitectura/vistas/`: 1 sistema · 2 firmware · 3 datos-ml · 4 backend) + `stack_tecnologico.md`; el maestro es índice/overview. Decisiones en `docs/decisiones/bitacora_decisiones.md` (**ADR-000 a 015**).
+- **Convención de trabajo:** cada ítem del backlog → **ADR + spec de algoritmo** (guía de implementación, no código) en su vista. Análisis de features/algoritmos: `vistas/3_analisis_features_y_algoritmos.md`; specs de firmware: `vistas/2_specs_algoritmos_firmware.md`.
+- **Repo estructurado:** docs (vistas + decisiones + investigación + marco teórico + anteproyecto) + src (scaffolding) + memoria. Sin código todavía.
 
 ## Decisiones de arquitectura tomadas (resumen)
 
@@ -20,14 +22,17 @@ Juan desarrolla una tesis de maestría centrada en un sistema de **plantillas in
 2. Cintura↔host: **BLE desde la mínima** (firmware reusado en máxima).
 3. Transporte: **UDP stream + TCP control** (GATT notif/writes en BLE).
 4. Sync: **backbone de reloj** (timestamp+seq+beacon+drift) + emparejado por evento IC (refinamiento).
-5. Features: **dual-mode** (captura/edge) + **cintura como hub**, definición compartida PC↔micro.
+5. Features: **cómputo distribuido** — por-pie en cada plantilla; la cintura **fusiona** (simetría, double support). Definición compartida plantilla↔cintura↔worker (resuelve CP-02).
 6. DB/hosting: **Supabase**; entrenamiento en worker aparte.
 7. Modelo de datos: **Postgres + TimescaleDB + object storage**.
 8. Retención: **tiered por fase** (+ crudo por anomalía).
 9. Backend de reentrenamiento (máxima): **worker en la nube** (E/W); micro mantiene L.
 10. Firmware: **C/C++ con Pico SDK**.
-11. Ruteo de modelos: **clase declarada en el registry (L/E/W)**.
+11. Ruteo de modelos: **clase declarada en el registry (L/E/H/W)**.
 12. OTA: **pesos + firmware completo (A/B)**.
+13. Inferencia en tiempo real: en **hub o host, nunca en el worker/nube** (clase H); el worker sólo batch/offline.
+14. Muestreo determinístico: **ADC por hardware + DMA, sobremuestreo ~1 kHz → decimación a 100 Hz**; IMU en tick maestro.
+15. Detección de eventos IC/TO: **fusión FSR + IMU, en la plantilla** (resuelve CP-03; ver SPEC-01).
 
 ## Aprendizajes y principios
 
@@ -40,14 +45,17 @@ Juan desarrolla una tesis de maestría centrada en un sistema de **plantillas in
 
 ## Qué sigue
 
-- **Roadmap de implementación por fases** (próximo entregable, documento aparte).
-- Ratificar cuestiones pendientes (registro vivo en `docs/cuestiones_pendientes.md`, CP-01 a CP-06).
-- Subir el marco teórico a `docs/marco_teorico/`.
+- **Backlog de investigación en curso** (`vistas/3_analisis_features_y_algoritmos.md` §D). Hecho: **#1 detección IC/TO** (ADR-015 / SPEC-01). Siguiente: #2 segmentación de fases → #3 ZUPT/stride length → #4 buffers → #5 orientación → …
+- **Migración incremental** del contenido detallado del maestro a las 4 vistas.
+- Ratificar cuestiones abiertas (`docs/cuestiones_pendientes.md`): CP-01, CP-04 a CP-12 (incl. CP-07). **Resueltas: CP-02, CP-03.**
+- **Roadmap de implementación por fases** (documento aparte, más adelante).
 - Iniciar `src/` (firmware, worker, db, host).
 
 ## Recursos
 
-- Arquitectura: `docs/arquitectura/Arquitectura_Sistema_Marcha.md`
-- Decisiones: `docs/decisiones/bitacora_decisiones.md`
+- Anteproyecto oficial: `docs/Anteproyecto_Tesis.pdf`
+- Arquitectura (índice): `docs/arquitectura/Arquitectura_Sistema_Marcha.md` + **vistas** en `docs/arquitectura/vistas/` + `stack_tecnologico.md`
+- Decisiones: `docs/decisiones/bitacora_decisiones.md` (ADR-000 a 015)
+- Cuestiones pendientes: `docs/cuestiones_pendientes.md`
 - Investigación: `docs/investigacion/`
-- Marco teórico (a subir): documento de trabajo ~17.700 palabras, 11 bloques.
+- Marco teórico: `docs/marco_teorico/marco_teorico_documento_de_trabajo.md` (~17.700 palabras)

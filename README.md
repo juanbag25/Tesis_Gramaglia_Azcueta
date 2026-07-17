@@ -23,7 +23,8 @@ Este repo está pensado para trabajar con **agentes de IA**: `CLAUDE.md` les da 
 | Carpeta | Contenido |
 |---|---|
 | `docs/objetivos.md` | Propósito, alcance (mínima/máxima), filosofía de diseño. |
-| `docs/arquitectura/` | Especificación de la arquitectura (fuente de verdad) + diagramas Mermaid. |
+| `docs/Anteproyecto_Tesis.pdf` | Anteproyecto oficial de la tesis (problema, objetivos, metodología). |
+| `docs/arquitectura/` | Maestro (índice) + **4 vistas** (`vistas/`: sistema, firmware, datos-ml, backend) + `stack_tecnologico.md` + diagramas Mermaid. |
 | `docs/decisiones/` | Bitácora de decisiones (ADRs): cada elección con opciones, pros/cons y justificación. |
 | `docs/investigacion/` | Bibliografía, feature set, pinout, resumen de investigación. |
 | `docs/marco_teorico/` | Marco teórico (a subir). |

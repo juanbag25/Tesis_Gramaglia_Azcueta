@@ -17,14 +17,17 @@
 | 002 | Uplink cintura↔host | BLE desde la mínima | aceptada |
 | 003 | Transporte | UDP stream + TCP control (GATT notif/writes en BLE) | aceptada |
 | 004 | Sincronización temporal | Backbone de reloj (timestamp+seq+beacon+drift) + emparejado por evento | aceptada |
-| 005 | Cálculo de features | Dual-mode (captura/edge) + cintura como hub | aceptada |
+| 005 | Cálculo de features | Distribuido: por-pie en plantillas, fusión bilateral en cintura | aceptada (rev. 2026-07-16) |
 | 006 | Hosting / base de datos | Supabase | aceptada |
 | 007 | Modelo de datos | Postgres + TimescaleDB + object storage | aceptada |
 | 008 | Retención de datos | Tiered por fase | aceptada |
 | 009 | Backend de reentrenamiento (máxima) | Worker en la nube | aceptada |
 | 010 | Firmware on-device | C/C++ con Pico SDK | aceptada |
-| 011 | Ruteo de modelos | Clase declarada en el registry (L/E/W) | aceptada |
+| 011 | Ruteo de modelos | Clase declarada en el registry (L/E/H/W) | aceptada (rev. 2026-07-16) |
 | 012 | OTA de modelos | Pesos + firmware completo (A/B) | aceptada |
+| 013 | Inferencia en tiempo real | En `hub` o `host`; nunca en el worker/nube | aceptada |
+| 014 | Adquisición / muestreo | ADC HW-paced + DMA, sobremuestreo 1 kHz → decimación a 100 Hz; IMU en tick maestro | aceptada |
+| 015 | Detección de eventos IC/TO | Fusión FSR + IMU; en la plantilla (per-pie); resuelve CP-03 | aceptada |
 
 ---
 
@@ -138,8 +141,8 @@
 
 ---
 
-## ADR-005 — Cálculo de features y hub de cómputo
-**Estado:** aceptada — **Decisión: dual-mode (captura/edge) + cintura como hub, definición de features compartida**
+## ADR-005 — Cálculo de features (distribuido) y rol de la cintura
+**Estado:** aceptada (rev. 2026-07-16) — **Decisión: features por-pie en las plantillas, fusión bilateral en la cintura; definición compartida**
 
 **Contexto.** Se preguntó dónde se calculan las features. Juan eligió inicialmente "todo crudo → computadora", correcto para la **fase de entrenamiento/evaluación**. Pero los algoritmos de clase L/E corren en el micro, así que en algún momento hay que calcular features on-device.
 
@@ -148,11 +151,20 @@
 - **Plantillas crudo → cintura calcula.** Más ancho de banda (irrelevante sobre WiFi); lógica centralizada, más fácil de depurar.
 - **Todo crudo → computadora (elegida para captura).** Ideal para dataset/evaluación; no escala al uso real en el borde.
 
-**Decisión.** **Dos modos con una única definición de features compartida** (misma fórmula en PC y micro, versionada por `feature_set_version`):
-- **Modo captura:** plantillas → crudo → cintura → host → base. Para construir dataset y evaluar algoritmos.
-- **Modo edge:** la **cintura calcula features + detección on-device** y emite features/scores (+ crudo puntual ante anomalías). Habilita el uso sin computadora (máxima) y las clases L/E.
+**Decisión.** **Cómputo de features distribuido**, con una **única definición de features compartida** (misma fórmula en plantilla, cintura y worker, versionada por `feature_set_version`):
+- **Cada plantilla** calcula sus **features por-pie** (bloques A/B/C/E/F/G/H) y detecta sus eventos IC/TO, en **ambos modos**.
+- **La cintura** hace la **fusión bilateral** (simetría bloque D; double support desde eventos alineados), corre el detector y decide el feedback.
 
-**Cintura como hub de cómputo.** Como ambos flujos convergen en la cintura, ésta es el hub: recibe crudo de ambas plantillas, mantiene el timeline, detecta eventos, calcula features bilaterales, corre los detectores L/E y decide el feedback. Las plantillas quedan como sensores de alta calidad (simplifica su firmware). Carga liviana: features por zancada (~1 Hz de decisiones), inferencia int8 sobre ~25 features es mínima.
+Lo que distingue captura de edge es **qué se transmite/almacena**, no dónde se calcula: en captura se sube además el **crudo continuo** (para re-extracción off-device); en edge las plantillas mandan **features + eventos** (+ crudo por snippet ante anomalía, buffereado en cada plantilla).
+
+**Justificación (rev).** Reparte el cómputo entre los micros y **descarga a la cintura** (el nodo más exigido: radio AP+BLE + inferencia); reduce el tráfico plantilla→cintura en edge (features en vez de crudo). Que las plantillas calculen en ambos modos preserva la **simetría de cómputo** captura↔edge. La fusión bilateral **no necesita el crudo de ambos pies co-localizado**: usa features por-pie + eventos alineados por el backbone de sync (ADR-004). **Resuelve CP-02.**
+
+> **Historial de revisión.**
+> - *v1 (inicial):* el modo captura calculaba features off-device (PC) desde el crudo.
+> - *rev. 2026-07-16 (a):* features on-device en la cintura en ambos modos, por simetría de cómputo captura↔edge.
+> - *rev. 2026-07-16 (b):* cómputo **distribuido** — features por-pie en cada plantilla, fusión bilateral en la cintura (resuelve CP-02, reparte carga). La re-extracción off-device desde el crudo sigue disponible como capacidad de análisis.
+
+**Cintura como hub de fusión.** La información de ambos pies converge en la cintura: recibe **features por-pie + eventos** (o crudo, en captura), mantiene el timeline, calcula las **features bilaterales** (simetría, double support desde eventos), corre los detectores L/E (o delega en el host, clase H) y decide el feedback. Las plantillas dejan de ser sensores "tontos": calcular sus features por-pie reparte el cómputo y descarga a la cintura. Carga liviana: features por zancada (~1 Hz de decisiones), inferencia int8 sobre ~25 features mínima.
 
 **Camino de feedback.** El detector corre en la cintura pero el motor está en las plantillas → el enlace plantillas↔cintura es **bidireccional** (datos arriba, comando de feedback abajo). La *política* de feedback es lógica de aplicación, fuera del alcance de infraestructura.
 
@@ -241,17 +253,20 @@
 
 ---
 
-## ADR-011 — Ruteo de modelos (taxonomía L/E/W)
-**Estado:** aceptada — **Decisión: cada modelo declara su clase en el registry (model-agnostic)**
+## ADR-011 — Ruteo de modelos (taxonomía L/E/H/W)
+**Estado:** aceptada (rev. 2026-07-16) — **Decisión: cada modelo declara su clase en el registry (model-agnostic)**
 
 **Contexto.** Advertencia de Juan: hay modelos probabilísticos **muy sencillos** que se reentrenan **dato a dato en el micro** y no deben ir al worker. El reparto depende de qué modelos se prueben, así que la arquitectura no debe hardcodearlos.
 
-**Taxonomía adoptada (dos ejes: dónde infiere × dónde/con qué granularidad reentrena).**
+**Taxonomía adoptada (dos ejes: dónde infiere × dónde/con qué granularidad reentrena).** La ubicación de la inferencia en tiempo real se detalla en **ADR-013**.
 | Clase | Inferencia | Reentrena | Granularidad | Ejemplos | ¿OTA? |
 |---|---|---|---|---|---|
-| **L — Local-Local** | Micro | Micro | Dato a dato | Mahalanobis EMA, z-score/EWMA, probabilísticos simples | No (se auto-actualiza) |
-| **E — Edge+Worker** | Micro (int8) | Worker | Periódico/async | Autoencoder denso int8, LSTM chico | Sí |
-| **W — Worker-heavy** | Worker (o micro si entra) | Worker | Periódico/async | LSTM AE grande, Isolation Forest | Sí |
+| **L — Local-Local** | Cintura (hub) | Cintura | Dato a dato | Mahalanobis EMA, z-score/EWMA, probabilísticos simples | No (se auto-actualiza) |
+| **E — Edge+Worker** | Cintura (hub, int8) | Worker | Periódico/async | Autoencoder denso int8, LSTM chico | Sí |
+| **H — Host** | Host (celular/laptop), tiempo real | Worker | Periódico/async | Modelos que no entran en la cintura pero sí en el host | Sí |
+| **W — Worker-heavy** | Worker (batch/offline, **no** tiempo real) | Worker | Periódico/async | LSTM AE grande, Isolation Forest, análisis/reportes | — |
+
+Campos del registry: `inference_target ∈ {hub, host, worker}`, `retrain_target ∈ {micro, worker}`.
 
 **Opciones evaluadas.**
 - **Registry declara la clase (elegida).** Cada fila de `models` declara `(class, inference_target, retrain_target, granularity)`; el runtime rutea solo. *Pros:* agnóstico al modelo — sumar un modelo = declarar su clase; los L reentrenan en el micro sin tocar el worker. *Contra:* un poco más de metadata.
@@ -275,6 +290,76 @@
 **Decisión.** **OTA completo (pesos + firmware) con A/B desde el inicio**, mitigando el riesgo con A/B, checksum, watchdog y modo de recuperación.
 
 **Justificación.** El uso desatendido en casa (máxima) hace que actualizar firmware por aire sea muy valioso; construirlo desde el inicio evita retrofits riesgosos. El respaldo de todo modelo en la base (registry + artifact) garantiza recuperación ante pérdida/rotura del micro.
+
+---
+
+## ADR-013 — Ubicación de la inferencia en tiempo real
+**Estado:** aceptada — **Decisión: en `hub` (preferido) o `host` (fallback); nunca en el worker/nube**
+
+**Contexto.** ¿Dónde corre la inferencia que dispara el feedback? El feedback vibrotáctil necesita **baja latencia** y operación **offline**. Se planteó (a) si el worker puede inferir en tiempo real y (b) qué pasa si un modelo es demasiado pesado para el Pico de la cintura.
+
+**Opciones evaluadas.**
+- **Cintura (hub).** *Pros:* latencia mínima, offline. *Contra:* compute limitado (int8, modelos chicos).
+- **Host (celular/laptop).** *Pros:* más compute, sigue siendo "casi-edge". *Contra:* suma un round-trip micro↔host por BLE (~decenas de ms, aceptable para marcha porque los eventos están a cientos de ms); requiere el host presente; en la máxima el modelo debe entrar en el **celular** (más débil que una laptop).
+- **Worker/nube.** *Pros:* máximo compute. *Contra:* latencia + dependencia de conectividad → **no apto** para feedback en tiempo real.
+
+**Decisión.** La inferencia en tiempo real corre en **`hub`** (preferido) o **`host`** (fallback si el modelo no entra en la cintura). **El worker nunca está en el lazo de feedback**; sólo infiere **batch/offline** (evaluación de algoritmos, re-scoring histórico, reportes). Se agrega la **clase H** y el valor **`host`** a `inference_target ∈ {hub, host, worker}`.
+
+**Justificación.** Preserva la baja latencia y la operación offline del feedback, y provee un **escalón intermedio de cómputo** (host) sin ir a la nube.
+
+**Consecuencias.** Un modelo pesado que se quiera para tiempo real: cuantizarlo para la cintura (→ E) o correrlo en el host (→ H); si tampoco entra en el host del escenario objetivo, queda como análisis batch (→ W). La clase H depende de que el modelo entre en el celular para funcionar en la máxima.
+
+---
+
+## ADR-014 — Adquisición determinística (muestreo exacto a 100 Hz)
+**Estado:** aceptada — **Decisión: ADC disparado por hardware + DMA con sobremuestreo y decimación; IMU en el tick maestro**
+
+**Contexto.** Hay que garantizar un muestreo **exacto y periódico** a 100 Hz pese a la actividad del radio. El jitter arruina las features de derivada/espectro (COP velocity, jerk, PSD) y ensucia la sincronización. Un `sleep()` o un timer que "levanta un flag" para que el loop lea introducen **jitter de software** (latencia de interrupción, scheduling, radio).
+
+**Investigación (industria).** El estándar es **timer/periférico de hardware que dispara la conversión del ADC + DMA que la almacena, sin CPU en el lazo de tiempo** (STM32 y equivalentes; el RP2350 lo soporta con su ADC free-running + FIFO/DREQ + DMA). Los ISR de timer/flag quedan sujetos a scheduling → timing variable. Todo esto es **interno al chip; no requiere componentes extra en el PCB**. Fuentes: STM32 timer-triggered ADC+DMA (blogs Shawal Mbalire / EmbeddedExpert), Deterministic Timer–DMA (MDPI Electronics 15:1830), foro/artículos RP2040-RP2350 ADC+DMA (iosoft, Raspberry Pi forums), MPU-6050 polling vs interrupt y uso de FIFO.
+
+**Opciones evaluadas — FSR (ADC).**
+- **ADC free-running + DMA con sobremuestreo 1 kHz → decimación ×10 a 100 Hz (elegida).** *Pros:* muestreo hardware sin CPU (jitter ~ns); el promedio **baja el ruido del FSR** (√10 ≈ 3,2×); buffer diminuto (~120 B) y el 1 kHz se decima al vuelo y se descarta (no se almacena ni transmite). *Contra:* 10× conversiones del ADC (0,6 % de duty) — despreciable.
+- **Trigger exacto a 100 Hz por PWM/timer interno.** Evita las 10× conversiones, pero sin la mejora de SNR y algo más enredado.
+- **Timer-ISR que lee el ADC.** Simple, pero reintroduce jitter de software y es sensible al radio.
+
+**Opciones evaluadas — IMU (MPU-6050).**
+- **Lectura en el tick maestro de 100 Hz (elegida por defecto).** Un solo timestamp por tupla FSR+IMU; IMU a ODR alto + DLPF para lectura fresca. Sin cambios de PCB.
+- **FIFO / DATA_READY del IMU.** Espaciado uniforme por el reloj interno del IMU; DATA_READY suma un cable INT→GPIO. Diferido a **CP-07**.
+
+**Decisión.** **FSR:** ADC free-running a ~1 kHz + DMA a buffer + **decimación (promedio ×10) a 100 Hz**. **IMU:** lectura en el tick maestro de 100 Hz. **Común:** timestamp real (timer µs) + nº de secuencia por muestra; **core dedicado** a adquisición; buffer DMA para no perder ante el radio. Todo por firmware, **sin componentes extra en el PCB**.
+
+**Justificación.** Jitter en el orden de ns (hardware), CPU/RAM despreciables (~120 B, ~3.000 sumas/s) y **mejora de SNR** gratis por el promediado. Complementa ADR-004: adquisición = periodicidad **intra**-dispositivo; beacon + drift = alineación **entre** dispositivos.
+
+**Consecuencias.** El crudo sobremuestreado **no** se almacena ni transmite (sólo el 100 Hz decimado). No requiere cambios de PCB, salvo —opcional y futuro— el pin DATA_READY del IMU si se adopta esa lectura (CP-07).
+
+---
+
+## ADR-015 — Detección de eventos de marcha (IC/TO)
+**Estado:** aceptada — **Decisión: fusión FSR-primario + confirmación IMU; detección en la plantilla (per-pie). Resuelve CP-03.**
+
+**Contexto.** La detección de IC/TO es prerequisito de casi todo (features espacio-temporales, segmentación stance/swing, ZUPT, refinamiento de sync, timing de feedback). Corre en tiempo real y debe ser robusta a marcha post-ACV (drop foot, apoyo de antepié/plano). CP-03 preguntaba **dónde** corre (plantilla vs cintura).
+
+**Investigación (literatura/industria).**
+- **FSR/presión:** el cruce de umbral de fuerza plantar da el **instante de contacto directo** (ground truth), baja latencia; usado en embebidos en tiempo real.
+- **IMU (velocidad angular del pie):** detecta IC/FC; validado en sanos y **hemipléjicos** (~2 % de error de ciclo, robusto), pero IMU-solo es menos preciso en el instante (RMSE ~50-61 ms vs ~14 ms MoCap).
+- **Fusión FSR+IMU:** **>96 %** de exactitud; además la fase stance por FSR alimenta el **ZUPT**.
+- Fuentes: FSR insole phase detection; Sensors 16:1634; foot angular kinematics (ScienceDirect S0021929021006369); detección robusta en hemipléjicos con 1 IMU; fusión inercial + film-presión (arXiv 1810.09757); impacto de ubicación del IMU (PMC8227677).
+
+**Opciones — método.**
+- **FSR-solo (umbral).** Simple y rápido, pero pierde robustez ante ruido/ambigüedad.
+- **IMU-solo.** Robusto en patología pero menos preciso en el instante exacto.
+- **Fusión FSR-primario + confirmación IMU (elegida).** El FSR da el timing (trigger rápido) y el IMU confirma (rechaza falsos); >96 %. Coincide con el marco teórico.
+
+**Opciones — placement (CP-03).**
+- **Plantilla per-pie (elegida).** Cada plantilla tiene su FSR+IMU → detecta local, baja latencia, distribuye cómputo, menos tráfico; envía el evento a la cintura. Coherente con ADR-005.
+- **Cintura centralizada.** Requeriría mandar crudo de ambos pies; contradice las features distribuidas.
+
+**Decisión.** **Fusión FSR-primario + confirmación IMU**, detección **en la plantilla (per-pie)**; el evento `{tipo, timestamp, pie, confianza}` se envía a la cintura para fusión bilateral, sync y feedback. Definición robusta: **IC = onset de carga de cualquier región; TO = fin de carga**, con histéresis + refractario. Detalle de implementación: **SPEC-01** en `../vistas/2_specs_algoritmos_firmware.md`.
+
+**Justificación.** Máxima robustez (>96 %) y tolerancia a la patología (onset-de-cualquier-región + confirmación IMU), baja latencia (FSR emite, IMU anota sin bloquear) y reutiliza la fase stance para el ZUPT.
+
+**Consecuencias.** Resuelve **CP-03** (plantilla). Umbrales/ventana son **parámetros calibrables por paciente** (calibración/baseline). La confirmación IMU **degrada a FSR-solo** si no es fiable, para no perder eventos.
 
 ---
 

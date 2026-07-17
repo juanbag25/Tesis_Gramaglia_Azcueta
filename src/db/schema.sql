@@ -71,8 +71,8 @@ create table models (
   id uuid primary key default gen_random_uuid(),
   patient_id uuid references patients(id),   -- null = modelo global
   algo text,                                 -- 'mahalanobis','dense_ae','lstm_ae','iforest'...
-  class text check (class in ('L','E','W')),
-  inference_target text check (inference_target in ('micro','worker')),
+  class text check (class in ('L','E','H','W')),
+  inference_target text check (inference_target in ('hub','host','worker')),
   retrain_target text check (retrain_target in ('micro','worker')),
   granularity text check (granularity in ('online','periodic','async')),
   version int,

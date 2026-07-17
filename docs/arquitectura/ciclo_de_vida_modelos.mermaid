@@ -1,35 +1,58 @@
-%% Ciclo de vida de modelos: deteccion, disparo por drift, reentrenamiento y OTA
-%% Clases L (local-local), E (edge+worker), W (worker-heavy)
+%% Ciclo de vida de modelos: captura, edge (inferencia + feedback), drift, reentrenamiento y OTA
+%% Clases L (hub), E (hub int8), H (host, tiempo real), W (worker batch/offline)
 sequenceDiagram
     autonumber
-    participant MI as Plantillas (sensado)
-    participant CI as Cintura (hub / detector)
+    participant MI as Plantillas
+    participant CI as Cintura (hub)
     participant HO as Host (laptop/celular)
     participant WK as Worker (laptop/nube)
     participant SB as Supabase (DB + storage)
 
-    Note over CI: Clase L (Mahalanobis EMA)<br/>infiere y se reentrena en el micro, dato a dato
-    MI->>CI: crudo 100 Hz (UDP) + sync
-    CI->>CI: features bilaterales + score L
+    Note over MI,CI: Plantillas calculan features por-pie (ambos modos); la cintura fusiona
+
+    rect rgb(238,243,255)
+    Note over CI,SB: MODO CAPTURA (construccion de dataset)
+    MI->>MI: muestreo 100 Hz + features por-pie + eventos
+    MI->>CI: crudo continuo + features por-pie + eventos (WiFi)
+    CI->>CI: fusion bilateral (simetria, double support)
+    CI->>HO: crudo + features (BLE)
+    HO->>SB: guardar crudo (Parquet) + features (DB)
+    end
+
+    rect rgb(238,252,243)
+    Note over MI,SB: MODO EDGE (uso real)
+    MI->>MI: muestreo 100 Hz + features por-pie + eventos
+    MI->>CI: features por-pie + eventos (WiFi)
+    CI->>CI: fusion bilateral + inferencia clase L (hub)
+    opt modelo clase H (no entra en la cintura)
+        CI->>HO: features -> host infiere en tiempo real
+        HO-->>CI: score
+    end
     CI-->>MI: feedback vibrotactil si hay anomalia
-    CI->>HO: score + features (BLE notif)
-    HO->>SB: persistir features/scores
+    CI->>HO: features + scores (BLE notif)
+    HO->>SB: persistir features/scores (DB)
+    Note over MI: buffer circular de crudo por-pie
+    CI->>MI: pedir snippet (anomalia)
+    MI->>CI: snippet de crudo
+    CI->>HO: snippet -> storage
+    HO->>SB: guardar snippet (storage)
+    end
 
-    Note over CI: Mahalanobis tambien es SENSOR DE DRIFT
-    CI->>HO: flag de drift (BLE)
+    rect rgb(255,247,238)
+    Note over CI,WK: DRIFT -> REENTRENAMIENTO (clases E/H/W ; nunca RT en el worker)
+    CI->>HO: flag de drift (Mahalanobis = sensor de drift)
     HO->>SB: registrar drift + encolar retrain_job
-
-    Note over WK: Clases E/W se reentrenan fuera del micro
     SB->>WK: job (drift/schedule/manual) + datos
-    WK->>WK: reentrenar (E: AE int8 / W: LSTM, iForest)
-    WK->>SB: subir artefacto + version + metricas
+    WK->>WK: reentrenar (E/H: pesos int8 ; W: batch/analisis)
+    WK->>SB: subir artefacto + version + metricas (registry)
     SB->>HO: nuevo modelo disponible
     HO->>CI: OTA A/B (pesos/firmware) + checksum
-    CI->>CI: validar, conmutar slot, guardar last-known-good
+    CI->>CI: validar, conmutar slot, last-known-good
     alt modelo nuevo OK
         CI->>HO: ACK version activa
         HO->>SB: marcar deployment activo
     else fallo / mal desempeno
         CI->>CI: rollback a last-known-good
         CI->>HO: reportar rollback
+    end
     end
