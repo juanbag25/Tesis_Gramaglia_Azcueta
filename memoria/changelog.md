@@ -2,61 +2,268 @@
 
 > Registro cronológico de cambios en el proyecto (arquitectura, docs, código, decisiones). Entrada más reciente arriba. Formato: fecha — qué cambió — por qué / referencia.
 
+## 2026-08-18 — Mid-stance adoptado (ADR-038): tercer evento, sub-fases del apoyo y 2 features nuevas
+
+- **Resuelve la contradicción ADR-029 ↔ SPEC-02.** ADR-029 había agregado mid-stance como evento de segmentación, pero SPEC-02 seguía listándolo entre las sub-fases *"diferidas, no las requiere el feature set actual"* y `gait_events.type` sólo admitía `IC`/`TO`. **Decisión de Juan: adoptarlo completo.**
+- **Por qué adoptarlo y no diferirlo.** El consumidor que ADR-029 mencionaba (COP intra-apoyo) sí está bloqueado por el bloque E, pero **no es el único ni el más importante**: (1) con los **2 FSR actuales** MS ya es detectable como el cruce de las curvas punta/talón; (2) el **déficit de push-off es el hallazgo más característico del cuadro** en la propia bibliografía del proyecto — Kang 2025 (paper #20), Sanghan 2014, marco teórico §"déficit de propulsión"; (3) hoy el bloque C se calcula sobre el apoyo **completo, como un solo número**, y la firma parética típica (apoya, se queda en el talón, despega sin empujar) **se promedia y se pierde**. Partido en dos, es visible.
+- **Definición elegida: de carga, no cinemática.** MS = primer instante en `[IC,TO]` con `F_ante ≥ F_post`, confirmado por el **pie-plano del IMU**. Se descartó la definición cinemática de Perry como primaria (invierte la jerarquía de SPEC-01: el IMU es menos preciso en el instante, RMSE ~50-61 ms vs ~14 ms) y la geométrica al 50 % del stance (no es un evento). **Queda documentado el matiz terminológico**: lo que se detecta es la transferencia de carga, que en marcha hemipléjica puede divergir del mid-stance clásico — y esa divergencia queda como candidata de feature.
+- **Caso patológico previsto:** si el paciente **nunca transfiere la carga**, no hay cruce → se emite MS en el máximo de `F_ante/F_post` con baja confianza y flag **`no_crossover`**, *que es señal de anomalía, no error*. Mismo criterio que SPEC-01 ya usaba para IC/TO ("en patología conviene no perder eventos").
+- **Cambios concretos:** **SPEC-01** pasa a IC/TO/**MS** (detección, robustez, parámetros `h_ms` y mapeo FSR→región, nota sobre la definición). **SPEC-02** parte el apoyo en **carga `[IC,MS]`** y **propulsión `[MS,TO]`**, con degradación explícita si MS llega marcado. **Bloque C:** #12/#13/#14 se instancian **por FSR × sub-fase** (instanciación, no entradas nuevas); #16 gana dominio explícito en la carga. **Dos features nuevas:** **#43 push-off time ratio** (bloque A) y **#44 propulsive impulse ratio** (bloque D, contraparte **temporal** de #19 que es **espacial**) — catálogo **45 → 47**, ambas adimensionales y **activas con 2 FSR**. **Esquema:** `gait_events.type ∈ {IC,TO,MS}`.
+- **Archivos:** `vistas/2_specs_algoritmos_firmware.md` (SPEC-01 y SPEC-02 reescritas), `vistas/2_vista_firmware.md` (§3 + índice de specs con SPEC-09), `vistas/3_analisis_features_y_algoritmos.md` (Parte A: bloques A/C/D, nota de conteo, nota del evento), `vistas/3_vista_datos_ml.md` (§1), `vistas/4_vista_backend_app.md` y maestro §11.3 (`gait_events`), `src/db/schema.sql`, `bitacora_decisiones.md` (ADR-038 + índice), `memory.md`, `changelog.md`.
+- **Nota:** en SPEC-01 se corrigió "3 FSR" → "2 FSR (punta/talón), N configurable" porque la definición de MS lo exige; el resto de los restos de "3 FSR" (mermaid de V1 y maestro, nota del bloque C, formato de paquete) **sigue pendiente**, igual que el objetivo derogado "<50 ms" y el §15 del maestro.
+
+## 2026-08-18 — Auditoría de consistencia entre vistas + esquema al día (ADR-036 / ADR-037)
+
+- **Auditoría de consistencia** de las 4 vistas, satélites, stack, maestro y DDL contra la bitácora: **14 conflictos reales + 7 huecos entre vistas + 4 cuestiones abiertas sin registrar**. Diagnóstico: no hay desacuerdos de diseño — son **restos de versiones anteriores** de decisiones que después cambiaron, concentrados en la tanda **ADR-029 a ADR-035** (todas del 21/07), que se escribieron en la bitácora y en su vista pero **no bajaron** al maestro, a las SPECs ni al DDL. Informe con archivo y línea de cada hallazgo.
+- **Aviso operativo:** el mount de Windows devolvió **contenido desactualizado** en la primera lectura de varios archivos (`memory.md`, `changelog.md`, Vista 4). Confirma la lección del 16/07 y la amplía a las **lecturas**: verificar por `wc -c`/`md5` antes de trabajar sobre un archivo grande.
+- **ADR-036 — Fase de captura y origen de las features en el esquema.** `sessions.mode` pasa a **tres** valores (`exploratory`/`operational`/`edge`) reflejando ADR-005 rev c; y `feature_vectors` suma **`features_source ∈ {device, offline}`**. Motivo del segundo campo: en la fase **operativa** conviven **dos vectores para la misma zancada** (el del micro, que entrena skew-free por ADR-018, y el recalculado off-device, que valida la paridad) — el modo a nivel sesión no alcanza para distinguirlos. Descartadas: sólo-tres-valores (deja la paridad sin discriminante) y `mode` + `capture_phase` (dos campos redundantes que hay que mantener coherentes).
+- **ADR-037 — Fuente única del esquema.** El DDL estaba escrito **dos veces** (maestro §11.3 y `src/db/schema.sql`) y **ya habían divergido** (orden de tablas, comentarios, acentos). `schema.sql` pasa a ser la única fuente; el maestro §11.3 se convierte en **mapa de entidades + puntero** (pierde ~150 líneas de DDL). Es la misma regla de layering que el repo ya aplica a las features. Descartadas: maestro-manda (el `.sql` es el que se ejecuta) y doble copia con test de CI (infra para un problema que se resuelve no duplicando).
+- **`src/db/schema.sql` puesto al día** con lo ya decidido y nunca escrito: **RLS estricto** + tabla `patient_access` + función `has_patient_access()` + políticas por tabla (**ADR-032**), **`sessions.host_type`** + versión de app (**ADR-034**), **tabla `feedback_config`** per-paciente —`feedback_source`, bandas T1/T2/T3, N de ventana, intensidad, refractario, histéresis— (**ADR-027/SPEC-09**), y el comentario del registry corregido a **L/E/H/W**. **No requiere migración:** todavía no hay datos capturados.
+- **Nueva CP-20 — columnas generadas sobre `features`** (ADR-031): es lo único del esquema que **no se puede decidir todavía**, porque depende de congelar el `feature_set_version` (#12) y de saber qué grafica el dashboard (diferido a la máxima).
+- **Archivos:** `src/db/schema.sql` (reescrito), `Arquitectura_Sistema_Marcha.md` (§11.3), `vistas/4_vista_backend_app.md` (§1.1/§1.2/§1.3 + pendientes), `decisiones/bitacora_decisiones.md` (ADR-036/037 + índice), `cuestiones_pendientes.md` (CP-20), `memory.md`, `changelog.md`. **Queda del backup:** `src/db/schema.sql.bak` (borrable, el original está en git).
+- **Sigue (de la auditoría, pendiente de decisión):** §15 del maestro se quedó en ADR-028 (faltan 9 filas) · mid-stance (ADR-029 vs SPEC-02) · bloque I de tronco sin lugar en la Vista 2 · restos de PyTorch y del objetivo "<50 ms" · punteros y recuentos varios.
+
+## 2026-07-21 — Vista 4 consolidada; las 4 vistas completas
+
+- **`vistas/4_vista_backend_app.md` consolidada:** pasa de andamiaje a **vista consolidada** con la definición canónica del backend/app. Contenido: **persistencia Supabase** (modelo en 3 capas: relacional / hypertables Timescale / object storage; inventario de tablas), **`feature_vectors` = jsonb + columnas generadas** (ADR-031), **trazabilidad de sesión** (modo, `feature_set_version`, `host_type` — ADR-034), **retención tiered** (ADR-008), **seguridad y RLS** con `patient_access` y worker en `service_role` (ADR-032; formal → CP-18), **worker de reentrenamiento** con orquestación por `retrain_jobs` y cuantización int8 (ADR-009/022), **app host + UI de control** y config de feedback per-paciente (ADR-033, ADR-027/SPEC-09), **dashboard clínico** diferido a la máxima (ADR-033) y **OTA lado backend** (ADR-012). Sin cambios de decisión: sólo consolidación.
+- **Diagrama nuevo `componentes_backend_app.mermaid`:** componentes y flujos fuera de los micros (cintura → host → Supabase → worker → OTA de vuelta; dashboard de solo lectura con RLS). Era el diagrama que la V4 marcaba "a crear".
+- **Gap detectado y registrado:** `src/db/schema.sql` ya existe y usa `features jsonb`, pero **le faltan** RLS + `patient_access` (ADR-032), las **columnas generadas** (ADR-031), **`sessions.host_type`** (ADR-034) y la **tabla de config de feedback** (ADR-027). Anotado en el backlog de la V4.
+- **Estado de consolidación: las 4 vistas quedan consolidadas.** El maestro sigue intacto (mantiene la vista general completa, por decisión de Juan).
+- **Archivos:** `vistas/4_vista_backend_app.md` (reescrita), **nuevo** `componentes_backend_app.mermaid`, `memory.md`, `changelog.md`.
+
+## 2026-07-21 — ADR-035 rev: sin gestión de energía en la mínima (el switch es el on/off)
+
+- **Planteo de Juan:** el wake-on-motion por unidad es frágil; propuso que la cintura coordine y que no haya detección de movimiento en las plantillas. **Se revisó ADR-035.**
+- **Análisis:** (1) los **umbrales de movimiento son poco confiables en marcha hemipléjica** (paciente lento, débil, arrastra el pie); (2) el auto-sleep **hace perder los primeros pasos** tras estar sentado — y la transición sentado-a-parado es de lo más valioso clínicamente; (3) **despertar por radio no ahorra energía** (para escuchar, la radio tiene que estar encendida, y el CYW43 es el consumo dominante; además re-asociar WiFi es lento y caro), así que la propuesta equivale a **no tener gestión de energía**; (4) **la autonomía no lo exige**: ~10 h contra el objetivo de ≥8 h.
+- **Decisión (rev):** **sin gestión de energía en la mínima** — el **switch físico es el encendido/apagado**, todo despierto mientras esté encendido. **Wake-on-motion y WiFi power-save quedan documentados como opciones para la máxima**, fuera del alcance de la placa nueva. **Traza INT del IMU:** se mantiene por el fallback DATA_READY (ADR-026) pero **deja de ser crítica**. **Heartbeat** cintura→plantillas: se conserva como función de **salud del enlace**, no de energía.
+- **Consecuencia:** se simplifica la placa nueva; quedan **sin efecto** el auto-sleep por modo, el indicador por pulso del motor y la secuencia de wake cintura↔plantillas. **Gana importancia el corte por baja tensión en firmware** (sin dormant, un equipo encendido consume hasta agotar la celda). El corte **diferenciado** (switch en cintura / JST accesible en plantilla) se mantiene para la próxima rev.
+- **Archivos:** `bitacora_decisiones.md` (ADR-035 rev + índice), `esquema_alimentacion.md` (encabezado + §7), `cuestiones_pendientes.md` (CP-19), `memory.md`, `changelog.md`.
+
+## 2026-07-21 — Encendido/apagado (ADR-035); CP-19 resuelta; checklist de la rev del PCB
+
+- **ADR-035 — Soft-off por software + wake-on-motion, en dos fases.** Apagado operativo = **DORMANT + CYW43 apagado**; encendido = **interrupción de movimiento del MPU-6050**. **Sin corte por hardware**: con 1000 mAh y ~800 µA de reposo hay **>50 días**, así que el latch sobre 3V3_EN optimizaría un problema inexistente (el consumo que importa es el activo → CP-09). Queda **habilitado** por el cambio a VSYS directo (con el boost, el dormant era imposible).
+  - **Fase 1 (vigente, decisión de Juan):** cableado **puenteado** sobre la placa actual + **switch físico en las tres placas**; el switch **es** el encendido/apagado y **todavía no hay wake-on-motion** (falta la traza INT). Permite empezar a probar sin esperar la placa nueva. *Sugerencia registrada:* si el IMU tiene el pin INT expuesto, un cable volante permite validar el wake-on-motion ya en esta fase.
+  - **Fase 2 (rev del PCB, diferida):** criterio **diferenciado** — **cintura** con slide switch (+ reset opcional sobre RUN); **plantilla sin actuador mecánico** (fina, sellada, bajo carga, con impactos → un reed switch rebotaría), corte por **JST/header accesible**. Más traza INT, auto-sleep por modo, indicador por pulso del motor y corte por baja tensión en firmware.
+- **CP-19 → Resuelta** (ref. ADR-035).
+- **`esquema_alimentacion.md` ampliado:** encabezado con las dos fases y **§7 convertida en checklist consolidado de la próxima rev del PCB** (9 ítems de placa + 4 de firmware), para que el rediseño sea **una sola vuelta**: cargador con corriente limitada, FSR medial/lateral (decidir si hace falta mux), traza INT, alimentación nueva, señal CHRG, corte diferenciado, celda y su alojamiento, reset en RUN, tensión del motor. **Aviso registrado:** al sellar la plantilla se pierde el BOOTSEL → el **OTA debe estar probado antes**.
+- **Archivos:** `bitacora_decisiones.md` (ADR-035 + índice), `esquema_alimentacion.md` (fases + checklist), `cuestiones_pendientes.md` (CP-19 → Resueltas), `memory.md`, `changelog.md`.
+
+## 2026-07-21 — Esquema de alimentación (guía de cableado) + hallazgos de banco (CP-19)
+
+- **Nuevo documento `docs/arquitectura/esquema_alimentacion.md` + `esquema_alimentacion.mermaid`:** guía de cableado del subsistema de alimentación (diagrama, tabla de conexiones potencia/señales, cambios respecto del cableado actual, checklist de verificación y pendientes de hardware). Es guía de banco, no ADR.
+- **Hallazgo de banco (Juan):** con el cableado inicial (celda → módulo → boost 5 V → **VBUS pin 40**), el equipo **no arranca al conectar la batería** y, andando, **se apaga solo tras quitar el USB**. Diagnóstico: el boost del módulo de carga/descarga **arranca deshabilitado** (necesita alimentación de entrada como disparador) y **corta por baja carga**. Eso hace **imposible** el dormant + *wake-on-motion* de CP-19 colgado de esa salida.
+- **Estado objetivo definido:** **celda directo a VSYS (pin 39)** — documentado por el fabricante para celdas de litio; el **RT6150 buck-boost** sostiene 3,3 V de 4,2 a 3,0 V. **Sensores (IMU + divisores FSR) desde 3V3 OUT (pin 36)** → medición **ratiométrica** con el ADC y nodo del divisor acotado a 3,3 V por construcción (antes, excitados a 5 V, podían salirse de rango). **Motor desde VSYS** vía NPN, fuera del riel de sensores. **VBUS sin conexión** (con el módulo en VBUS quedaban dos fuentes de 5 V unidas al enchufar el USB de la laptop). Beneficio: se elimina una conversión + la caída de D1 → **~20 % de autonomía**.
+- **Números de energía (primera cuantificación, alimenta CP-09):** ~**10 h** a 100 mA con VSYS directo (cumple el objetivo blando de ≥8 h; por el boost se caía a ~7 h); **>50 días** en dormant a 800 µA → **el reposo no es el problema, el consumo activo sí**. Confirma que **no hace falta corte por hardware** (3V3_EN/latch) para el apagado.
+- **Pendientes de hardware registrados:** (1) **corriente de carga 2,4 A vs 0,2C/0,5C de la celda — prioridad de seguridad**; (2) switch de servicio; (3) traza INT del IMU; (4) espesor de la celda (10 mm no entra bajo el pie); (5) alojamiento mecánico de la celda; (6) tensión nominal del motor; (7) corte por baja tensión en firmware.
+- **Archivos:** **nuevos** `docs/arquitectura/esquema_alimentacion.md` y `esquema_alimentacion.mermaid`; `cuestiones_pendientes.md` (CP-19); `changelog.md`.
+
+## 2026-07-21 — Switch mínima↔máxima (ADR-034); CP-16 resuelta; nueva CP-19 (encendido sin botón)
+
+- **ADR-034 — El micro es agnóstico al tipo de host (CP-16).** No detecta compu vs celu (las heurísticas BLE —MTU, connection params, `Appearance`— son frágiles y **no harían falta: el micro no cambiaría nada si lo supiera**). **El flujo lo determina el host** (laptop→worker local / celu→worker nube); el **modo** (exploratoria/operativa/edge) es **comando explícito** por el canal de control (ADR-033), nunca inferencia. **Variante elegida por Juan:** el host **declara su tipo** en `sessions.host_type` (+ versión de app) para **trazabilidad del dataset**, sin efecto en el comportamiento. Confirma el principio rector §2.3 y el invariante de reutilización del firmware.
+- **CP-16 → Resuelta** (ref. ADR-034). Reflejado en Vista 1 §7.
+- **CP-19 (nueva, en análisis) — Encendido/apagado sin botón.** Batería soldada permanente, sin botón: soft-off por software (DORMANT + CYW43 apagado + **wake-on-motion** del MPU-6050 por la traza INT ya planificada en CP-01) vs. off real por hardware (3V3_EN / load switch + reed-switch o cargador como wake). Incluye protección de descarga profunda y la secuencia de wake cintura↔plantillas. *Evidencia inicial verificada:* **<800 µA en dormant en Pico 2 W** (powman + CYW43 apagado por GPIO23); el **CYW43 domina** el consumo. Deps: CP-01, CP-08, CP-09.
+- **Archivos:** `decisiones/bitacora_decisiones.md` (ADR-034 + índice), `vistas/1_vista_sistema.md` (§7), `cuestiones_pendientes.md` (CP-16 → Resueltas; CP-19 nueva), `memory.md`, `changelog.md`.
+
+## 2026-07-21 — Interfaces UI/dashboard (ADR-033); CP-15 resuelta
+
+- **ADR-033 — Interfaces (CP-15).** Dos UIs separadas por rol: **(a) UI de control/operador** = app local Python + UI web (FastAPI sobre el host `bleak`) para elegir paciente, abrir sesión, **cambiar el modo de las zapatillas**, ver estado y disparar OTA; en la máxima → app móvil nativa (mismo firmware BLE). **(b) Dashboard clínico** = web de solo-lectura sobre Supabase con RLS, **diferido a la máxima** (en la exploración alcanzan notebooks; tecnología Streamlit/React a decidir entonces). No controla las zapatillas.
+- **CP-15 → Resuelta** (ref. ADR-033). Reflejado en la Vista 4 (app host + dashboard).
+- **Archivos:** `decisiones/bitacora_decisiones.md` (ADR-033 + índice), `vistas/4_vista_backend_app.md`, `cuestiones_pendientes.md` (CP-15 → Resueltas), `memory.md`, `changelog.md`.
+
+## 2026-07-21 — Seguridad / RLS (ADR-032); CP-04 resuelta a nivel técnico; nueva CP-18
+
+- **ADR-032 — Seguridad y aislamiento de datos: RLS estricto por paciente.** Aislamiento con **RLS de Supabase** en todas las tablas con `patient_id` + **tabla de pertenencia `patient_access`** (user→patient→rol); **worker con service-role** (saltea RLS); cifrado en tránsito (TLS/BLE-LESC/WPA2) y reposo (plataforma); `external_code` anónimo + PII mínima; borrado de bonds+datos al reasignar la cintura. En la mínima un solo owner (investigador); la máxima suma clínico/paciente **sin reescritura**. Confirma §13; el maestro no se toca.
+- **CP-04 → Resuelta a nivel técnico** (ref. ADR-032). El **nivel formal** (consentimiento/anonimización/auditoría/passkey de ADR-028) queda como **CP-18 (nueva, abierta)**: ratificación con el comité de ética de ITBA.
+- **Archivos:** `decisiones/bitacora_decisiones.md` (ADR-032 + índice), `vistas/4_vista_backend_app.md` (seguridad), `cuestiones_pendientes.md` (CP-04 → Resueltas, CP-18 nueva), `memory.md`, `changelog.md`.
+
+## 2026-07-21 — Motivo del IMU ratificado (MPU-6050); actualiza ADR-030 / CP-09
+
+- **Motivo del cambio BMI270→MPU-6050 (ratificado, Juan):** **disponibilidad actual + presupuesto**; en una **próxima iteración de hardware** podría actualizarse a un IMU superior. Se actualiza **ADR-030** (ya no "a ratificar") y se anota en **CP-09** (el MPU-6050 consume más que el BMI270). Archivos: `bitacora_decisiones.md`, `cuestiones_pendientes.md`, `changelog.md`.
+
+## 2026-07-21 — Esquema de feature_vectors (ADR-031); CP-05 resuelta
+
+- **ADR-031 — Esquema de `feature_vectors` = `jsonb` + columnas generadas.** El vector por zancada se guarda como **jsonb** (una fila = un vector + `feature_set_version`), con **columnas generadas `STORED` / índices de expresión** para las features calientes del dashboard, **continuous aggregates** de Timescale para series agregadas, y **puerta de salida a *wide*** cuando el `feature_set_version` operativo se congele. Motivo: el feature set aún cambia (flexibilidad > rendimiento) y el volumen es bajo (~1 vector/s por pie). Descartadas: columnas fijas (migración ante cada cambio del set) y long/narrow (complica el ML por el pivot). **No cambia el DDL del maestro §11.3** (ya usa `features jsonb`): lo confirma y extiende.
+- **CP-05 → Resuelta** (ref. ADR-031). Reflejado en la Vista 4 (persistencia).
+- **Archivos:** `decisiones/bitacora_decisiones.md` (ADR-031 + índice), `vistas/4_vista_backend_app.md` (nota de esquema), `cuestiones_pendientes.md` (CP-05 → Resueltas), `memory.md`, `changelog.md`.
+
+## 2026-07-21 — Reconciliación anteproyecto/marco (ADR-030); CP-11 resuelta
+
+- **ADR-030 — Reconciliación documental** del anteproyecto + marco teórico con la arquitectura real. Registra el *delta* (sin tocar el anteproyecto, que es histórico): topología solo-plantilla→**cintura-hub** (ADR-005), **BMI270→MPU-6050 + IMU de cintura**, **bloque I** de tronco (ADR-029; recupera el IHR ML top-1 de Brasiliano que el marco daba por perdido), algoritmos **§4.3** (no §6 — SST-AD/SVR/RF descartados), feedback on-device (ADR-027).
+- **CP-11 → Resuelta** (reconciliación documental; ref. ADR-030). **Sub-punto derivado:** ratificar el motivo del cambio **BMI270→MPU-6050** y su impacto de energía → **CP-09**.
+- **Pendiente (sujeto a OK de Juan):** nota-puntero al inicio del **marco teórico** apuntando a ADR-030 (el marco es documento de trabajo; el anteproyecto no se toca).
+- **Archivos:** `decisiones/bitacora_decisiones.md` (ADR-030 + índice), `cuestiones_pendientes.md` (CP-11 → Resueltas), `memory.md`, `changelog.md`.
+
+## 2026-07-21 — Auditoría de alineación (features/algoritmos) + ADR-029
+
+- **Auditoría (5 subagentes):** se verificó la alineación del catálogo de features y del stack de algoritmos contra el marco teórico, el doc de features, el anteproyecto y los 22 papers. Informe: **`docs/investigacion/alineacion_features_algoritmos.md`** (guardado en el repo). Veredicto: núcleo (bloques A–G + 4 algoritmos + filosofía) fuertemente alineado; discrepancia estructural = **la cintura + el bloque I no están en el marco/anteproyecto** (es CP-11; el bloque I recupera el IHR ML top-1 de Brasiliano que el marco daba por perdido).
+- **ADR-029 (features + algoritmos):**
+  - **+4 features** (Vista 3 Parte A, ADR-021): #39 single support (A), #40 symmetry angle (D), #41 avg zero-crossings (H, Fase 4), #42 sway density del COP (E, **diferida**). **+ evento mid-stance** (segmentación). Catálogo **41→45**.
+  - **Diferidas/descartadas por hardware:** contact area (necesita matriz de presión), foot progression angle (MPU-6050 sin magnetómetro), stride width (sin referencia M/L común).
+  - **+3 algoritmos candidatos** al registry (model-agnostic): **OC-SVM** (E/W, benchmark offline — mejor evidencia, Toth AUC 0,967), **GMM/z-score** (L/E), **VAE** (E/H). **Sustitución OC-SVM→Mahalanobis** documentada (detector RT = Mahalanobis por costo edge). RSF/COX/SHAP = pronóstico (otra tarea); LASSO → #12; SST-AD/SVR/RF → CP-11.
+  - **Estrategia progresiva** (Vista 3 §7.1): Mahalanobis→IF→AE denso→LSTM AE, escalando sólo si el anterior no alcanza; OC-SVM/GMM/VAE como benchmark. Alimenta el roadmap.
+- **Advertencias de validez** (del informe, para la fase de dataset): validez de plantillas a baja velocidad (loading-time no validado); eventos IC/TO validados en running sano → re-validar en marcha hemipléjica; **stride time NO asimétrico en ACV** (evitarlo como feature de simetría); precedentes de feedback son correctivos, no monitoreo.
+- **Archivos:** `vistas/3_vista_datos_ml.md` (§1 + §7 + §7.1), `vistas/3_analisis_features_y_algoritmos.md` (Parte A +4 features/mid-stance, Parte C candidatos/notas), `decisiones/bitacora_decisiones.md` (ADR-029 + índice), **nuevo** `docs/investigacion/alineacion_features_algoritmos.md`, `memory.md`, `changelog.md`.
+- **Pendiente de sync (maestro intacto por decisión de Juan):** maestro §8.4 y `resumen_investigacion.md` siguen con "41 / 8 bloques" (y el resumen, taxonomía "L/E/W").
+- **Sigue:** reconciliación **CP-11** (elegida por Juan, próximo paso).
+
+## 2026-07-21 — Consolidación de la Vista 3 (datos/ML); #11 pospuesto a implementación
+
+- **Rumbo (con Juan):** el backlog **#11 (validación de footprint/latencia)** se **pospone a la fase de implementación** — valida sobre firmware ya escrito; como spec pura sólo daría presupuestos/estimaciones (la mitad floja del ítem). En su lugar se avanza con la **consolidación de vistas** (paso previsto "al cerrar el firmware"). **Alcance decidido: solo Vista 3.** **Organización: satélite** (como la V2). **Sin cambios de decisión de arquitectura — sólo coherencia.**
+- **Vista 3 consolidada:** `vistas/3_vista_datos_ml.md` pasa de andamiaje a **vista consolidada** con la **definición canónica** de datos/ML (features/referencia + modularidad; taxonomía L/E/H/W + registry/ruteo model-agnostic; Mahalanobis detector+drift; personalización; calibración/baseline; ciclo de vida; tabla de algoritmos). `3_analisis_features_y_algoritmos.md` queda como **documento satélite de detalle** (catálogo Parte A, modularidad B, algoritmos C, backlog D) — relación análoga a `2_specs_algoritmos_firmware.md` con la V2.
+- **Satélite al día (Parte D):** marcados **#1–#10 resueltos** con su ADR/SPEC (faltaban #1–#6 y #9); **#11 reescrito** sin el objetivo obsoleto *"feedback <50 ms"* (ADR-027 lo cambió a alerta terminal por ventana → el criterio es margen por-zancada, no latencia de bucle) y aclarado que requiere firmware; **#12** requiere dataset. **Parte C:** header de footprint/latencia marcado como estimación a validar en #11; fila del LSTM AE a **E/H/W** (coherencia con ADR-011 rev).
+- **Diagrama nuevo:** `calibracion_baseline.mermaid` — protocolo de calibración/baseline por paciente (preparación física FSR/IMU → sesión ~100 zancadas como captura operativa skew-free → ajuste μ/Σ + baseline + umbral χ² → registro/despliegue; recalibración por drift). Referenciado por V3 §5 y V2.
+- **Maestro:** **sin tocar** (decisión de Juan: mantiene toda la data + la vista general; la duplicación con la V3 es la esperada, como con la V2). *(Nota — incoherencias menores del maestro por si se limpian más adelante, no tocadas: §17 "CP-01 a CP-12", §8.4 "8 bloques" sin el bloque I, §9.1 "profiling §16" vs #11.)*
+- **Archivos:** `vistas/3_vista_datos_ml.md` (reescrito); `vistas/3_analisis_features_y_algoritmos.md` (Partes C/D); **nuevo** `calibracion_baseline.mermaid`; `memory.md`; `changelog.md`.
+- **Sigue:** consolidar **V4** (backend/DB/seguridad); luego **roadmap de implementación** e iniciar `src/`. #11/#12 al llegar a implementación/dataset.
+
+## 2026-07-20 — Consolidación / reconciliación de punteros globales
+
+- Sincronizados índices y punteros con las decisiones de la sesión (ADR-026/027/028; CP-07/17/10/14 resueltas), **sin cambios de decisión — sólo coherencia:** **CLAUDE.md** (estado → SPEC-01 a 09, ADR-000 a 028; cuestiones abiertas/resueltas al día), **memory.md** (puntero ADR-000 a 028), **maestro** §5.3 (pairing → ADR-028) y §15 (fila ADR-028), **stack_tecnologico** (BTstack + Security Manager/pairing).
+
+## 2026-07-20 — Emparejamiento BLE sin botón (ADR-028); cierre de CP-14
+
+- **ADR-028 — Pairing cintura↔host BLE, sin botón (mecanismo v1).** Los micros son tipo auriculares BLE; plantilla↔cintura es de fábrica. **Entrar en pairing:** auto-advertise sin bond (primer uso) + **gesto multi-IMU** — la cintura entra si su IMU ve una **sacudida marcada ~5 s** *y* las **plantillas están quietas** (evita falsos disparos por bailar/marcar el paso; aprovecha que la cintura es el hub de fusión), con ventana temporal. **Autenticación:** **passkey fijo impreso** (BTstack SM, Passkey Entry / LE Secure Connections; Just Works descartado por ser datos de salud). **Bond list multi-host N≈4** (configurable), reconexión **iniciada por el host** (una a la vez, primero en llegar; cambiar = el conectado suelta), evicción **LRU** o forget explícito. **Diferido a máxima:** borrar-todo/factory-reset (privacidad al reasignar la cintura), pantalla (passkey por sesión), OOB. **Apéndice en llano** completo (periférico/central, pairing vs bonding, gesto, passkey, **conexión/desconexión con uno o varios hosts**, olvidar). **Deps:** CP-04 (seguridad), CP-15 (UX app).
+- **Cuestiones:** **CP-14 → Resuelta** (nivel mecanismo, ADR-028). Nota agregada en **CP-04** (ratificar nivel de pairing + borrar bonds/datos al reasignar).
+- **Archivos:** `bitacora_decisiones.md` (ADR-028 + índice); `cuestiones_pendientes.md` (CP-14 → Resueltas; nota CP-04); Vista 1 §3.3; Vista 2 §10 + pendientes + ADRs; `memory.md`.
+
+## 2026-07-20 — Diseño del feedback vibrotáctil (ADR-027 / SPEC-09); cierre de CP-10
+
+- **ADR-027 — Feedback vibrotáctil = monitoreo + alerta, no corrección.** El sistema **detecta anomalía y avisa**; qué hace el paciente (corregir, descansar, ignorar) es su decisión (coherente con el título de la tesis). Consume un **score designado** (`feedback_source` en el registry, **model-agnostic** — Mahalanobis/AE/IF/ensemble; ADR-011 rev) **evaluado sobre una ventana de zancadas** (no la última): se prioriza **eficacia** (anomalía **sostenida** → menos falsos positivos). **Timing event-locked/terminal, no concurrente** (además, el score es por-zancada → naturalmente terminal). Severidad = **3 bandas por umbral per-paciente** (leve/marcada/riesgo), "riesgo" **co-anclado a caída** (asimetría/sway — Jung). Entrega: **3 patrones por ritmo** (ERM/PWM), **ambos pies** (sin localización por-pie en v1), con **histéresis + refractario** (feedback escaso, Iwata). Modelo, ventana, agregación y umbrales = **empíricos** (exploratorio). Apéndice en llano.
+- **SPEC-09 — Patrones de feedback + lógica de disparo:** entrada (score `feedback_source` + ventana SPEC-05 + indicadores de caída), lógica (evaluar ventana → banda → filtro de escasez → comando a la plantilla), patrones por ritmo, parámetros per-paciente en DB, calibración, hardware ERM.
+- **Evidencia (papers):** patrones > alertas simples (Sanchez-Morillo 2025); carga cognitiva real → escaso (Iwata 2019); umbral/inmediato funciona pero con otro propósito (Ma 2018); riesgo de caída = asimetría/sway (Jung 2017).
+- **Cuestión:** **CP-10 → Resuelta** (ADR-027/SPEC-09).
+- **Archivos:** `bitacora_decisiones.md` (ADR-027 + índice); `2_specs_algoritmos_firmware.md` (SPEC-09); `cuestiones_pendientes.md` (CP-10 → Resueltas); Vista 2 §6 + pendientes + ADRs; Vista 4 (config de feedback); maestro §8.3 + §15; `memory.md`.
+
+## 2026-07-20 — Muestreo/lectura del IMU (ADR-026) + reparto uniforme de cores (ADR-024 rev); cierre de CP-07 y CP-17
+
+- **ADR-026 — Estrategia de muestreo y lectura del IMU:** **tick maestro (polling 100 Hz) + lectura por DMA**, con el IMU a **ODR interno alto (~1 kHz) + DLPF** (sobremuestreo anti-alias) y **un timestamp por tupla FSR+IMU**. **DATA_READY** queda como **fallback** (requiere rutear la traza INT→GPIO en la próxima rev del PCB — CP-01/CP-08); **FIFO descartada** (rompe el timestamp único y el modelo de sync). Aplica a las tres unidades; la **cintura a 100 Hz + DMA**, con **50 Hz** como fallback validable en #11. Con la lectura por DMA + IRQ, la llegada de muestras no compite con la inferencia del core 1 de la cintura. Complementa ADR-014. **Cierra CP-07** y la parte abierta de **CP-17**. Incluye apéndice conceptual en llano (polling/beating, DLPF, DMA, IRQ).
+- **ADR-024 (rev 2026-07-20) — reparto uniforme de cores:** la **plantilla** pasa a aislar el **radio** (como la cintura), no la adquisición. Queda un **invariante uniforme en los 3 micros: core 0 = radio, core 1 = procesamiento**. Plantilla: **core 0 = WiFi-STA + TX + motor; core 1 = adquisición + eventos IC/TO + features por-pie**. Motivo (planteo de Juan): las features por-pie son livianas (ráfaga ~1 Hz + AHRS de µs) y con DMA+IRQ la adquisición se autoprotege; el verdadero inquilino de latencia impredecible es el **WiFi**, así que conviene aislarlo. Beneficios: data locality (el crudo a 100 Hz no cruza de core), código compartido uniforme. **Aclaración:** en la plantilla se calculan sólo las **features por-pie**; las **bilaterales** (simetría bloque D, double support) siguen en la **cintura** (ADR-005). El reparto exacto se confirma en #11.
+- **Cuestiones:** **CP-07 → Resuelta** (ADR-026). **CP-17 registrada y → Resuelta** (RTOS bare-metal por ADR-025; rate del IMU de la cintura por ADR-026); no estaba en el registro pese a ser referenciada por ADR-024/025.
+- **Reconciliación de coherencia:** se sincronizaron punteros viejos — `memory.md` (decía "ADR-000 a 018", sin ADR-024/025/CP-17) y, en la Vista 2, el resumen de stack y el backlog pendiente (RTOS "a definir" / "FreeRTOS cintura"). Se completó la tabla §15 del maestro (faltaban filas ADR-023/024/025/026).
+- **Archivos:** `bitacora_decisiones.md` (ADR-026 + ADR-024 rev + índice); `cuestiones_pendientes.md` (CP-07/CP-17 → Resueltas; nota en CP-01); Vista 2 §2/§9 + pendientes; maestro §8.6 + §15; `stack_tecnologico.md`; `memory.md`.
+
+## 2026-07-19 — Aclaración de sincronización: el IC no sincroniza relojes (ADR-004)
+
+- **Planteo de Juan:** había ambigüedad — se decía que el emparejado por IC era "red de seguridad si el reloj driftea" y a la vez que el IC no sincroniza relojes. **Se deja claro:** el **backbone de reloj (beacon + corrección de drift) es el único mecanismo de sincronización**; el **emparejado de zancadas usa el reloj ya sincronizado** (con los relojes sincronizados se emparejan las zancadas por IC) y **no** sincroniza ni compensa drift. Corregido en Vista 1 §5, ADR-004 y maestro §7.2.
+
+## 2026-07-19 — Corrección del modelo de conectividad + nuevas cuestiones (CP-14/15/16)
+
+- **Corrección (planteada por Juan):** se elimina la idea de *provisioning a WiFi de infraestructura (casa/clínica)* que venía del maestro §5.3 — **era incorrecta** (la arrastré sin cuestionar). Los micros funcionan como **auriculares BLE**: nunca se conectan a WiFi de internet; el único WiFi es el enlace privado plantillas↔cintura (cintura=AP), y la cintura habla con su host (compu/celu) sólo por BLE (con OTA por BLE). Corregido en Vista 1 §3.3 y maestro §5.3.
+- **Nuevas cuestiones (registradas, a analizar después — implican cambios grandes):** **CP-14** (modo de búsqueda/emparejamiento BLE sin botón físico), **CP-15** (dos interfaces desde la mínima: UI de usuario para modos de las zapatillas —que pasa a app de celu— y dashboard clínico web alimentado desde la DB), **CP-16** (detección compu vs celu y switch de pipeline mínima↔máxima, o si el flujo lo determina el host y no el micro).
+- **Archivos:** Vista 1 §3.3; maestro §5.3; `cuestiones_pendientes.md` (CP-14/15/16); `CLAUDE.md` y `memory.md` (índice de cuestiones).
+
+## 2026-07-19 — ADR-023: alcance inicial de features (hardware con 2 FSR: punta + talón)
+
+- **Contexto (aporte de Juan):** hoy hay **2 FSR conectados** (ADC0/GP26 **punta**, ADC1/GP27 **talón**); el 3º/4º (**medial/lateral**, para COP_ML) vienen en una etapa posterior de la placa.
+- **Decisión (ADR-023):** los primeros modelos se entrenan con un **set activo "2-FSR"** que **excluye** las features de fuerza medial-lateral — **bloque E (#22-25 COP_ML) + #18 (ratio M/L)** —, que quedan **definidas** en el catálogo pero **desactivadas**. Se **activan** al sumar los FSR ML (nuevo `feature_set_version`), sin reescritura. Es aplicación directa de la modularidad de ADR-021. El resto del catálogo FSR (bloque C, #19 AP) funciona con punta+talón.
+- **Archivos:** ADR-023 + índice en la bitácora; Vista 1 §1 (hardware 2 FSR); Vista 3 (bloque E + #18 marcados diferidos + nota de set activo 2-FSR); SPEC-06 (diferida); maestro §3 (hardware); CP-01 (aclarada) y CP-08 (instancia); `memory.md`.
+
+## 2026-07-19 — Backlog #10: framework de entrenamiento + cuantización (ADR-022)
+
+- **ADR-022:** **TensorFlow/Keras** para entrenar los modelos neuronales (AE denso; LSTM si se persigue) y **PTQ (post-training quantization) a int8** con **representative dataset**; **QAT como fallback** medido. Pipeline: TF/Keras → conversor TFLite/LiteRT (full-int8) → flatbuffer → OTA (ADR-012) → TFLite Micro (ADR-020). Mahalanobis (numpy/CMSIS-DSP) e IF (scikit-learn) no usan TF.
+- **Coherencia:** una sola cadena TF→conversor→TFLite Micro (sin export intermedio como requeriría PyTorch); el representative dataset sale de las features del micro (ADR-018). Naming verificado: TFLite→**LiteRT** (sep 2024), TFLM = LiteRT for Microcontrollers.
+- **Apéndice conceptual (en llano)** al final de ADR-022: qué es cuantizar (float32→int8, 256 niveles), representative dataset (calibración de rangos), PTQ vs QAT (analogía del telegrama), por qué PTQ acá, int8 de punta a punta.
+- **Archivos:** ADR-022 + índice; maestro §15 (fila 23); `stack_tecnologico` (Deep learning + Cuantización → decididos); backlog #10 en Vista 3 §D; `memory.md`. **Sigue:** #11 validación de footprint/latencia.
+
+## 2026-07-19 — Backlog #9: catálogo de features compartido + paridad (ADR-021)
+
+- **ADR-021:** el catálogo de features es un **archivo de datos declarativo** (JSON/TOML) en `src/firmware/shared/` (metadata + set activo + `feature_set_version`), y la paridad C↔Python se mantiene con **dos implementaciones + tests de paridad (golden vectors)** con tolerancia por-feature. **Codegen y C-único-bindeado descartados** (este último por decisión de Juan, ni como escalación); la escalación ante drift es disciplina numérica + tolerancias.
+- **Encaja con** el fasado (exploración Python-first, ADR-005 rev c) y ADR-018 pto 2 (el training usa las features del micro → la paridad es un **guard**, no una dependencia dura). **Refina ADR-018** (pt 4) y **resuelve CP-12** (mecanismo de modularidad; la selección data-driven de qué se prende sigue en #12).
+- **Archivos:** ADR-021 + índice en la bitácora; ADR-018 pt4; Vista 3 Parte B; maestro §15 (fila 22); `stack_tecnologico` (Vista 2); CP-12 → Resueltas; `CLAUDE.md`; `memory.md`. **Sigue:** #10 frameworks de entrenamiento.
+
+## 2026-07-19 — ADR-011 rev: ruteo de inferencia model-agnostic + reclasificación de Isolation Forest
+
+- **Política (confirmada por Juan):** la **inferencia en tiempo real** corre en el **micro (hub) si entra**; si no, en el **host** (compu/celu); **nunca** en el worker/nube. Vale para cualquier modelo. Pasar de micro a host debe ser un **switch de config** (`inference_target`), sin reescritura → el **host aloja un runtime de inferencia espejo** y el decisor de feedback es agnóstico al origen del score. **Reentrenamiento** siempre en el worker (disparado por drift), salvo los detectores triviales (Mahalanobis, clase L) que se reentrenan en el micro.
+- **Reclasificación:** **Isolation Forest W→E** (infiere en la cintura por recorrido de árboles; reentrena en el worker). La clase **W** queda para lo estrictamente offline; el **LSTM AE** es E/H/W según dónde entre (profiling #11).
+- **Aplicado como revisión de ADR-011 (rev 2026-07-19)** + nota en ADR-013; se sacó el "pendiente" de ADR-020/SPEC-08. Propagado a maestro (§9 y §15 fila 12), `CLAUDE.md`, Vista 3 (Parte C), CP-11 (parte de IF reconciliada) y `memory.md`.
+
+## 2026-07-19 — Backlog #8: runtime de inferencia int8 (ADR-020 / SPEC-08)
+
+- **ADR-020 / SPEC-08:** runtime de inferencia on-device = **TFLite Micro (TFLM) + CMSIS-NN** (vía `pico-tflmicro`) para las **redes neuronales int8** en la cintura (autoencoder denso; LSTM si entra). **Mahalanobis** sigue en CMSIS-DSP; **Isolation Forest** por recorrido de árboles en C (no NN). Es decisión de **inferencia**, no de reentrenamiento.
+- **Por qué A:** calza con lo ya decidido — pipeline TFLite→int8 (stack) y OTA de flatbuffers (ADR-012) — y da **paridad train↔serve** por construcción (TFLM = misma spec de cuantización que el converter). Fallback documentado: **CMSIS-NN directo** (opción C). Riesgo a validar temprano: el port RP2350 de `pico-tflmicro` no está mergeado (hay patch/fork comunitario).
+- **Apéndice conceptual (en llano)** al final de ADR-020: qué es TinyML, TFLM (intérprete), CMSIS-NN (kernels), `pico-tflmicro`, int8, la analogía de la banda, y por qué lo elegimos.
+- **Pendiente detectado (a confirmar con Juan):** la clase de **Isolation Forest** en ADR-011 quedó como W (infiere en worker), pero su inferencia es liviana y va **on-device** (coincide con `descripcion_proyecto.md`). Reconciliar a "infiere en cintura / reentrena en worker" — ligado a **CP-11**.
+- **Archivos:** ADR-020 + índice en la bitácora; SPEC-08 en specs firmware; §15 (fila 21) del maestro; `stack_tecnologico` (Inferencia int8 → decidido); backlog #8 en Vista 3 §D; `memory.md`. **Sigue:** #9 catálogo de features compartido (paridad).
+
+## 2026-07-19 — Backlog #7: FFT/DSP on-device (ADR-019 / SPEC-07)
+
+- **ADR-019 / SPEC-07:** se elige **CMSIS-DSP (float32)** como backbone de DSP del firmware (FFT real `arm_rfft_fast_f32` + PSD, filtros/decimación FIR, álgebra de Mahalanobis), resolviendo la fila "DSP" del stack y la ambigüedad "CMSIS-DSP o kernels propios" de SPEC-01/03/06. Descarta kernels propios (reinventar FFT probada) y deja fixed-point q15 como fallback.
+- **Fundamento HW:** el RP2350 (Cortex-M33) tiene **FPU FPv5-SP + DSP/SIMD** por hardware → FFT en float sin emulación. Costo despreciable: peor caso ~4,3 ms (N=256) en M0+ sin FPU; el M33 con FPU es más rápido, y el bloque H corre a ~1 Hz (<0,5 % duty). No es camino crítico (feedback = Mahalanobis <100 µs).
+- **Bloque H parametrizado:** PSD de accel con ventana **Hann**, **ventana deslizante N=256 (2,56 s, Δf≈0,39 Hz) por defecto** (resuelve la banda <0,5 Hz); bandas fijas <0,5 / 0,5–2 / >2 Hz; spectral entropy, dominant frequency, power en bandas; sample entropy (36) aparte (O(n²), sin FFT). **Paridad (ADR-018):** float32 de ambos lados + tolerancias más laxas para el bloque H.
+- **Archivos:** ADR-019 + índice en la bitácora; SPEC-07 en specs firmware; §15 del maestro; `stack_tecnologico` (DSP → decidido); backlog #7 en Vista 3 §D; `memory.md`. **Sigue:** #8 runtime de inferencia int8.
+- **Nota conceptual (a pedido de Juan):** se agregó al final de ADR-019 una explicación en lenguaje llano de los conceptos (FFT, ventana/Hann, float32 vs fixed-point q15, FPU, DSP/SIMD, CMSIS-DSP como librería, duty cycle/camino crítico). También se registró la regla de trabajo "explicar y consultar antes de decidir" en `CLAUDE.md` y `memory.md`.
+
+## 2026-07-19 — Captura por fases (ADR-005 rev c) y aclaración de paridad (ADR-018)
+
+- **Problema (planteado por Juan):** calcular features en el micro en el **modo captura** desde el inicio no tiene sentido: antes del análisis exploratorio no están definidos qué features, qué tamaños de ventana ni qué algoritmos usar. La paridad micro↔PC tampoco tiene qué testear si la feature aún no está congelada.
+- **Decisión:** **captura por fases.** *Exploratoria* = **crudo-solo** (features off-device en Python, para ingeniería/selección de features y barrido de ventanas/algoritmos). *Operativa* (post-congelamiento del `feature_set_version`; incluye la **calibración/baseline por paciente**) = el micro **sí** calcula features + crudo → entrena skew-free y valida paridad **sobre ese set operativo nuevo, sin reprocesar el crudo exploratorio**. *Edge* sin cambios.
+- **Se descartó** reprocesar/replay del crudo exploratorio (más difícil e innecesario): la paridad/skew-free se corroboran sobre datos capturados **después**, ya con el micro calculando.
+- **Archivos:** ADR-005 (rev c) y ADR-018 (acl.) en la bitácora; §8.1 (nuevo §8.1.1), §8.5 y §15 del maestro; Vista 1 (modos) y Vista 3 (Parte B/C); `CLAUDE.md`; nueva **CP-13** (resuelta) en cuestiones pendientes; `memory.md`.
+
+## 2026-07-16 — Reparación de truncación en disco (re-flush de fuentes de verdad)
+
+- Se detectó que el sync del mount de Windows **truncaba las escrituras grandes**: `memory.md`, `changelog.md`, `cuestiones_pendientes.md`, `bitacora_decisiones.md`, `Arquitectura_Sistema_Marcha.md` y `README.md` habían quedado cortados a mitad en disco (aunque completos en la cache de la sesión). Se **re-escribieron completos por bash** (que persiste íntegro) y se verificaron por `tail`/conteo. **Método a usar de acá en adelante para archivos grandes: escribir/verificar por bash.**
+
+## 2026-07-16 — Memoria comprimida
+
+- `memoria/memory.md` reescrita como snapshot **denso** (índice + estado), sin duplicar lo que ya vive en bitácora/cuestiones/changelog; se agregó la sección "Arquitectura — dónde está".
+
+## 2026-07-16 — Backlog #6: COP_ML / MLPI (SPEC-06) + consolidación de registro
+
+- **SPEC-06 — COP_ML (centro de presión medio-lateral 1D):** `COP_ML = Σ(Fᵢ·xᵢ)/Σ(Fᵢ)`; se reporta como **MLPI** (distancia perpendicular a la **línea media** talón→2º dedo, **normalizada por ancho de pie**; + lateral / − medial). **Dos configs:** posiciones de FSR desde CAD (por hardware → modularidad CP-08) y línea media + ancho (por-paciente → calibración). Derivadas: range, velocity, zero-crossings de la velocidad (origen-independientes). Sin ADR (definición).
+- Consolidación de registro: verificada la currency de `memory.md`, `CLAUDE.md` (CP-03 resuelta) y `README.md` (fase de diseño detallado). Specs firmware: SPEC-01 a SPEC-06.
+
+## 2026-07-16 — Distinción explícita de los dos modos (captura vs edge)
+
+- Aclarado en Arq. §8.1/§8.5 + Vista 1: en **ambos** modos el micro calcula features; *captura* guarda **crudo + features-del-micro juntos** (entrenar skew-free con las del micro + validar paridad desde el crudo), *edge* transmite features/scores en vivo + crudo por anomalía. Ligado a ADR-005/018.
+
+## 2026-07-16 — Paridad de features / anti train-serve skew (ADR-018)
+
+- **ADR-018:** estrategia por capas — (1) **tests de paridad C↔Python en CI** (gate por `feature_set_version`, tolerancia por-feature); (2) **entrenar los modelos desplegables con las features del MICRO** (skew-free por construcción); la re-extracción off-device es sólo para prototipar; (3) disciplina numérica (fixed-point/int8, transcendentales). Refuerza el invariante de definición única y CP-12.
+
+## 2026-07-16 — Backlog #5: módulo IMU + calibración (ADR-017 / SPEC-04)
+
+- **ADR-017 / SPEC-04:** módulo IMU compartido reutilizable que expone accel calibrado, orientación y **aceleración lineal sin gravedad**; orientación por **Madgwick** vía la librería **Fusion (C) + `imufusion` (Python)** → paridad firmware↔worker. Calibración: estática "dejar quieto" + **re-zero de giro en stance (FSR)** + alineación anatómica pie-plano. Desbloquea el ZUPT (#3). `imufusion` en el worker es condicional (sólo re-extracción desde crudo).
+
+## 2026-07-16 — Backlog #4: buffer de zancadas (SPEC-05)
+
+- **SPEC-05:** ring buffer de N≥10 (per-pie en plantilla + bilateral en cintura) para variabilidad (CoV, bloque B) y simetría (features 20-21). Ventana deslizante; CoV incremental por Welford; flag de warm-up. Sin ADR (definición directa). N versionado con `feature_set_version`.
+
+## 2026-07-16 — Backlog #3: stride length por ZUPT (ADR-016 / SPEC-03)
+
+- **ADR-016 / SPEC-03:** stride length = doble integración de la accel (frame global) + **ZUPT disparado por el stance del FSR**, por zancada; ZUPT simple como base, EKF/MSDI futuro. Define features 6/7. Dependencia: #5 (orientación) pasa a prerequisito.
+
+## 2026-07-16 — Backlog #2: segmentación de fases (SPEC-02)
+
+- **SPEC-02:** stance = [IC,TO], swing = [TO,IC⁺]; deriva directa de SPEC-01/ADR-015 (sin ADR). Alimenta ZUPT (stance) y LDLJ/ang.vel (swing); double support = solapamiento bilateral en la cintura.
+
 ## 2026-07-16 — Backlog #1: detección de eventos IC/TO (ADR-015, resuelve CP-03)
 
-- **Decisión (ADR-015):** detección de IC/TO por **fusión FSR-primario + confirmación IMU**, corriendo **en la plantilla (per-pie)**; el evento se envía a la cintura para fusión bilateral, sync y feedback. Basado en investigación (FSR ground-truth de contacto + IMU robusto en hemipléjicos; fusión >96 %). **Resuelve CP-03.**
-- Definición robusta a patología: **IC = onset de carga de cualquier región** (no "talón primero"); **TO = fin de carga**; histéresis + refractario + confirmación IMU en ventana.
-- **Convención de trabajo establecida:** cada ítem del backlog produce (a) un **ADR** y (b) una **spec de algoritmo** (guía de implementación, no código) en la vista correspondiente. Nueva colección: `docs/arquitectura/vistas/2_specs_algoritmos_firmware.md` → **SPEC-01**.
+- **ADR-015 / SPEC-01:** detección por **fusión FSR-primario + confirmación IMU**, en la **plantilla (per-pie)**; el evento va a la cintura para fusión/sync/feedback. IC = onset de carga de cualquier región (robusto a patología). **Resuelve CP-03.** Convención establecida: cada ítem del backlog → ADR + spec de algoritmo (`vistas/2_specs_algoritmos_firmware.md`).
 
 ## 2026-07-16 — Análisis de definición: features y algoritmos (Vista 3)
 
-- Nuevo `docs/arquitectura/vistas/3_analisis_features_y_algoritmos.md`: **catálogo de las ~41 features** (bloques A–H) con cálculo/entrada/placement/fase por feature; **bloque I nuevo** (features de tronco del IMU de cintura, recuperan las lower-back de Brasiliano); **mecanismo de modularidad** de features (catálogo declarativo + set activo versionado, CP-12); **clasificación de algoritmos** (L/E/H/W + footprint/latencia + librería); y **backlog de investigación ordenado** (12 ítems, arranca por IC/TO → segmentación → ZUPT → buffers → …). Referenciado desde `3_vista_datos_ml.md`.
+- Nuevo `vistas/3_analisis_features_y_algoritmos.md`: catálogo de las ~41 features (cálculo/entrada/placement/fase), **bloque I nuevo** (features de tronco del IMU de cintura), mecanismo de modularidad (CP-12), clasificación de algoritmos (L/E/H/W), y **backlog de investigación** ordenado.
 
 ## 2026-07-16 — Reorganización en vistas + anteproyecto + revisión vs fuentes
 
-- **Anteproyecto oficial** incorporado (`docs/Anteproyecto_Tesis.pdf`) y **marco teórico real** en `docs/marco_teorico/marco_teorico_documento_de_trabajo.md`. Revisión de la arquitectura contra ambos: el núcleo (100 Hz, RP2350, one-class personalizado, taxonomía de modelos, edge, Mahalanobis drift-sensor) **coincide**; se detectaron discrepancias y vacíos (ver abajo).
-- **Andamiaje de documentación en 4 vistas** (organización tipo C4/4+1): `docs/arquitectura/vistas/` (1 sistema · 2 firmware · 3 datos-ml · 4 backend) + `stack_tecnologico.md` transversal. El maestro pasa a ser **índice/overview** (nueva §0). Regla de layering: se **define en Vista 3**, se **ejecuta en Vista 2** + worker. Migración de contenido: incremental.
-- **Hardware confirmado:** IMU **MPU-6050** (el anteproyecto decía BMI270 — a reconciliar, CP-11); **3 FSR por pie pero modular** (soportar N); la **cintura entra** (justificada por topología estrella + simetría + IMU de tronco que recupera features lower-back que el marco daba por perdidas).
-- **Objetivos de rendimiento (aspiracionales, no gates):** feedback <50 ms, inferencia <20 ms, sync 10-20 ms.
-- **Nuevas cuestiones CP-08 a CP-12:** modularidad FSR/ADC, energía/batería (≥8 h blando), patrones de feedback, reconciliación anteproyecto/marco, modularidad de features.
-- **Descartado por ahora:** sincronización con gold-standard/MoCap para validación.
-- Actualizados: `CLAUDE.md` (estructura + orden de lectura + regla de layering), maestro (§0), `cuestiones_pendientes.md`.
+- **Anteproyecto** (`docs/Anteproyecto_Tesis.pdf`) y **marco teórico real** incorporados; arquitectura revisada contra ambos (el núcleo coincide).
+- **Documentación reorganizada en 4 vistas** (`docs/arquitectura/vistas/`) + `stack_tecnologico.md`; el maestro pasa a índice/overview (§0). Migración de detalle: incremental.
+- Hardware confirmado: **MPU-6050** (anteproyecto decía BMI270 → CP-11); **3 FSR modular**; la **cintura entra** (topología estrella + simetría + IMU de tronco).
+- Nuevas cuestiones **CP-08 a CP-12**. Descartado por ahora: sync con gold-standard/MoCap.
 
 ## 2026-07-16 — Features distribuidas + adquisición determinística
 
-- **Cómputo de features distribuido** (revisión de **ADR-005**, **resuelve CP-02**): cada plantilla calcula sus features **por-pie** + eventos; la cintura hace la **fusión bilateral** (simetría, double support desde eventos), infiere y decide el feedback. Descarga a la cintura y baja el tráfico en edge. La cintura pasa de "hub de cómputo" a **hub de fusión y decisión**.
-- **Adquisición determinística a 100 Hz** (nuevo **ADR-014**): ADC disparado por hardware + DMA con **sobremuestreo (~1 kHz) y decimación** a 100 Hz (mejora SNR del FSR √10); IMU en el tick maestro; timestamp+seq por muestra; core dedicado. **Sin componentes extra en el PCB.** Se investigó el estándar de industria (timer/HW-trigger + DMA, no flag por software).
-- **Nueva CP-07**: estrategia de lectura del IMU (tick maestro vs FIFO/DATA_READY).
-- Actualizados: Arq. §8.1/§8.2/§8.5 + nueva §8.6, §15; bitácora (ADR-005 rev, ADR-014, índice); `docs/cuestiones_pendientes.md` (CP-02→resuelta, +CP-07); `CLAUDE.md`; diagramas `ciclo_de_vida_modelos.mermaid` y `diagrama_arquitectura.mermaid`.
-
-## 2026-07-16 — Revisión de arquitectura: inferencia en tiempo real y cálculo de features
-
-- **Nueva clase de modelo H (Host)** e **inferencia en tiempo real en `hub` o `host`, nunca en el worker/nube** (nuevo **ADR-013**). El worker sólo infiere batch/offline (eval, re-scoring, reportes). `inference_target` pasa de `{micro, worker}` a **`{hub, host, worker}`**; `class` suma `H`.
-- **Cálculo de features en la cintura en AMBOS modos** (revisión de **ADR-005**), por simetría de cómputo captura↔edge; el crudo se sigue almacenando (captura: continuo; edge: snippet por anomalía) para re-extracción off-device.
-- Actualizados: Arq. §8 (8.1, nueva 8.5 tabla "dónde corre cada operación"), §9 (taxonomía), §11 (DDL `models`); `src/db/schema.sql`; bitácora (ADR-005, ADR-011→L/E/H/W, ADR-013); `CLAUDE.md`; **`ciclo_de_vida_modelos.mermaid`** (ahora muestra crudo en captura + snippet por anomalía + inferencia de clase H).
-- **Pendiente de redibujar:** `diagrama_arquitectura.mermaid` (afinar etiquetas de crudo captura/edge + host inference), a bundlear con la decisión de muestreo.
+- **ADR-005 (rev):** cómputo de features **distribuido** (por-pie en plantillas; cintura fusiona) — resuelve **CP-02**.
+- **Clase H** e **inferencia RT en hub/host, nunca en la nube** (**ADR-013**); `inference_target ∈ {hub, host, worker}`.
+- **Adquisición determinística** (**ADR-014**): ADC HW + DMA, sobremuestreo ~1 kHz → decimación a 100 Hz; IMU en tick maestro.
 
 ## 2026-07-16 — Registro de cuestiones pendientes separado
 
-- **Nuevo archivo `docs/cuestiones_pendientes.md`**: registro vivo (única fuente de verdad) de cuestiones abiertas, con IDs CP-01 a CP-06 (migradas desde §17 de la arquitectura y "Puntos abiertos" de la bitácora).
-- **`docs/arquitectura/Arquitectura_Sistema_Marcha.md` (§17)** y **`docs/decisiones/bitacora_decisiones.md`** ahora **apuntan** a ese registro en vez de listar los puntos.
-- **`CLAUDE.md`** actualizado: nueva regla de flujo (paso 1) para que los agentes agreguen/saquen cuestiones en ese archivo, más su inclusión en la estructura del repo.
+- Nuevo `docs/cuestiones_pendientes.md` (única fuente de verdad); la arquitectura y la bitácora apuntan a él. `CLAUDE.md` con la regla de flujo para agregar/resolver cuestiones.
 
-## 2026-07-16 — Estructuración del repositorio y arquitectura v1.0
+## 2026-07-16 — Estructura inicial del repo + arquitectura v1.0
 
-- **Repositorio estructurado** por primera vez: `docs/`, `src/` (scaffolding), `memoria/`, `CLAUDE.md`, `README.md`.
-- **Arquitectura informática v1.0 definida** y documentada en `docs/arquitectura/`:
-  - `Arquitectura_Sistema_Marcha.md` (especificación completa, 17 secciones).
-  - `diagrama_arquitectura.mermaid` (topología + flujos).
-  - `esquema_base_de_datos.mermaid` (ER de Supabase).
-  - `ciclo_de_vida_modelos.mermaid` (drift → reentrenamiento → OTA).
-- **Bitácora de decisiones** creada (`docs/decisiones/bitacora_decisiones.md`) con 13 ADRs (000–012) documentando cada decisión, opciones evaluadas, pros/cons y justificación.
-- **Investigación previa** incorporada a `docs/investigacion/`: índice bibliográfico, feature set (41 features), pinout, resumen.
-- **Objetivos** consolidados en `docs/objetivos.md`.
-- **Decisiones tomadas** (ver bitácora): topología WiFi/AP; uplink BLE desde la mínima; transporte UDP+TCP; sync backbone de reloj + evento; features dual-mode + cintura hub; Supabase; Postgres+TimescaleDB+object storage; retención tiered; worker en la nube (máxima); firmware C/C++ Pico SDK; ruteo de modelos por registry (L/E/W); OTA pesos+firmware A/B.
-
-### Pendiente
-- Roadmap de implementación por fases.
-- Subir marco teórico a `docs/marco_teorico/`.
-- Ratificar puntos abiertos (tercer FSR/GP28, cintura-hub vs plantilla, detección de IC, seguridad, `feature_vectors`, proveedor del worker).
-- Iniciar código en `src/`.
+- Repositorio estructurado (`docs/`, `src/` scaffolding, `memoria/`, `CLAUDE.md`, `README.md`).
+- Arquitectura informática v1.0 (spec + diagramas Mermaid: topología, ER, ciclo de vida) y bitácora de decisiones (ADR-000 a 012).
+- Investigación previa incorporada; objetivos consolidados.

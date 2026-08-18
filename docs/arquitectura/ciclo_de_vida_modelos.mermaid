@@ -8,10 +8,11 @@ sequenceDiagram
     participant WK as Worker (laptop/nube)
     participant SB as Supabase (DB + storage)
 
-    Note over MI,CI: Plantillas calculan features por-pie (ambos modos); la cintura fusiona
+    Note over MI,CI: Plantillas calculan features por-pie (captura operativa y edge, no en la exploratoria); la cintura fusiona
 
+    Note over MI,SB: CAPTURA EXPLORATORIA (one-time): crudo-solo -> features off-device (Python); el micro no calcula features
     rect rgb(238,243,255)
-    Note over CI,SB: MODO CAPTURA (construccion de dataset)
+    Note over CI,SB: CAPTURA OPERATIVA (dataset con set congelado; incl. calibracion/baseline)
     MI->>MI: muestreo 100 Hz + features por-pie + eventos
     MI->>CI: crudo continuo + features por-pie + eventos (WiFi)
     CI->>CI: fusion bilateral (simetria, double support)

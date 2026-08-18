@@ -1,5 +1,7 @@
 # Documento de trabajo para el marco teórico
 
+> **Nota de actualización (2026-07-21).** Este es un documento de trabajo **previo a varias decisiones de arquitectura**. El sistema evolucionó respecto de lo que se describe abajo: se incorporó una **unidad de cintura** (hub de fusión bilateral — ya no es solo-plantilla), el IMU es **MPU-6050** (el anteproyecto/marco asumían BMI270), y el catálogo de features y la lista de algoritmos se extendieron. Para el **estado actual** y la **justificación** de esas diferencias, ver **ADR-030** en `docs/decisiones/bitacora_decisiones.md` y el informe `docs/investigacion/alineacion_features_algoritmos.md`. El texto de abajo se conserva como registro de la investigación teórica original.
+
 **Proyecto:** Sistema de plantilla inteligente bilateral con sensores FSR e IMU para detección personalizada de anomalías de marcha en pacientes post-stroke, con feedback vibrotáctil en tiempo real e inferencia íntegramente edge.
 
 **Naturaleza del documento:** este es un texto de trabajo, deliberadamente exhaustivo y redundante. Recopila la totalidad de la información relevante sobre cada eje del marco teórico, con citas in-text de cada fuente. A partir de este documento se destilará posteriormente el marco teórico final del anteproyecto, descartando lo accesorio y comprimiendo lo esencial.

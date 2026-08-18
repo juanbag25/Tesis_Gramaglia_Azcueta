@@ -67,21 +67,21 @@ Migrar la infraestructura de "entorno controlado con computadora cerca" a **uso 
 
 | Nodo | Cómputo | Sensores | Actuador | Rol |
 |---|---|---|---|---|
-| **Plantilla izquierda** | Raspberry Pi Pico 2 W (RP2350, Cortex-M33 @150 MHz, 520 KB SRAM, WiFi+BLE CYW43439) | MPU-6050 (IMU 6-DOF, I²C) + 3× FSR (ADC0-2) | Motor vibrador (PWM) | Sensado del pie izq + feedback |
+| **Plantilla izquierda** | Raspberry Pi Pico 2 W (RP2350, Cortex-M33 @150 MHz, 520 KB SRAM, WiFi+BLE CYW43439) | MPU-6050 (IMU 6-DOF, I²C) + **2× FSR** (ADC0-1; punta+talón; 3º/4º ML a futuro) | Motor vibrador (PWM) | Sensado del pie izq + feedback |
 | **Plantilla derecha** | Ídem | Ídem | Motor vibrador (PWM) | Sensado del pie der + feedback |
 | **Unidad de cintura** | Raspberry Pi Pico 2 W | MPU-6050 | — | **Hub**: AP WiFi, maestro de sync, fusión bilateral, detección, uplink BLE |
 
-**Muestreo:** 100 Hz. **Canales por pie:** 9 (accel XYZ, gyro XYZ, 3× FSR). La cintura suma su propio IMU (6 canales) como referencia de tronco/pelvis.
+**Muestreo:** 100 Hz. **Canales por pie:** **8 hoy** (accel XYZ, gyro XYZ, 2× FSR); el formato reserva para **N FSR** (CP-08). La cintura suma su propio IMU (6 canales) como referencia de tronco/pelvis.
 
-**Pinout de referencia (plantilla)** — nota: el pinout actual documenta 2 FSR (ADC0/ADC1); el tercero se asigna a **ADC2 = GP28 (pin 34)**.
+**Pinout de referencia (plantilla)** — hoy **2 FSR conectados**: **ADC0/GP26 (punta)** y **ADC1/GP27 (talón)**. El 3º/4º (**medial/lateral**, para COP_ML) van a **ADC2/GP28** (+ otro) en una etapa posterior (**ADR-023**; CP-01/CP-08).
 
 | GPIO | Pin | Modo | Conectado a |
 |---|---|---|---|
 | GP20 | 26 | I²C0 SDA | IMU MPU-6050 |
 | GP21 | 27 | I²C0 SCL | IMU MPU-6050 |
-| GP26 | 31 | ADC0 | FSR 1 (divisor) |
-| GP27 | 32 | ADC1 | FSR 2 (divisor) |
-| GP28 | 34 | ADC2 | FSR 3 (divisor) *(a confirmar)* |
+| GP26 | 31 | ADC0 | FSR 1 — **punta** (divisor) |
+| GP27 | 32 | ADC1 | FSR 2 — **talón** (divisor) |
+| GP28 | 34 | ADC2 | FSR 3 — medial/lateral (divisor) *(a futuro — ADR-023)* |
 | GP18 | 24 | PWM | Base NPN → motor vibrador (con diodo flyback) |
 
 **Consideración de radio:** el CYW43439 es un chip único WiFi+BLE con **una antena** en banda 2.4 GHz. La cintura debe sostener **WiFi-AP (a las plantillas) + BLE (al host)** de forma simultánea mediante **coexistencia** (time-division del radio). Esta coexistencia es un requisito permanente de la máxima y se asume desde la mínima (ver §12, Riesgos).
@@ -152,9 +152,9 @@ La cintura expone un **servidor GATT BLE**; el host (laptop en mínima, celular 
 
 **Beneficio colateral:** como el uplink ya no ocupa el adaptador WiFi del host, la **laptop conserva internet** y puede empujar datos a Supabase sin conflicto.
 
-### 5.3 Provisioning y redes
+### 5.3 Modelo de conectividad (tipo auriculares BLE)
 
-En la mínima no se requiere infraestructura externa: la cintura es AP y el host se conecta a ella. Para escenarios futuros donde los micros deban unirse a una red de infraestructura (casa/clínica), se prevé un **mecanismo de provisioning** (el Pico arranca como mini-AP con portal de configuración, o recibe credenciales por BLE, y luego conmuta a STA). No es necesario para el alcance actual; queda documentado como extensión.
+Los micros **nunca se conectan a WiFi de internet**: el único WiFi es el enlace privado plantillas↔cintura (cintura = AP, sin internet). La cintura habla con su host (compu/celu) sólo por **BLE**; el host tiene internet y empuja a Supabase, y el **OTA** va por BLE. No hay provisioning de redes de infraestructura. El **pairing cintura↔host** (sin botón) se resuelve en **ADR-028**: gesto de sacudir la cintura ~5 s con las plantillas quietas + passkey fijo impreso + bond list multi-host. → detalle en Vista 1 §3.3.
 
 ---
 
@@ -191,9 +191,9 @@ Se adopta un **backbone fuerte**, implementado en la **capa de aplicación** (po
 
 Sobre el backbone de reloj, se **empareja zancadas por eventos de contacto inicial (IC)** — el instante en que el pie empieza a cargar (detectado por umbral de FSR, respaldado por el pico del IMU), **no** un "talón primero" prolijo. Esto:
 
-- Provee un emparejado **biomecánicamente correcto** para las métricas de simetría **por zancada** (Symmetry Index).
-- Actúa como **red de seguridad** si el reloj driftea: cada pie se segmenta con su **propia** señal (un pie anómalo no ensucia la segmentación del otro), y el orden alternado de los pasos permite emparejar ciclos sin depender del reloj.
-- **Degrada con gracia:** si en un paciente el IC se vuelve poco confiable, el sistema cae a alineación por reloj sola, suficiente a escala de zancada.
+- Provee el **marcador biomecánico de zancada**; sobre el timeline común (backbone), los tiempos de IC de cada pie **asocian la zancada izq↔der** para la simetría **por zancada** (Symmetry Index).
+- **No sincroniza relojes ni compensa el drift** (de eso se encarga el backbone): usa el reloj **ya sincronizado**. Con los relojes sincronizados (beacon) se emparejan las zancadas; el IC no sincroniza nada.
+- Cada pie se segmenta con su **propia** señal (un pie anómalo no ensucia la segmentación del otro).
 
 **Nota conceptual importante:** el evento IC **no sincroniza relojes** — empareja *zancadas*. La sincronización de reloj (backbone) es la que ordena las muestras de ambos pies para las ventanas y la simultaneidad. El IC es refinamiento para la simetría por zancada. Además, el IC ya se detecta para las features espacio-temporales (stance, swing, double support, loading rate, orientación en IC/toe-off), por lo que reutilizarlo para el emparejado es **gratuito**.
 
@@ -207,15 +207,18 @@ Sobre el backbone de reloj, se **empareja zancadas por eventos de contacto inici
 
 El cálculo de features está **distribuido** para repartir cómputo entre los micros (resuelve CP-02):
 
-- **Cada plantilla** calcula sus **features por-pie** (bloques A, B, C, E, F, G, H, sobre su propia señal) y detecta sus **eventos IC/TO**. Corre en **ambos modos**, con una **única definición de features compartida** plantilla↔cintura↔worker, versionada por `feature_set_version`.
+- **Cada plantilla** calcula sus **features por-pie** (bloques A, B, C, E, F, G, H, sobre su propia señal) y detecta sus **eventos IC/TO**, con una **única definición de features compartida** plantilla↔cintura↔worker, versionada por `feature_set_version`. **Corre en captura operativa y en edge** — no en la captura exploratoria (§8.1.1).
 - **La cintura** hace la **fusión bilateral**: features de simetría (bloque D, comparando el feature-por-pie izq vs der) y **double support** (solapamiento de los intervalos [IC, TO] de ambos pies, calculado a partir de los **eventos** ya alineados por el backbone de sync — no requiere el crudo de ambos pies co-localizado). Corre el detector y decide el feedback.
 
-Que las plantillas calculen en ambos modos preserva la **simetría de cómputo** captura↔edge: la carga del micro es la misma, y captura es un ensayo fiel del borde. Lo que distingue a los modos es **qué se transmite y se almacena**:
+#### 8.1.1 Fases de operación (dónde se calculan las features)
 
-- **Modo captura** (dataset/evaluación): las plantillas calculan features por-pie y además se sube el **crudo continuo** → host → object storage (para poder **re-extraer** features off-device si cambia la definición). El ancho de banda del crudo sobre WiFi es despreciable.
-- **Modo edge** (uso real): las plantillas envían **features por-pie + eventos** a la cintura (mucho menos tráfico que crudo); la cintura fusiona, infiere y emite **features/scores en vivo** + **crudo por snippets ante anomalía** (§10.3), desde un **buffer circular que mantiene cada plantilla** y que envía cuando la cintura lo solicita.
+Lo que se calcula on-device **depende de la fase** (ADR-005 rev c). Hay tres fases con propósitos distintos; lo que cambia respecto de versiones previas es que **la captura exploratoria es crudo-solo** (el micro no calcula features hasta que el feature set esté congelado):
 
-La re-extracción off-device desde el crudo almacenado sigue disponible como **capacidad de análisis**. *Nota práctica:* en el prototipado temprano se puede capturar crudo y calcular off-device hasta que el feature set esté implementado en el micro.
+- **Captura exploratoria** (investigación, one-time): se sube **sólo crudo continuo** → host → DB/object storage. Las features se calculan **off-device (Python)** para ingeniería/selección de features y para barrer tamaños de ventana y algoritmos. Salida: un `feature_set_version` congelado. El crudo es el "seguro" que permite re-extraer con cualquier definición.
+- **Captura operativa** (post-congelamiento; incluye la **calibración/baseline por paciente**): las plantillas calculan sus features por-pie y se suben **features del micro + crudo continuo**. Las **features del micro** entrenan los modelos desplegables (*skew-free* por construcción, ADR-018); la **paridad** se valida sobre **este crudo nuevo** (re-extracción Python vs feature del micro, misma zancada), **sin reprocesar el crudo exploratorio**. BW del crudo sobre WiFi despreciable.
+- **Modo edge** (uso real): las plantillas envían **features por-pie + eventos** en vivo (no el crudo continuo); la cintura fusiona, infiere y emite **features/scores** + **crudo sólo por snippets ante anomalía** (§10.3), desde un **buffer circular que mantiene cada plantilla** y que envía cuando la cintura lo solicita.
+
+> **Distinción clave (ADR-005 rev c + ADR-018).** El micro calcula features en **operativa y edge** (misma carga de cómputo, ensayo fiel del borde), **no** en la exploratoria. La paridad y el entrenamiento skew-free se anclan a una **captura operativa nueva**, no al crudo exploratorio. La re-extracción off-device desde el crudo sigue disponible como **capacidad de análisis** y es el modo de trabajo de la fase exploratoria.
 
 ### 8.2 La cintura como hub de fusión y decisión
 
@@ -223,7 +226,7 @@ La cintura es el punto donde converge la información de ambos pies. Con el cóm
 
 ### 8.3 Camino de feedback vibrotáctil
 
-El detector corre en la cintura, pero el **motor vibrador está en las plantillas**. Por lo tanto el enlace plantillas↔cintura es **bidireccional**: datos hacia arriba (plantilla→cintura) y **comandos de feedback hacia abajo** (cintura→plantilla, por el canal WiFi). La *política* de feedback (cuándo/cómo vibrar) es lógica de aplicación y se define fuera de este documento de infraestructura; aquí se garantiza el **camino**.
+El detector corre en la cintura, pero el **motor vibrador está en las plantillas**. Por lo tanto el enlace plantillas↔cintura es **bidireccional**: datos hacia arriba (plantilla→cintura) y **comandos de feedback hacia abajo** (cintura→plantilla, por el canal WiFi). La *política* de feedback (cuándo/cómo vibrar) se define en **ADR-027** (monitoreo + alerta por ventana, model-agnostic; **no corrige**) y **SPEC-09** (patrones + lógica de disparo); aquí se garantiza el **camino**.
 
 ### 8.4 Features (referencia)
 
@@ -235,13 +238,13 @@ El conjunto consolidado es de **41 features en 8 bloques** (A espacio-temporales
 |---|---|---|
 | Muestreo 100 Hz | Plantillas | Plantillas |
 | Detección de eventos (IC/TO) | Plantilla o cintura *(CP-03)* | Plantilla o cintura *(CP-03)* |
-| Cálculo de features por-pie | **Plantillas (on-device)** | **Plantillas (on-device)** |
+| Cálculo de features por-pie | Exploratoria: **off-device (Python)** · Operativa: **plantillas (on-device)** | **Plantillas (on-device)** |
 | Fusión bilateral (simetría, double support) | **Cintura** | **Cintura** |
 | Inferencia en tiempo real (feedback) | Opcional, en host, sólo para evaluar (no feedback clínico) | **Cintura (hub)** o **host** — clases L/E/H; nunca en el worker |
 | Inferencia batch/offline (análisis, re-scoring, reportes) | Worker | Worker — clase W |
 | Reentrenamiento | L: cintura · E/H/W: worker (laptop) | L: cintura · E/H/W: worker (nube) |
 | Almacenamiento de crudo | Continuo → host → object storage | Snippet por anomalía → host → storage |
-| Almacenamiento features/scores | → DB | Continuo → host → DB |
+| Almacenamiento features/scores | Exploratoria: features off-device → DB · Operativa: **features del micro → DB** (junto con el crudo) | Continuo → host → DB |
 | Feedback vibrotáctil | (opcional) | Cintura decide → motor de la plantilla |
 
 En una línea: **tiempo real y feedback = cintura (o host si el modelo no entra); entrenamiento pesado y análisis offline = worker; el host es puente + almacenamiento** (y, en clase H, motor de inferencia en tiempo real).
@@ -251,7 +254,7 @@ En una línea: **tiempo real y feedback = cintura (o host si el modelo no entra)
 El muestreo debe ser **exacto y periódico** pese a la actividad del radio: el jitter arruina las features de derivada/espectro (COP velocity, jerk, PSD) y ensucia la sincronización. Un `sleep()` —o un timer que "levanta un flag" para que el loop lea— **no** alcanzan: introducen jitter de software (latencia de interrupción, scheduling, radio). El estándar de industria es que **un periférico de hardware dispare la conversión y el DMA la almacene, sin CPU en el lazo de tiempo**. Todo esto es **interno al RP2350 y se configura por firmware; no requiere componentes extra en el PCB.**
 
 - **FSR (ADC):** el ADC corre en **free-running** por su propio reloj (divisor interno) a ~**1 kHz**, empujando cada muestra a la FIFO; un canal **DMA** la copia solo a un buffer en RAM (cadena `ADC → FIFO → DREQ → DMA → RAM`). Como el divisor del ADC no baja de ~730 Hz, se **sobremuestrea a 1 kHz y se decima (promedio ×10) a 100 Hz**, lo que además **reduce el ruido del FSR** (√10 ≈ 3,2×). El buffer de sobremuestreo es diminuto (~120 B) y el 1 kHz **se decima al vuelo y se descarta**: nunca se almacena ni se transmite (sólo viaja el 100 Hz).
-- **IMU (MPU-6050):** se lee en el **tick maestro de 100 Hz** (un solo timestamp por tupla FSR+IMU), con el IMU a ODR interno alto + DLPF para que cada lectura sea fresca. La lectura por **FIFO / DATA_READY** (espaciado uniforme por el reloj interno del IMU) queda como alternativa a validar (**CP-07**; DATA_READY sumaría un cable INT→GPIO en el PCB).
+- **IMU (MPU-6050):** se lee en el **tick maestro de 100 Hz por DMA** (un solo timestamp por tupla FSR+IMU), con el IMU a **ODR interno alto (~1 kHz) + DLPF** (sobremuestreo anti-alias) para que cada lectura sea fresca — **ADR-026**. La lectura por **DATA_READY** (espaciado uniforme por el reloj interno del IMU) queda como **fallback** (traza INT→GPIO en la próxima rev del PCB — CP-01); **FIFO descartada**. Cierra **CP-07**.
 - **Común:** cada muestra se sella con el **timer de µs** (instante real) + **nº de secuencia**; la adquisición corre en un **core dedicado** (aislada del radio); el buffer DMA evita pérdidas ante picos del radio.
 
 Esto complementa ADR-004: la adquisición garantiza la **periodicidad intra-dispositivo**; el beacon + corrección de drift garantizan la **alineación entre dispositivos**.
@@ -267,13 +270,15 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 | Clase | Inferencia | Reentrena | Granularidad | Ejemplos candidatos | ¿Usa OTA? |
 |---|---|---|---|---|---|
 | **L — Local-Local** | Cintura (hub) | **Cintura** | Dato a dato (online) | Mahalanobis (EMA de media + covarianza), z-score/EWMA, probabilísticos simples, running stats | No (se auto-actualiza) |
-| **E — Edge + Worker** | Cintura (hub, int8) | **Worker** | Periódico / async | Autoencoder denso int8, LSTM chico cuantizado | Sí (recibe pesos) |
+| **E — Edge + Worker** | Cintura (hub) | **Worker** | Periódico / async | Autoencoder denso int8, **Isolation Forest** | Sí (recibe pesos) |
 | **H — Host** | **Host** (celular/laptop), tiempo real | **Worker** | Periódico / async | Modelos que no entran en la cintura pero sí en el host | Sí (al host) |
-| **W — Worker-heavy** | **Worker** (batch/offline, **no** tiempo real) | **Worker** | Periódico / async | LSTM AE grande, Isolation Forest, análisis/reportes | — |
+| **W — Worker-only (offline)** | **Worker** (batch/offline, **no** tiempo real) | **Worker** | Batch | Análisis/reportes, re-scoring histórico; modelos que no entran ni en el host en tiempo real | — |
 
 **Ubicación de la inferencia en tiempo real:** la inferencia que dispara el feedback corre en **`hub`** (preferido) o en **`host`** (fallback si el modelo no entra en la cintura), **nunca en `worker`/nube** (latencia + conectividad). El `worker` sólo infiere **batch/offline** (evaluación de algoritmos, re-scoring histórico, reportes). Salvedad de la clase H para la máxima: el modelo debe entrar en el **celular** (más débil que una laptop); si sólo entra en la laptop, es tiempo real sólo en la mínima.
 
 El campo `inference_target ∈ {hub, host, worker}` y `retrain_target ∈ {micro, worker}`. Cada fila de la tabla `models` declara `(class, inference_target, retrain_target, granularity)`. Sumar un modelo nuevo = declarar su clase; la infraestructura ya soporta el camino. Las asignaciones de ejemplo son un primer pase y se ajustan a medida que se valida.
+
+**Ruteo de inferencia (rev. 2026-07-19, model-agnostic).** La inferencia en tiempo real default es el **micro (hub)**; si un modelo no entra por footprint/latencia, pasa al **host**; nunca al worker/nube. Cambiar `hub`→`host` es un **switch de config** (`inference_target`), **sin reescritura**, porque el decisor de feedback es **agnóstico al origen del score**; el **host aloja un runtime de inferencia espejo** para recibir un modelo que se cae de la cintura. Vale para cualquier modelo futuro. **Isolation Forest es clase E** (infiere en la cintura, recorrido de árboles); la clase **W** queda para lo **estrictamente offline** (análisis/reportes, re-scoring), y el LSTM AE es E/H/W según dónde entre (profiling §16).
 
 ### 9.2 Mahalanobis como detector y sensor de drift
 
@@ -325,155 +330,30 @@ Se adopta la política **tiered desde el inicio**:
 - **Fase de dataset:** se guarda **crudo completo** (Parquet en storage) + features + eventos + scores + modelos → máxima trazabilidad para re-extraer features y reevaluar algoritmos.
 - **Uso real rutinario (máxima):** se guardan **features/eventos/scores**; el **crudo sólo se retiene alrededor de eventos de anomalía/drift** (buffer circular disparado por el evento). Ahorra almacenamiento (~4 GB/mes/paciente de crudo continuo evitados) conservando lo clínicamente interesante. Encaja de forma natural con el sensor de drift de Mahalanobis.
 
-### 11.3 Esquema (DDL de referencia)
+### 11.3 Esquema — entidades
 
-```sql
--- Metadata relacional
-create table patients (
-  id uuid primary key default gen_random_uuid(),
-  external_code text unique,            -- código anónimo, no PII directa
-  birth_year int,
-  sex text,
-  affected_side text check (affected_side in ('left','right','none')),
-  clinical_notes jsonb,
-  created_at timestamptz default now()
-);
+> **El DDL vive en `src/db/schema.sql`** (fuente única — **ADR-037**). Esta sección mantiene el mapa de entidades; el detalle de columnas, índices y políticas RLS **no se duplica acá**. Definición canónica del backend: **Vista 4**. Diagrama ER: `esquema_base_de_datos.mermaid`.
 
-create table devices (
-  id uuid primary key default gen_random_uuid(),
-  role text check (role in ('insole_left','insole_right','waist')),
-  hw_revision text,
-  firmware_version text,
-  created_at timestamptz default now()
-);
+| Capa | Tabla | Qué guarda |
+|---|---|---|
+| Metadata | `patients` | Paciente con `external_code` anónimo + PII mínima (año de nacimiento, sexo, lado afectado) |
+| Metadata | `devices` | Cada micro: rol (`insole_left`/`insole_right`/`waist`), revisión de HW, versión de firmware |
+| Metadata | `sessions` | Sesión de captura: paciente, **fase** (`exploratory`/`operational`/`edge` — ADR-005 rev c), `feature_set_version`, entorno, set de dispositivos, `host_type` (sólo trazabilidad — ADR-034) |
+| Seguridad | `patient_access` | Pertenencia `user → patient → rol`; es la base de las políticas RLS (ADR-032) |
+| Blobs | `raw_blobs` | Crudo continuo en Parquet (referencia a object storage) |
+| Blobs | `anomaly_raw_snippets` | Crudo puntual retenido ante anomalía (modo edge) |
+| Series | `gait_events` | Eventos **IC/TO/MS** por pie, con confianza y flags (hypertable) |
+| Series | `feature_vectors` | Un vector de features por zancada en `jsonb` + `feature_set_version` + **`features_source`** (`device`/`offline` — ADR-036) (hypertable) |
+| Series | `anomaly_scores` | Score, umbral, flag de anomalía y métrica de drift (hypertable) |
+| Registry | `models` | Clase L/E/H/W, `inference_target`, `retrain_target`, versión, linaje, métricas, artefacto |
+| Registry | `model_deployments` | Qué modelo corre en qué micro; `active` / `rolled_back` |
+| Registry | `firmware_images` | Imágenes de firmware para el OTA A/B |
+| Registry | `retrain_jobs` | Orquestación del reentrenamiento (`drift` / `schedule` / `manual`) |
+| Config | `feedback_config` | Política de feedback vibrotáctil per-paciente: `feedback_source`, bandas T1/T2/T3, N de ventana, intensidad, refractario, histéresis (ADR-027 / SPEC-09) |
 
-create table sessions (
-  id uuid primary key default gen_random_uuid(),
-  patient_id uuid references patients(id),
-  mode text check (mode in ('capture','edge')),
-  feature_set_version text,
-  environment text,                     -- 'lab','clinic','home'
-  device_set jsonb,                     -- {left, right, waist device ids}
-  started_at timestamptz,
-  ended_at timestamptz,
-  notes text
-);
+**Decisiones de esquema ya reflejadas en el DDL:** `feature_vectors.features` como **`jsonb`** (ADR-031) · **RLS estricto** por paciente vía `patient_access`, con `service_role` para el worker (ADR-032) · `sessions.host_type` (ADR-034) · **fase de captura de tres valores + origen de las features por fila** (ADR-036).
 
--- Crudo continuo: referencia a Parquet en object storage
-create table raw_blobs (
-  id uuid primary key default gen_random_uuid(),
-  session_id uuid references sessions(id),
-  device_id uuid references devices(id),
-  storage_url text,                     -- object storage
-  format text default 'parquet',
-  start_time timestamptz,
-  end_time timestamptz,
-  n_samples bigint,
-  checksum text
-);
-
--- Crudo puntual retenido ante anomalía (uso real)
-create table anomaly_raw_snippets (
-  id uuid primary key default gen_random_uuid(),
-  session_id uuid references sessions(id),
-  device_id uuid references devices(id),
-  score_id uuid,                        -- fk a anomaly_scores
-  storage_url text,
-  start_time timestamptz,
-  end_time timestamptz
-);
-
--- Eventos de marcha (hypertable)
-create table gait_events (
-  time timestamptz not null,
-  session_id uuid references sessions(id),
-  device_id uuid references devices(id),
-  foot text check (foot in ('left','right')),
-  type text check (type in ('IC','TO')),
-  confidence real
-);
-select create_hypertable('gait_events','time');
-
--- Vectores de features por zancada/ventana (hypertable)
-create table feature_vectors (
-  time timestamptz not null,            -- fin de zancada/ventana
-  session_id uuid references sessions(id),
-  patient_id uuid references patients(id),
-  scope text check (scope in ('left','right','bilateral')),
-  feature_set_version text,
-  features jsonb,                       -- {feature_name: value}
-  stride_id bigint
-);
-select create_hypertable('feature_vectors','time');
-
--- Scores del detector (hypertable)
-create table anomaly_scores (
-  time timestamptz not null,
-  session_id uuid references sessions(id),
-  patient_id uuid references patients(id),
-  model_id uuid references models(id),
-  score double precision,
-  threshold double precision,
-  is_anomaly boolean,
-  drift_metric double precision
-);
-select create_hypertable('anomaly_scores','time');
-
--- Registry de modelos (respaldo + ruteo)
-create table models (
-  id uuid primary key default gen_random_uuid(),
-  patient_id uuid references patients(id),   -- null = modelo global
-  algo text,                                 -- 'mahalanobis','dense_ae','lstm_ae','iforest'...
-  class text check (class in ('L','E','H','W')),
-  inference_target text check (inference_target in ('hub','host','worker')),
-  retrain_target text check (retrain_target in ('micro','worker')),
-  granularity text check (granularity in ('online','periodic','async')),
-  version int,
-  parent_version int,
-  feature_set_version text,
-  artifact_url text,                         -- object storage
-  artifact_format text,                      -- 'tflite_int8','npz','json'
-  checksum text,
-  metrics jsonb,                             -- {auc, threshold, ...}
-  status text check (status in ('active','shadow','archived','rolled_back')),
-  created_at timestamptz default now(),
-  deployed_at timestamptz
-);
-
--- Despliegues por dispositivo (qué corre en cada micro)
-create table model_deployments (
-  id uuid primary key default gen_random_uuid(),
-  model_id uuid references models(id),
-  device_id uuid references devices(id),
-  deployed_at timestamptz default now(),
-  status text check (status in ('active','rolled_back')),
-  rolled_back_at timestamptz
-);
-
--- Imágenes de firmware (OTA A/B)
-create table firmware_images (
-  id uuid primary key default gen_random_uuid(),
-  version text,
-  target_role text check (target_role in ('insole','waist')),
-  storage_url text,
-  checksum text,
-  created_at timestamptz default now()
-);
-
--- Orquestación de reentrenamiento
-create table retrain_jobs (
-  id uuid primary key default gen_random_uuid(),
-  trigger text check (trigger in ('drift','schedule','manual')),
-  patient_id uuid references patients(id),
-  model_in uuid references models(id),
-  model_out uuid references models(id),
-  status text check (status in ('queued','running','done','failed')),
-  worker text,
-  started_at timestamptz,
-  finished_at timestamptz,
-  logs_url text
-);
-```
+**Pendiente:** las **columnas generadas `STORED`** e índices de expresión sobre las features calientes del dashboard (ADR-031) no se pueden fijar hasta congelar el `feature_set_version` y saber qué grafica el dashboard (**CP-20**).
 
 ---
 
@@ -522,17 +402,31 @@ Los únicos puntos de variación (app del host y ubicación del worker) están *
 | 2 | Uplink cintura↔host | BLE desde la mínima | Firmware de cintura reutilizado 100 %; de-riskea la coexistencia temprano; BW sobra |
 | 3 | Transporte | UDP stream + TCP control (WiFi); GATT notif + writes ACK (BLE) | Canal rápido-tolerante + canal confiable; evita head-of-line blocking en el stream |
 | 4 | Sincronización | Backbone reloj (timestamp+seq+beacon+drift) + emparejado por IC | Simetría bilateral necesita timeline a nivel de muestra; IC como refinamiento gratuito |
-| 5 | Cálculo de features | Distribuido: features por-pie en plantillas, fusión bilateral en cintura | Reparte cómputo, descarga la cintura, menos tráfico en edge (resuelve CP-02) |
+| 5 | Cálculo de features | Distribuido: por-pie en plantillas, fusión bilateral en cintura; **captura por fases** (exploratoria crudo-solo / operativa con features del micro) | Reparte cómputo, descarga la cintura; no calcula features en el micro antes de definir el set (resuelve CP-02; CP-13) |
 | 6 | Hub de cómputo | Cintura | Ambos pies convergen ahí; carga liviana |
 | 7 | Hosting/DB | Supabase (Postgres+Timescale+storage+auth) | Mínima operación, Postgres real, escalado limpio |
 | 8 | Modelo de datos | Postgres + TimescaleDB + object storage | Relacional + series + blobs, un solo mundo SQL |
 | 9 | Retención | Tiered por fase (+ crudo por anomalía) | Trazabilidad en dataset, costo/privacidad en uso real |
 | 10 | Backend de reentrenamiento (máxima) | Worker en la nube (E/W); micro mantiene L | Cómputo sin límites para lo pesado; lo simple queda local |
 | 11 | Firmware | C/C++ con Pico SDK | ML on-device + coexistencia + 100 Hz duro |
-| 12 | Ruteo de modelos | Clase declarada en el registry (L/E/W) | Agnóstico al modelo; sumar modelo = declarar clase |
+| 12 | Ruteo de modelos | Clase declarada en el registry (L/E/H/W); inferencia micro→host por config (model-agnostic) | Agnóstico al modelo; switch hub↔host sin reescritura; IF es clase E (ADR-011 rev) |
 | 13 | OTA | Pesos + firmware completo (A/B) desde el inicio | Fix/inferencia remotos en casa del paciente; rollback seguro |
 | 14 | Inferencia en tiempo real | En `hub` o `host`, nunca en el worker/nube (clase H) | Baja latencia + offline para el feedback; escalón de cómputo sin ir a la nube |
 | 15 | Adquisición / muestreo | ADC HW-paced + DMA, sobremuestreo 1 kHz → decimación a 100 Hz; IMU en tick maestro | Muestreo exacto sin CPU en el lazo (jitter ~ns) + mejora SNR; sin cambios de PCB |
+| 16 | Detección IC/TO | Fusión FSR + IMU, en la plantilla (resuelve CP-03) | Ground-truth de contacto + robustez en patología; alimenta ZUPT |
+| 17 | Stride length | Doble integración + ZUPT (stance por FSR) | Estándar en marcha lenta; FSR da el stance robusto |
+| 18 | Módulo IMU | Compartido; Fusion/Madgwick (C + `imufusion` Python) | Reutilización + paridad firmware↔worker; desbloquea ZUPT |
+| 19 | Paridad de features | Tests de paridad C↔Python en CI + entrenar con features del micro (de captura operativa) | Evita train/serve skew; paridad sobre set operativo nuevo, no sobre el crudo exploratorio |
+| 20 | DSP on-device (FFT/PSD) | CMSIS-DSP (float32); `arm_rfft_fast_f32`; bloque H (ventana Hann N=256) | M33 tiene FPU+DSP; librería probada; costo despreciable a ~1 Hz (ADR-019) |
+| 21 | Runtime de inferencia int8 | TFLite Micro + CMSIS-NN (NN int8 on-device); Mahalanobis en CMSIS-DSP; IF por árboles en C | Calza con TFLite→int8 y OTA de flatbuffers; paridad train↔serve; CMSIS-NN acelera en M33 (ADR-020) |
+| 22 | Catálogo de features / paridad | Catálogo declarativo (data file) + dos implementaciones (C/Python) + tests de paridad (golden vectors) | Una fuente de metadata; codegen/C-único descartados; encaja con el fasado y ADR-018 (ADR-021) |
+| 23 | Framework de entrenamiento + cuantización | TensorFlow/Keras; PTQ int8 (representative dataset), QAT fallback | Familiaridad + integración con TFLite Micro (#8); PTQ alcanza para el AE denso (ADR-022) |
+| 24 | Alcance inicial de features (hardware) | Set activo **2-FSR** (punta+talón); COP_ML (bloque E) y #18 M/L **definidas pero desactivadas** hasta sumar los FSR medial-lateral | Refleja el HW actual (2 FSR); se activan sin reescritura al cambiar el `feature_set_version` (ADR-023) |
+| 25 | Asignación de cores | **Uniforme:** core 0 = radio, core 1 = procesamiento (los 3 micros). Plantilla: core 1 = adquisición+eventos+features por-pie. Cintura: core 1 = inferencia+fusión+IMU+decisión | Aísla el WiFi (latencia impredecible), no las features (livianas); data locality; código compartido uniforme (ADR-024 rev) |
+| 26 | Modelo de ejecución (RTOS) | Bare-metal (Pico SDK, sin RTOS) en ambos firmwares; FreeRTOS evaluado y no adoptado | DMA + loop determinístico + decisiones a ~1 Hz → super-loop alcanza; mínimo overhead/footprint (ADR-025) |
+| 27 | Muestreo/lectura del IMU | Tick maestro (polling 100 Hz) + **DMA**; ODR alto + DLPF (anti-alias); un timestamp por tupla. DATA_READY = fallback (traza en PCB); FIFO descartada. Cintura 100 Hz + DMA (50 Hz fallback #11) | Timestamp único por tupla; sin tocar PCB; DMA no roba CPU a la inferencia (ADR-026) |
+| 28 | Feedback vibrotáctil | **Monitor + alerta** (no corrige); score designado (`feedback_source`, model-agnostic) sobre **ventana de zancadas** → anomalía sostenida → 3 bandas per-paciente → alerta escasa (3 ritmos, ambos pies); "riesgo" co-anclado a caída | Menos falsos positivos (ventana) y menos carga cognitiva (escaso); honesto con el alcance (detección) (ADR-027/SPEC-09) |
+| 29 | Emparejamiento BLE (sin botón) | Cintura↔host; auto-advertise sin bond + gesto (sacudir la cintura ~5 s con plantillas quietas); passkey fijo impreso (v1); bond list multi-host N≈4; host inicia, uno a la vez. Clear-all/pantalla → máxima | Onboarding sin botón, robusto (multi-IMU) y con MITM; deps CP-04/CP-15 (ADR-028) |
 
 ---
 
@@ -546,13 +440,14 @@ Los únicos puntos de variación (app del host y ubicación del worker) están *
 | ML on-device excede recursos del RP2350 | Inferencia lenta / no cabe | Cuantización int8 (TFLite Micro); modelos pesados en clase W (worker) |
 | Brickeo por OTA de firmware | Dispositivo inutilizable | Bootloader A/B, checksum, watchdog, modo recuperación, last-known-good |
 | Crecimiento de crudo en uso diario | Costo de almacenamiento | Retención tiered + crudo sólo por anomalía |
+| Train/serve skew (features PC vs micro) | Modelo degradado en producción | Tests de paridad C↔Python en CI + entrenar con features del micro (ADR-018) |
 | Datos de salud | Privacidad/compliance | Cifrado en tránsito/reposo, RLS por paciente, anonimización, consentimiento |
 
 ---
 
 ## 17. Cuestiones abiertas (para revisión)
 
-Las cuestiones abiertas y puntos a ratificar se llevan en un **registro vivo aparte**, que es la única fuente de verdad: **`docs/cuestiones_pendientes.md`**. Al momento de esta versión incluyen (ver IDs CP-01 a CP-06): tercer FSR en ADC2/GP28, cintura-como-hub vs. features-en-plantilla, dónde detectar el IC, rigor de seguridad, esquema de `feature_vectors` y proveedor del worker en la nube.
+Las cuestiones abiertas y puntos a ratificar se llevan en un **registro vivo aparte**, que es la única fuente de verdad: **`docs/cuestiones_pendientes.md`**. Incluye CP-01 a CP-12 (abiertas: CP-01, CP-04 a CP-12; resueltas: CP-02 features distribuidas, CP-03 detección de IC en la plantilla).
 
 ---
 

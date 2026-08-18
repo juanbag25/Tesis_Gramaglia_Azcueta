@@ -17,17 +17,40 @@
 | 002 | Uplink cintura↔host | BLE desde la mínima | aceptada |
 | 003 | Transporte | UDP stream + TCP control (GATT notif/writes en BLE) | aceptada |
 | 004 | Sincronización temporal | Backbone de reloj (timestamp+seq+beacon+drift) + emparejado por evento | aceptada |
-| 005 | Cálculo de features | Distribuido: por-pie en plantillas, fusión bilateral en cintura | aceptada (rev. 2026-07-16) |
+| 005 | Cálculo de features | Distribuido: por-pie en plantillas, fusión bilateral en cintura; captura por fases | aceptada (rev. 2026-07-19) |
 | 006 | Hosting / base de datos | Supabase | aceptada |
 | 007 | Modelo de datos | Postgres + TimescaleDB + object storage | aceptada |
 | 008 | Retención de datos | Tiered por fase | aceptada |
 | 009 | Backend de reentrenamiento (máxima) | Worker en la nube | aceptada |
 | 010 | Firmware on-device | C/C++ con Pico SDK | aceptada |
-| 011 | Ruteo de modelos | Clase declarada en el registry (L/E/H/W) | aceptada (rev. 2026-07-16) |
+| 011 | Ruteo de modelos | Clase declarada en el registry (L/E/H/W); ruteo de inferencia micro→host model-agnostic | aceptada (rev. 2026-07-19) |
 | 012 | OTA de modelos | Pesos + firmware completo (A/B) | aceptada |
 | 013 | Inferencia en tiempo real | En `hub` o `host`; nunca en el worker/nube | aceptada |
 | 014 | Adquisición / muestreo | ADC HW-paced + DMA, sobremuestreo 1 kHz → decimación a 100 Hz; IMU en tick maestro | aceptada |
 | 015 | Detección de eventos IC/TO | Fusión FSR + IMU; en la plantilla (per-pie); resuelve CP-03 | aceptada |
+| 016 | Largo de zancada (stride length) | Doble integración + ZUPT (stance por FSR), por zancada; EKF/MSDI futuro | aceptada |
+| 017 | Módulo IMU (orientación/gravedad/calibración) | Módulo compartido; Fusion/Madgwick (C+Python); calibración estática + re-zero en stance | aceptada |
+| 018 | Paridad de features PC↔micro | Tests de paridad en CI + entrenar con features del micro (de captura operativa) + tolerancias (anti train/serve skew) | aceptada (acl. 2026-07-19) |
+| 019 | DSP on-device (FFT/PSD) | CMSIS-DSP (float32); `arm_rfft_fast_f32`; resuelve la fila DSP del stack | aceptada |
+| 020 | Runtime de inferencia int8 | TFLite Micro + CMSIS-NN (NN on-device); Mahalanobis en CMSIS-DSP; IF por árboles en C | aceptada |
+| 021 | Catálogo de features + paridad | Catálogo declarativo (data file) + dos implementaciones (C/Python) + tests de paridad; codegen/C-único descartados | aceptada |
+| 022 | Framework de entrenamiento + cuantización | TensorFlow/Keras; PTQ int8 (representative dataset), QAT fallback | aceptada |
+| 023 | Alcance inicial de features (2 FSR) | Hardware con 2 FSR (punta+talón); COP_ML (bloque E) y #18 M/L diferidas: definidas pero desactivadas en el set activo | aceptada |
+| 024 | Asignación de cores por dispositivo | **Rev 2026-07-20 — reparto uniforme:** core 0 = radio, core 1 = procesamiento (los 3 micros). Plantilla: core 1 = adquisición+eventos+features por-pie / core 0 = WiFi-STA+TX+motor. Cintura: core 1 = inferencia+fusión+IMU+decisión / core 0 = radio (AP+BLE) | aceptada (rev) |
+| 025 | Modelo de ejecución del firmware | Bare-metal (Pico SDK, sin RTOS) en ambos firmwares; FreeRTOS evaluado y no adoptado | aceptada |
+| 026 | Muestreo y lectura del IMU | Tick maestro (polling 100 Hz) + lectura por DMA; ODR alto + DLPF (sobremuestreo anti-alias); un timestamp por tupla. DATA_READY = fallback (traza en próximo PCB); FIFO descartada. Cintura 100 Hz + DMA (50 Hz fallback #11) | aceptada |
+| 027 | Feedback vibrotáctil | Monitor+alerta (no corrige); score designado (`feedback_source`, model-agnostic) evaluado sobre ventana de zancadas → anomalía sostenida → 3 bandas per-paciente → alerta escasa; ambos pies; "riesgo" co-anclado a caída. Modelo/ventana/umbrales empíricos | aceptada |
+| 028 | Emparejamiento BLE del wearable (sin botón) | Cintura↔host BLE; auto-advertise sin bond + gesto (sacudir la cintura ~5 s con plantillas quietas); passkey fijo impreso (v1); bond list multi-host N≈4 (LRU/forget); reconexión iniciada por el host, una a la vez. Clear-all y pantalla → máxima. Deps CP-04/CP-15 | aceptada |
+| 029 | Ajustes de catálogo y algoritmos (auditoría de alineación) | +4 features (single support, symmetry angle, avg zero-crossings, sway density diferida) + evento mid-stance; candidatos OC-SVM (E/W, benchmark), GMM, VAE; sustitución OC-SVM→Mahalanobis documentada; estrategia progresiva de evaluación | aceptada |
+| 030 | Reconciliación anteproyecto/marco con la arquitectura (CP-11) | Registra el delta documental: solo-plantilla→cintura-hub, BMI270→MPU-6050+IMU de cintura, bloque I, algoritmos §4.3 (no §6). El anteproyecto no se modifica (histórico); cierra CP-11. Motivo del MPU-6050: disponibilidad + presupuesto (posible upgrade de IMU a futuro); energía → CP-09 | aceptada |
+| 031 | Esquema de `feature_vectors` (CP-05) | **jsonb** (una fila = un vector + `feature_set_version`) + **columnas generadas/índices** para las features calientes del dashboard; puerta de salida a *wide* al congelar el set. Flexible mientras el set cambia; volumen bajo. Cierra CP-05 | aceptada |
+| 032 | Seguridad y aislamiento de datos (CP-04) | **RLS estricto por paciente** en todas las tablas con `patient_id` + tabla de pertenencia `patient_access` (user→patient→rol); worker con service-role; cifrado tránsito/reposo; `external_code` anónimo + PII mínima; borrado al reasignar. Cierra CP-04 a nivel técnico; nivel formal → comité (CP-18) | aceptada |
+| 033 | Interfaces: UI de control + dashboard (CP-15) | **(a) UI de control** = app local Python + UI web (FastAPI sobre el host `bleak`): paciente, sesión, modo de las zapatillas, estado, OTA; máxima → app móvil. **(b) Dashboard clínico** = web solo-lectura sobre Supabase (RLS), **diferido a la máxima** (exploración = notebooks). Cierra CP-15 | aceptada |
+| 034 | Switch mínima↔máxima: el micro no detecta el host (CP-16) | **Micro agnóstico al tipo de central** (confirma §2.3): el **flujo lo determina el host** (laptop→worker local / celu→worker nube). El **modo** (exploratoria/operativa/edge) es un **comando explícito**, nunca inferido. El host **declara su tipo** en la metadata de la sesión (trazabilidad, no comportamiento). Cierra CP-16 | aceptada |
+| 035 | Encendido/apagado sin botón (CP-19) | **Rev 2026-07-21 — sin gestión de energía en la mínima:** el **switch físico es el encendido/apagado** y todo queda despierto mientras esté encendido (~10 h > objetivo de 8 h, así que dormir no hace falta). **Wake-on-motion y WiFi power-save quedan documentados como opciones para la máxima**, no para la placa nueva: los umbrales de movimiento son poco confiables en marcha hemipléjica y el auto-sleep **hace perder los primeros pasos** tras estar sentado (dato clínicamente valioso). Traza INT del IMU: se mantiene por el DATA_READY de ADR-026, ya **no crítica**. Cierra CP-19 | aceptada (rev) |
+| 036 | Fase de captura y origen de las features en el esquema | `sessions.mode` pasa a **tres** valores (`exploratory`/`operational`/`edge`, ADR-005 rev c) y `feature_vectors` suma **`features_source`** (`device`/`offline`): en la fase operativa conviven el vector del micro y el recalculado off-device para la misma zancada, y la paridad (ADR-018) necesita distinguirlos | aceptada |
+| 037 | Fuente única del esquema de la base | **`src/db/schema.sql` manda**; el maestro §11.3 deja de duplicar el DDL y pasa a mapa de entidades + puntero. Las dos copias ya habían divergido. Aplica la regla de layering del repo (se define una vez) | aceptada |
+| 038 | Mid-stance: adopción y partición del apoyo | **Se adopta MS completo.** Detección en la plantilla por **cruce de carga retropié→antepié** (`F_ante ≥ F_post`, confirmado por pie-plano del IMU; flag `no_crossover` = anomalía). Parte el apoyo en **carga**/**propulsión**, instancia #12/#13/#14 por sub-fase y suma **#43** push-off time ratio y **#44** propulsive impulse ratio (catálogo 45→47). Activo con 2 FSR. Cierra la contradicción ADR-029 ↔ SPEC-02 | aceptada |
 
 ---
 
@@ -121,7 +144,7 @@
 
 **Aclaración conceptual importante (corrección registrada).** Inicialmente se planteó que "para las features el emparejado por evento alcanza". **Es incorrecto:** el evento IC **no sincroniza relojes** — empareja *zancadas*. Las features de ventana y de simultaneidad (double support, COP dynamics, frecuencia/entropía, variabilidad multi-zancada) **necesitan el timeline a nivel de muestra** que da el backbone de reloj. Por lo tanto:
 - El **backbone de reloj es el mecanismo primario** (hace el trabajo pesado).
-- El **emparejado por evento es refinamiento**: sirve para la simetría *por zancada* (Symmetry Index) y como *cross-check* si el reloj driftea; **degrada con gracia** (si el IC no es fiable en un paciente, se cae a reloj solo). Cada pie se segmenta con su propia señal (un pie anómalo no ensucia al otro). Como el IC ya se detecta para las features espacio-temporales, reutilizarlo es **gratuito**.
+- El **emparejado de zancadas usa el reloj ya sincronizado** — **no** es un mecanismo de sincronización ni un *cross-check* del drift (de eso se encarga el backbone). Sirve para la simetría *por zancada* (Symmetry Index): sobre el timeline común, los tiempos de IC de cada pie asocian la zancada izq↔der. Con los relojes sincronizados (beacon) se emparejan las zancadas; el IC no sincroniza nada. Cada pie se segmenta con su propia señal (un pie anómalo no ensucia al otro). Como el IC ya se detecta para las features espacio-temporales, reutilizarlo es **gratuito**.
 
 **Sobre patología (duda planteada):** un IC anómalo (reducido, ausente, demorado, asimétrico) **es parte de la señal de anomalía** y se mide como feature. Usar el IC como marca temporal (sólo su índice) no entra en conflicto con medir su morfología como feature de detección — son usos distintos, sin circularidad.
 
@@ -141,8 +164,8 @@
 
 ---
 
-## ADR-005 — Cálculo de features (distribuido) y rol de la cintura
-**Estado:** aceptada (rev. 2026-07-16) — **Decisión: features por-pie en las plantillas, fusión bilateral en la cintura; definición compartida**
+## ADR-005 — Cálculo de features (distribuido), fases de captura y rol de la cintura
+**Estado:** aceptada (rev. 2026-07-19) — **Decisión: features por-pie en las plantillas, fusión bilateral en la cintura; definición compartida; captura por fases (exploratoria crudo-solo / operativa con features del micro)**
 
 **Contexto.** Se preguntó dónde se calculan las features. Juan eligió inicialmente "todo crudo → computadora", correcto para la **fase de entrenamiento/evaluación**. Pero los algoritmos de clase L/E corren en el micro, así que en algún momento hay que calcular features on-device.
 
@@ -152,17 +175,23 @@
 - **Todo crudo → computadora (elegida para captura).** Ideal para dataset/evaluación; no escala al uso real en el borde.
 
 **Decisión.** **Cómputo de features distribuido**, con una **única definición de features compartida** (misma fórmula en plantilla, cintura y worker, versionada por `feature_set_version`):
-- **Cada plantilla** calcula sus **features por-pie** (bloques A/B/C/E/F/G/H) y detecta sus eventos IC/TO, en **ambos modos**.
+- **Cada plantilla** calcula sus **features por-pie** (bloques A/B/C/E/F/G/H) y detecta sus eventos IC/TO.
 - **La cintura** hace la **fusión bilateral** (simetría bloque D; double support desde eventos alineados), corre el detector y decide el feedback.
 
-Lo que distingue captura de edge es **qué se transmite/almacena**, no dónde se calcula: en captura se sube además el **crudo continuo** (para re-extracción off-device); en edge las plantillas mandan **features + eventos** (+ crudo por snippet ante anomalía, buffereado en cada plantilla).
+**Dónde se calculan las features depende de la fase (rev. c).** El modo captura **no es único**: se distinguen dos sub-fases con propósitos distintos.
+- **Captura exploratoria** (investigación, one-time): se sube **sólo crudo continuo** → host/DB. Las features se calculan **off-device (Python)** para hacer ingeniería/selección de features y barrer tamaños de ventana y algoritmos. El micro **no** calcula features acá (a lo sumo, pruebas de banco de factibilidad). Salida: un `feature_set_version` congelado.
+- **Captura operativa** (post-congelamiento; incluye la **calibración/baseline por paciente**): el micro **sí** calcula sus features por-pie + **crudo continuo**. Ese dataset nuevo entrena los modelos desplegables **skew-free** y valida la **paridad** (ADR-018) sobre su propio crudo, **sin reprocesar el crudo exploratorio**.
+- **Edge** (uso real): el micro calcula features + eventos en vivo; **crudo sólo por snippet ante anomalía**, buffereado en cada plantilla.
 
-**Justificación (rev).** Reparte el cómputo entre los micros y **descarga a la cintura** (el nodo más exigido: radio AP+BLE + inferencia); reduce el tráfico plantilla→cintura en edge (features en vez de crudo). Que las plantillas calculen en ambos modos preserva la **simetría de cómputo** captura↔edge. La fusión bilateral **no necesita el crudo de ambos pies co-localizado**: usa features por-pie + eventos alineados por el backbone de sync (ADR-004). **Resuelve CP-02.**
+O sea: "el micro calcula sus features por-pie" aplica a **operativa y edge**, no a la exploratoria. Lo que las plantillas transmiten/almacenan cambia por fase; la **definición** de cada feature es única y compartida en todas.
+
+**Justificación (rev c).** Calcular features en el micro **antes** de la exploración es prematuro: aún no están definidos qué features, qué ventanas ni qué algoritmos usar, y el crudo exploratorio ya es el "seguro" para re-extraer con cualquier definición off-device. La garantía skew-free y la paridad **no requieren** tocar el crudo exploratorio: salen de una **captura operativa nueva**, que además el sistema hace igual en cada paciente (calibración/baseline). Se conserva el reparto de cómputo distribuido y la descarga de la cintura (features en vez de crudo en edge); la fusión bilateral usa features por-pie + eventos alineados por sync (ADR-004), sin crudo co-localizado. **Resuelve CP-02; el criterio de fases queda en CP-13.**
 
 > **Historial de revisión.**
 > - *v1 (inicial):* el modo captura calculaba features off-device (PC) desde el crudo.
 > - *rev. 2026-07-16 (a):* features on-device en la cintura en ambos modos, por simetría de cómputo captura↔edge.
-> - *rev. 2026-07-16 (b):* cómputo **distribuido** — features por-pie en cada plantilla, fusión bilateral en la cintura (resuelve CP-02, reparte carga). La re-extracción off-device desde el crudo sigue disponible como capacidad de análisis.
+> - *rev. 2026-07-16 (b):* cómputo **distribuido** — features por-pie en cada plantilla, fusión bilateral en la cintura (resuelve CP-02, reparte carga).
+> - *rev. 2026-07-19 (c):* **captura por fases** — *exploratoria* (crudo-solo, features off-device para explorar/seleccionar) vs *operativa* (micro calcula features + crudo, para entrenar skew-free y validar paridad). Se descarta calcular features en el micro en la fase exploratoria y reprocesar el crudo exploratorio; paridad/skew-free se validan sobre un set operativo nuevo (CP-13). Recupera el espíritu de v1 para la fase temprana sin perder la simetría de cómputo en la operativa. La re-extracción off-device desde el crudo sigue disponible como capacidad de análisis.
 
 **Cintura como hub de fusión.** La información de ambos pies converge en la cintura: recibe **features por-pie + eventos** (o crudo, en captura), mantiene el timeline, calcula las **features bilaterales** (simetría, double support desde eventos), corre los detectores L/E (o delega en el host, clase H) y decide el feedback. Las plantillas dejan de ser sensores "tontos": calcular sus features por-pie reparte el cómputo y descarga a la cintura. Carga liviana: features por zancada (~1 Hz de decisiones), inferencia int8 sobre ~25 features mínima.
 
@@ -254,7 +283,7 @@ Lo que distingue captura de edge es **qué se transmite/almacena**, no dónde se
 ---
 
 ## ADR-011 — Ruteo de modelos (taxonomía L/E/H/W)
-**Estado:** aceptada (rev. 2026-07-16) — **Decisión: cada modelo declara su clase en el registry (model-agnostic)**
+**Estado:** aceptada (rev. 2026-07-19) — **Decisión: cada modelo declara su clase en el registry (model-agnostic); inferencia micro→host con fallback por config; reentrenamiento en el worker salvo los detectores de drift (clase L)**
 
 **Contexto.** Advertencia de Juan: hay modelos probabilísticos **muy sencillos** que se reentrenan **dato a dato en el micro** y no deben ir al worker. El reparto depende de qué modelos se prueben, así que la arquitectura no debe hardcodearlos.
 
@@ -262,9 +291,9 @@ Lo que distingue captura de edge es **qué se transmite/almacena**, no dónde se
 | Clase | Inferencia | Reentrena | Granularidad | Ejemplos | ¿OTA? |
 |---|---|---|---|---|---|
 | **L — Local-Local** | Cintura (hub) | Cintura | Dato a dato | Mahalanobis EMA, z-score/EWMA, probabilísticos simples | No (se auto-actualiza) |
-| **E — Edge+Worker** | Cintura (hub, int8) | Worker | Periódico/async | Autoencoder denso int8, LSTM chico | Sí |
-| **H — Host** | Host (celular/laptop), tiempo real | Worker | Periódico/async | Modelos que no entran en la cintura pero sí en el host | Sí |
-| **W — Worker-heavy** | Worker (batch/offline, **no** tiempo real) | Worker | Periódico/async | LSTM AE grande, Isolation Forest, análisis/reportes | — |
+| **E — Edge+Worker** | Cintura (hub) | Worker | Periódico/async | Autoencoder denso int8, **Isolation Forest** | Sí |
+| **H — Host** | Host (celular/laptop), tiempo real | Worker | Periódico/async | Modelos que **no entran** en la cintura pero sí en el host | Sí |
+| **W — Worker-only (offline)** | Worker (batch/offline, **no** tiempo real) | Worker | Batch | Análisis/reportes, re-scoring histórico; modelos que no entran ni en el host en tiempo real | — |
 
 Campos del registry: `inference_target ∈ {hub, host, worker}`, `retrain_target ∈ {micro, worker}`.
 
@@ -275,6 +304,10 @@ Campos del registry: `inference_target ∈ {hub, host, worker}`, `retrain_target
 **Decisión.** **Clase declarada en el registry.** Mahalanobis además actúa como **sensor de drift** que dispara el reentrenamiento de E/W; los L no necesitan disparo.
 
 **Justificación.** Robustez a la incertidumbre sobre qué algoritmos ganarán: la infra soporta todos los caminos de antemano.
+
+**Principio de ruteo (rev. 2026-07-19, model-agnostic).** La **inferencia en tiempo real** corre en el **micro (hub) siempre que entre**; si no entra, pasa al **host** (celular/laptop) para responder casi en tiempo real; **nunca** en el worker/nube. Vale para **cualquier modelo** (Isolation Forest y los que se prueben a futuro), no sólo los actuales. El **`inference_target` del registry** decide dónde corre: cambiarlo `hub`→`host` es un **switch de config, sin reescritura**, porque el **decisor de feedback es agnóstico al origen del score**. Consecuencia de infra: el **host debe alojar un runtime de inferencia espejo** del micro (para recibir un modelo que se cae de la cintura por footprint/latencia). El **reentrenamiento** siempre corre en el **worker** (compu en la mínima / nube en la máxima), disparado por el drift de Mahalanobis u otro flag; **excepto** los modelos triviales que detectan ese drift (clase L, p. ej. Mahalanobis), que se mantienen y reentrenan en el micro.
+
+**Reclasificación (rev. 2026-07-19).** **Isolation Forest pasa de W → E** (su inferencia —recorrido de árboles— es liviana, entra en el micro; reentrena en el worker). La clase **W** queda reservada para lo **estrictamente offline** (análisis/reportes, re-scoring histórico, o modelos que no entran ni en el host en tiempo real). El **LSTM AE** deja de estar fijo en W: es **E** si entra en el micro, **H** si no entra pero sí en el host, **W** sólo si es puramente offline (lo decide el profiling, #11). Reconcilia la parte de IF de **CP-11** y queda coherente con `descripcion_proyecto.md`.
 
 ---
 
@@ -307,7 +340,7 @@ Campos del registry: `inference_target ∈ {hub, host, worker}`, `retrain_target
 
 **Justificación.** Preserva la baja latencia y la operación offline del feedback, y provee un **escalón intermedio de cómputo** (host) sin ir a la nube.
 
-**Consecuencias.** Un modelo pesado que se quiera para tiempo real: cuantizarlo para la cintura (→ E) o correrlo en el host (→ H); si tampoco entra en el host del escenario objetivo, queda como análisis batch (→ W). La clase H depende de que el modelo entre en el celular para funcionar en la máxima.
+**Consecuencias.** Un modelo pesado que se quiera para tiempo real: cuantizarlo para la cintura (→ E) o correrlo en el host (→ H); si tampoco entra en el host del escenario objetivo, queda como análisis batch (→ W). La clase H depende de que el modelo entre en el celular para funcionar en la máxima. **El switch `hub`↔`host` es un cambio de `inference_target` en el registry (model-agnostic, sin reescritura); el decisor de feedback es agnóstico al origen del score, y el host mantiene un runtime de inferencia espejo (ver ADR-011 rev 2026-07-19).**
 
 ---
 
@@ -363,6 +396,693 @@ Campos del registry: `inference_target ∈ {hub, host, worker}`, `retrain_target
 
 ---
 
+## ADR-016 — Estimación de largo de zancada (stride length)
+**Estado:** aceptada — **Decisión: doble integración de la aceleración (frame global) + ZUPT disparado por FSR, por zancada; ZUPT simple como base, EKF/MSDI como refinamiento futuro.**
+
+**Contexto.** Stride length (y de ahí stride speed) son features del bloque A. Del IMU del pie se obtienen por **integración doble** de la aceleración, que **driftea**; el ZUPT corrige aprovechando que el pie está quieto en *stance*. Depende de la **orientación** del pie (para remover gravedad) → backlog #5.
+
+**Investigación (literatura).**
+- Doble integración de la accel en **frame global** (rotada + gravedad removida) entre *stances* → velocidad → desplazamiento.
+- **ZUPT:** en *stance* la velocidad es ~0 → de-drift lineal por zancada. **Alta validez en marcha** (degrada en running, no aplica).
+- **Precisión:** stride length ~**−6 % a +3 %**; depende de sampling/rango y, sobre todo, de la **correcta detección del stance**.
+- **Ventaja propia:** el *stance* lo da el **FSR** (robusto, ground truth) en lugar de un detector IMU-only — el factor crítico queda cubierto por SPEC-01/02.
+- Fuentes: Frontiers Bioeng 2025 (params por IMU + eventos refinados); PLOS One (validez ZUPT); Sci Rep s41598-021-81009-w (péndulo invertido, tibia); review ZUPT-aided pedestrian nav; stance-phase detection para ZUPT.
+
+**Opciones.**
+- **ZUPT simple por zancada (elegida).** Integrar entre *stances* + de-drift lineal de la velocidad + integrar a desplazamiento. Liviano, embebido-feasible, adecuado a marcha lenta.
+- **ZUPT-aided EKF / INS (MSDI, MFD-GED).** Filtro de Kalman fusionando orientación + ZUPT; más preciso y para trayectoria completa, pero más pesado. **Refinamiento futuro.**
+- **Modelo de péndulo invertido (IMU en tibia).** Descartado: nuestro IMU va en el **pie**.
+
+**Decisión.** **Doble integración + ZUPT simple**, con *stance* por **FSR**, calculado **por zancada**. EKF/MSDI queda como refinamiento futuro si la precisión no alcanza (sin magnetómetro en el MPU-6050 → preferir métodos *magnetometer-free*). Detalle: **SPEC-03**.
+
+**Dependencia.** Requiere la **orientación del pie** (remover gravedad) → **backlog #5** pasa a ser prerequisito de la implementación real.
+
+**Justificación.** ZUPT es el estándar para IMU en el pie y tiene alta validez en marcha lenta (nuestro caso); el FSR aporta el *stance* robusto, que es el factor crítico; "simple" es embebido-feasible en el Pico.
+
+**Consecuencias.** Define las features 6 (stride length) y 7 (stride speed) del bloque A. Precisión esperada del orden de pocos %; validar en la calibración. El salto a EKF, si se persigue, abrirá su propia cuestión/ADR.
+
+---
+
+## ADR-017 — Módulo de procesamiento de IMU (orientación, gravedad, calibración)
+**Estado:** aceptada — **Decisión: módulo IMU compartido reutilizable; orientación por Madgwick vía la librería open-source Fusion (C) + `imufusion` (Python); calibración estática + re-zero de giro en *stance* + alineación anatómica.**
+
+**Contexto.** Varias features usan el IMU (foot pitch en IC/TO, ROM, LDLJ, vel. angular) y el ZUPT (ADR-016), y **todas** necesitan **orientación** y **aceleración lineal sin gravedad**. Conviene un **módulo reutilizable** que las provea, en vez de que cada feature re-implemente. Además el MPU-6050 requiere **calibración** (bias/offset, sensibles a temperatura) y **alineación anatómica** (el sensor está en orientación arbitraria dentro de la plantilla).
+
+**Investigación (literatura/industria).**
+- **Calibración:** bias de giro por promedio estático ("dejar quieto"); offset de accel nivelado (Z≈9,81); la **temperatura corre el bias** → warm-up 2-3 min + lugar sin vibración; el bias no es constante. El **FSR** habilita **re-zero del giro en runtime durante el *stance*** (foot still).
+- **Orientación:** complementario / **Madgwick** / Mahony. En **6-DOF sin magnetómetro** el *yaw* driftea, pero roll/pitch (referencia de gravedad por accel) están **bien condicionados** → suficiente para nuestras features y para el *gravity removal*.
+- **Librería:** **Fusion (xioTechnologies)** = Madgwick embebido en **C**, 6-DOF, con **corrección de bias de giro en runtime + comp. de temperatura**; y **`imufusion`** (Python) → **paridad firmware↔worker** con el mismo algoritmo.
+- **Alineación sensor-segmento:** anatómica (pose conocida, ej. pie-plano) o funcional; existen métodos **calibration-free** por ciclo de marcha.
+- Fuentes: calibración MPU6050 (offsets estáticos); comparación de filtros (MDPI Sensors 25:5161); Fusion (github.com/xioTechnologies/Fusion); calibration-free gait (PMC8599134); sensor-to-segment (PMC10098809).
+
+**Opciones — orientación.**
+- **Adoptar Fusion/Madgwick (elegida).** Probada, embebida, **C + Python (paridad)**, bias runtime, menos código. *Contra:* dependencia (permisiva, vendorizable — verificar licencia).
+- Complementario propio. Más simple, pero sin la paridad ni el bias-runtime listos.
+- EKF/INS. Más preciso pero más pesado; innecesario para roll/pitch + gravedad.
+
+**Opciones — alineación anatómica.**
+- **Pose estática pie-plano (elegida).** Simple; alinea el vertical con la gravedad.
+- Funcional (movimiento de calibración). 
+- **Calibration-free** (por ciclo de marcha). Refinamiento futuro.
+
+**Decisión.** **Módulo IMU compartido** que expone accel calibrado, orientación (quaternion/pitch/roll), **aceleración lineal sin gravedad** y vel. angular; orientación con **Fusion (C) / `imufusion` (Python)**; **calibración**: estática "dejar quieto" (bias giro + offset accel, post warm-up) + **re-zero de giro en *stance* (FSR)** + **alineación anatómica pie-plano** en la sesión. Detalle: **SPEC-04**.
+
+**Justificación.** Reutilización (un solo lugar para orientación/gravedad), **paridad firmware↔worker** por usar la misma lib en C y Python, menos código propio, y aprovecha el FSR para el bias en runtime. **Desbloquea el ZUPT (ADR-016).**
+
+**Consecuencias.** La **calibración del IMU** se integra a la sesión de **calibración/baseline** (Vista 3). Verificar licencia de Fusion al vendorizar. Sin magnetómetro, el *yaw* absoluto no es fiable (no afecta gravity removal ni roll/pitch). *Calibration-free* queda como refinamiento futuro. **`imufusion` en el worker es condicional:** sólo para re-extraer features del IMU desde el **crudo** off-device (dataset/experimentación); en el reentrenamiento *edge* el worker consume features ya computadas y no lo usa.
+
+---
+
+## ADR-018 — Paridad de features PC↔micro (evitar *train/serve skew*)
+**Estado:** aceptada — **Decisión: estrategia de paridad por capas — tests de paridad en CI + entrenar con features del micro + disciplina numérica.**
+
+**Contexto.** Las features de entrenamiento a veces se calculan en Python (worker, desde crudo) y la inferencia usa features calculadas en C (micro). Si difieren aunque sea un poco → **train/serve skew**: el modelo ve una distribución distinta a la que aprendió y se degrada. "Deberían ser iguales" no basta; hay que **garantizarlo**.
+
+**Investigación.** El *train/serve skew* es un problema conocido; mitigaciones estándar: **código compartido / feature store** (paridad por construcción; Feast/Tecton), **tests de paridad sobre vectores fijos + round-trip en CI**, y **monitoreo** de features de alta importancia. Sutileza numérica: IEEE 754 hace deterministas las ops básicas, pero **funciones de librería** (sin, sqrt, exp, FFT) y el **fixed-point/int8 del micro vs float del PC** pueden divergir → tolerancias + cuidado. Fuentes: dswok (train/serve skew), Google Vertex AI (monitoreo), Confluent (eliminación), Nubank (guía), jvns (punto flotante).
+
+**Decisión (estrategia por capas).**
+1. **Tests de paridad (golden vectors) en CI:** input→output esperado corrido en **C (firmware)** y **Python (worker)**; match element-wise con **tolerancia por-feature**; **gate** atado a `feature_set_version`.
+2. **Política de entrenamiento (aclarada 2026-07-19):** los modelos desplegables se entrenan con las **features computadas por el micro**, guardadas en la **captura operativa** (post-congelamiento del set; incluye la calibración/baseline por paciente — ADR-005 rev c) → **skew-free por construcción**. La **paridad se valida sobre ese set operativo nuevo** (micro-C vs re-extracción Python del mismo crudo), **sin reprocesar el crudo de la captura exploratoria**. La captura exploratoria es crudo-solo y sus features off-device (path `imufusion`) sirven para **prototipar/seleccionar**; una feature nueva **debe pasar los tests de paridad** en una captura operativa antes de promoverse a producción.
+3. **Disciplina numérica:** tolerancias explícitas; cuidado con fixed-point/int8 vs float y con el bloque H (FFT/entropía) y LDLJ; fijar la implementación de transcendentales si hace falta.
+4. **Refuerzo futuro:** monitoreo round-trip sobre vectores reales. *(El C-compartido bindeado y el codegen desde una definición única se evaluaron y **descartaron** en **ADR-021**; la escalación ante drift es disciplina numérica + tolerancias, no cambiar de mecanismo.)*
+
+**Justificación.** Convierte el invariante "definición de features única y compartida" de una **aspiración** en una **garantía verificable** (gate de CI), y elige la política más segura (entrenar con lo que se infiere).
+
+**Consecuencias.** Ningún modelo de producción se entrena con features laptop-only sin verificar. La paridad es un **gate de CI** y se ancla a la **captura operativa** (ADR-005 rev c), no a la exploratoria. El catálogo de features (CP-12) incorpora **tolerancias por-feature**. Refuerza CP-12/CP-13 y el módulo compartido (`src/firmware/shared/`).
+
+---
+
+## ADR-019 — DSP on-device: FFT/PSD y librería (bloque H)
+**Estado:** aceptada — **Decisión: CMSIS-DSP (float32) como backbone de DSP; `arm_rfft_fast_f32` para la FFT real; ventana Hann deslizante; bandas fijas. Resuelve la fila "DSP" del stack.**
+
+**Contexto.** El **bloque H** (frecuencia/entropía: spectral entropy, dominant frequency, power en bandas; + sample entropy, que **no** usa FFT) necesita **FFT/PSD on-device**. Además, SPEC-01/03/06 y Mahalanobis (clase L) referían "sobre CMSIS-DSP o kernels propios" sin decidir. Hay que fijar la **librería DSP** y la parametrización del análisis espectral, cuidando la **paridad C↔Python** (ADR-018): el bloque H es el caso más delicado de paridad (FFT + fixed/float + transcendentales).
+
+**Hardware.** El RP2350 monta **2× Cortex-M33 @150 MHz con FPU de precisión simple (FPv5-SP) por hardware** (suma/mult/div/sqrt en HW) **+ extensión DSP/SIMD** (MAC 16/32-bit en 1 ciclo, SIMD 8/16-bit). Tiene silicio para FFT en float rápido, sin emulación.
+
+**Opciones evaluadas.**
+- **A — CMSIS-DSP (float32) (elegida).** Librería de ARM optimizada para Cortex-M (probada en M0/M4/M7/**M33**/M55), hand-tuned con SIMD/FPU. Provee `arm_rfft_fast_f32` (FFT real recomendada) + `arm_cmplx_mag_f32` (magnitud→PSD), estadística, álgebra (para Mahalanobis) y **FIR decimation**. Integra con el Pico SDK como subdirectorio (`-mcpu=cortex-m33 -mfpu=fpv5-sp-d16 -mfloat-abi=hard -DARM_MATH_CM33=1`). *Pros:* código probado y rápido (~2× vs C genérico), cubre FFT+filtros+álgebra en **una** dependencia, reutilizable por SPEC-01/03/06 y Mahalanobis. *Contra:* dependencia externa (Apache-2.0, permisiva/vendorizable); f32 vs f64 del worker → tolerancias de paridad.
+- **B — Kernels propios (FFT a mano).** *Pros:* control total, sin dependencia. *Contra:* reinventar una FFT bien testeada es caro y propenso a errores; difícil igualar el tuning SIMD/FPU de ARM; nada que ganar.
+- **C — FFT en fixed-point (q15/q31).** ~5× más rápida en MCU **sin** FPU (M0+); en el M33 **con** FPU la ventaja se diluye y complica paridad y rango dinámico. Se reserva como **fallback** si el profiling lo exige.
+
+**Decisión.** **CMSIS-DSP en float32** como backbone de DSP del firmware: `arm_rfft_fast_f32` para la FFT real del bloque H, más su uso transversal (filtros/decimación FIR, álgebra de Mahalanobis, estadística). Fixed-point q15 sólo como fallback.
+
+**Parametrización del análisis espectral (bloque H).**
+- **Señal:** PSD de la **aceleración** (eje vertical/AP o magnitud de `lin_accel`, a fijar en exploración), con **ventana Hann** (reduce *leakage*).
+- **Ventana deslizante multi-zancada** (no per-zancada): el bloque H necesita resolución en frecuencia → corre sobre **N muestras potencia de 2**. A 100 Hz: **N=256 (2,56 s, Δf≈0,39 Hz) por defecto** — resuelve bien la banda **<0,5 Hz**; N=128 (1,28 s, Δf≈0,78 Hz) queda grueso para esa banda; N=512 (5,12 s, Δf≈0,20 Hz) da más resolución a costa de responsividad.
+- **Bandas fijas** (del marco): **<0,5 / 0,5–2 / >2 Hz**. `dominant_frequency` = argmax del espectro (sin DC); `spectral_entropy` = entropía de Shannon del espectro normalizado; `power en bandas` = Σ PSD por banda.
+- **Sample entropy** (feature 36): sobre `ω`, **O(n²)**, **sin FFT** → ventana corta (acotar N por costo).
+
+**Costo (factibilidad).** Referencia conservadora en **RP2040 (Cortex-M0+ @133 MHz, sin FPU)**: FFT real f32 + magnitud tarda **~2,0 ms (N=128)** y **~4,3 ms (N=256)**; q15 ~5× más rápido. En el **M33 con FPU** el f32 es sustancialmente más rápido. Como el bloque H se evalúa a lo sumo ~1 Hz (por zancada/ventana), aun el peor caso (~4 ms) es **<0,5 % de duty** → holgado. **No** es camino crítico de latencia (el feedback usa Mahalanobis <100 µs, no el bloque H).
+
+**Paridad (ADR-018).** Caso más sensible del catálogo: (a) **calcular en float32 de ambos lados** (numpy/scipy pueden operar en `float32`); (b) **misma ventana (Hann) y misma normalización de PSD**; (c) **tolerancias por-feature más laxas** para el bloque H que para A-G; (d) `dominant_frequency`/`spectral_entropy` son relativamente robustas (argmax / distribución normalizada), `power en bandas` es sensible a escala → fijar convención de normalización. Estas features entran a producción **sólo tras pasar los tests de paridad** (captura operativa, ADR-005 rev c).
+
+**Justificación.** El M33 tiene FPU+DSP para FFT en float sin penalización relevante; CMSIS-DSP es el estándar probado, cubre FFT+filtros+álgebra en una dependencia y se reutiliza en las specs previas y en Mahalanobis; el costo es despreciable a la cadencia del bloque H; fixed-point queda de reserva.
+
+**Consecuencias.** Fija la fila **DSP** del `stack_tecnologico` (CMSIS-DSP, `decidido`). Resuelve la ambigüedad "CMSIS-DSP o kernels propios" de SPEC-01/03/06 → **CMSIS-DSP**. Detalle de implementación: **SPEC-07**. El bloque H sigue siendo **fase 4/opcional**: su inclusión final depende de la feature selection (CP-12); la ventana N es un parámetro a barrer en la exploración. Verificar licencia (Apache-2.0) al vendorizar.
+
+**Fuentes.**
+- RP2350 datasheet (Cortex-M33: FPv5-SP FPU + DSP) — datasheets.raspberrypi.com/rp2350; *RP2350* (Wikipedia); *Arm Cortex-M33 Processor Datasheet* (ARM).
+- *CMSIS-DSP: Overview* (soporta M33; `arm_rfft_fast_f32` recomendada) — arm-software.github.io/CMSIS-DSP.
+- *Benchmarking CMSIS-DSP on Raspberry Pi Pico* (tabla de tiempos FFT f32/f64/q15/q31 en RP2040/M0+) — github.com/jptrainor/cmsis-sandbox.
+- Integración CMSIS-DSP + pico-sdk en RP2350 (flags de compilación) — foros Raspberry Pi; ArduCMSIS-DSP (Hackster).
+- *Computing FFT with PowerQuad and CMSIS-DSP* (tiempos de `arm_rfft_fast_f32` @150 MHz en Cortex-M) — NXP AN12383.
+
+**Nota conceptual (en lenguaje llano).** Glosario de los términos de este ADR, para entender la decisión sin background de DSP/embebido.
+
+- **Frecuencias y por qué la FFT.** La aceleración del pie en el tiempo es una onda, como un sonido. Algunas features del bloque H no miran *cuánto* acelera el pie sino *con qué ritmos* oscila (lento vs. rápido). Igual que un acorde de guitarra es la suma de varias notas, la señal es la suma de varias frecuencias. La **FFT (Fast Fourier Transform)** es la herramienta que descompone el "acorde" en sus "notas": dice cuánta energía hay en cada frecuencia. De ahí salen la frecuencia dominante, la entropía espectral y la potencia por bandas.
+- **Ventana N=256 / Hann.** La FFT trabaja sobre un **pedazo** de N muestras, no sobre la señal infinita. A 100 Hz, N=256 = 2,56 s. Cuanto más largo el pedazo, mejor se distinguen frecuencias parecidas (más "resolución"): 256 alcanza para resolver la banda <0,5 Hz; 128 queda grueso. **Hann** es un suavizado de los bordes del pedazo (un *fade in/out*) para que el corte abrupto no invente frecuencias falsas.
+- **float32 vs fixed-point q15.** Dos formas de representar números con decimales en el micro. **float32** ("punto flotante"): como notación científica, la coma "flota"; flexible y preciso. **fixed-point q15** ("punto fijo"): enteros con la coma en un lugar fijo; un truco para ir más rápido en chips lentos, a costa de precisión. Elegimos float32; q15 queda de reserva.
+- **FPU (FPv5-SP) / "sin emulación".** La **FPU** (Floating-Point Unit) es una "calculadora de decimales" en el hardware del chip. Con FPU, las cuentas float son rápidas y directas; sin FPU, el chip las **simula** con muchos pasos (emulación) → lento. El RP2350 **sí tiene** FPU (modelo FPv5-SP), por eso usar float no cuesta caro y el fixed-point deja de ser necesario.
+- **DSP / SIMD.** Instrucciones extra del procesador pensadas para señales: hacen varias operaciones de una sola vez (SIMD = "una instrucción, varios datos"). Aceleran FFT y filtros. El Cortex-M33 del RP2350 las trae.
+- **CMSIS-DSP (la librería) y `arm_rfft_fast_f32`.** **CMSIS-DSP** es una **librería** (código ya hecho y probado por ARM) de funciones de señales; el equivalente en el micro a numpy/scipy en la PC. Se **vendoriza** (se copia su código al build del firmware), se compila para el M33 (flags `-mcpu=cortex-m33 -mfpu=fpv5-sp-d16 …`) y se **llama** desde nuestro código; queda horneada dentro del programa que se graba en el chip (corre on-device, sin internet). `arm_rfft_fast_f32` es su función de **FFT real en float32** (el análogo de `numpy.fft.rfft`). "**Kernels propios**" habría sido programar la FFT a mano: más trabajo y riesgo, sin ganancia.
+- **Costo / duty cycle / camino crítico.** La FFT tarda ~4,3 ms en el peor caso (N=256 en un chip sin FPU); en el M33 con FPU, menos. Como se calcula ~1 vez por segundo, el procesador queda ocupado <0,5 % del tiempo (**duty cycle** = fracción de tiempo ocupado). El **camino crítico** es lo que tiene que ser instantáneo: el feedback vibratorio, que lo maneja **Mahalanobis** (<100 µs). La FFT va por un carril aparte y más lento, así que **no** retrasa la vibración → su costo no importa.
+
+---
+
+## ADR-020 — Runtime de inferencia on-device (int8)
+**Estado:** aceptada — **Decisión: TFLite Micro (TFLM) + CMSIS-NN (vía `pico-tflmicro`) para las redes neuronales int8 en la cintura; Mahalanobis en CMSIS-DSP; Isolation Forest por recorrido de árboles en C.**
+
+**Contexto.** La clase **E** (autoencoder denso int8) **infiere on-device** en la cintura (ADR-011/013). Hay que definir **con qué software se ejecuta una red neuronal int8** en el Cortex-M33. Es una decisión de **inferencia**, distinta del **reentrenamiento** (worker, ADR-009/011). Debe encajar con el **pipeline de cuantización ya elegido** (TFLite converter → int8, stack Vista 3) y con el **OTA de flatbuffers int8** (ADR-012), y cuidar la **paridad train↔serve** (ADR-018): el int8 que se entrena debe ser el que se ejecuta.
+
+**Alcance — dónde infiere cada modelo.** El principio (ADR-013) es **inferir on-device siempre que entre**; al host sólo si no entra; a la nube nunca en tiempo real. Este runtime es **sólo para las redes neuronales**:
+- **Mahalanobis (L):** álgebra lineal → **C + CMSIS-DSP**, no usa NN runtime.
+- **Autoencoder denso int8 (E):** **red neuronal** → este runtime (TFLM + CMSIS-NN).
+- **Isolation Forest:** inferencia liviana (recorrido de árboles como tablas de splits) → **on-device en C** (clase E, ADR-011 rev); no es NN → no usa este runtime.
+- **LSTM AE:** red neuronal más pesada (ventana cruda ~100×8) → correría por este runtime **si entra** en tiempo real en el M33; si no, host (H) u offline (W). A confirmar por profiling (#11).
+
+**Opciones evaluadas.**
+- **A — TFLM + CMSIS-NN (elegida).** `pico-tflmicro` (port de TFLM mantenido por Raspberry Pi) empaqueta CMSIS-NN (kernels int8 de ARM con SIMD en M33). *Pros:* calza con el pipeline TFLite→int8 y con el OTA de flatbuffers (ADR-012); **paridad automática** (TFLM sigue la spec de cuantización de TFLite → el int8 entrenado = el ejecutado); footprint chico (intérprete ~2 KB + modelo ~10-50 KB); CMSIS-NN acelera 2,6-5,4×; escala al LSTM si algún día entra. *Contra:* el port **RP2350 de `pico-tflmicro` no está mergeado** oficialmente (hay patch/fork comunitario; proyectos reales ya corren TFLM en RP2350 vía CMSIS-NN → riesgo acotado, a validar temprano); el intérprete general agrega algo de overhead vs un kernel a medida.
+- **B — Kernels propios int8 (a mano).** *Pros:* footprint mínimo, cero dependencias. *Contra:* nos hacemos cargo de toda la cuantización y de mantenerla **bit-consistente con el TFLite converter** (riesgo de paridad); no escala; reinventar infra probada.
+- **C — CMSIS-NN directo (sin el intérprete TFLM).** *Pros:* kernels probados de ARM, más liviano que TFLM, corre en M33 hoy (no depende del port sin mergear). *Contra:* cableamos el grafo de capas y los parámetros de cuantización a mano.
+
+**Decisión.** **TFLM + CMSIS-NN** (vía `pico-tflmicro`) para las NN int8 on-device. **C (CMSIS-NN directo)** queda como **fallback** documentado si el port RP2350 o el peso de TFLM molestan (el AE denso es chico → C sería viable). **B** descartada (riesgo de paridad sin ganancia sobre C).
+
+**Justificación.** Es la opción **coherente con decisiones ya tomadas**: el OTA (ADR-012) ya asume flatbuffers int8, el pipeline de cuantización ya es TFLite, y TFLM da la paridad train↔serve "gratis" (mismo estándar de cuantización que el converter). El M33 tiene SIMD/DSP que CMSIS-NN explota; el footprint es chico. El único riesgo real (port RP2350) está acotado y tiene fallback.
+
+**Consecuencias.** **TFLite Micro** pasa de `candidato` a `decidido` en el stack (Vista 2) y **CMSIS-NN** entra como su backend de kernels. Refuerza ADR-018 (paridad) y encaja con ADR-012 (OTA de flatbuffers). **Riesgo a validar temprano:** el port de `pico-tflmicro` a RP2350 (llevar el patch/fork o portarlo). La clase de Isolation Forest quedó **reconciliada** (W→E) en ADR-011 rev 2026-07-19 (parte de CP-11). Detalle de implementación: **SPEC-08**.
+
+**Fuentes.**
+- `pico-tflmicro` (port de TFLM para Pico, mantenido por Raspberry Pi; incluye CMSIS-NN) — github.com/raspberrypi/pico-tflmicro; estado del soporte RP2350 (issues/PR abiertos) — github.com/raspberrypi/pico-tflmicro/issues/18.
+- *CMSIS-NN* (kernels de NN int8 para Cortex-M; SIMD en M4/M7/M33/M55; 2,6-5,4×) — arm-software.github.io/CMSIS_6 (NN); paper *CMSIS-NN* (arXiv 1801.06601).
+- *TensorFlow Lite Micro* (intérprete ~2 KB; footprint de modelos) — tensorflow/tflite-micro (memory_footprint).
+- TFLM en RP2350 vía CMSIS-NN en producción (voz en RPi Pico 2 / Moonshine Micro) — hackster.io/petewarden.
+
+**Nota conceptual (en lenguaje llano).** Glosario de este ADR, para entender la decisión sin background de ML embebido.
+
+- **El problema.** Entrenamos el modelo en la PC, pero para dar feedback en vivo hay que **ejecutarlo en el chip** (inferir = correr el modelo ya entrenado para sacar un score). Este ADR elige **con qué software** se ejecuta la red neuronal en el micro. Es distinto de **entrenar/reentrenar** (eso pasa en el worker).
+- **TinyML.** El campo/práctica de correr modelos de ML en microcontroladores (no en PC/nube). No es una librería, es el "para qué".
+- **TFLite Micro (TFLM), el "intérprete".** Una librería de Google que es un **reproductor de modelos** en el micro: le das el modelo entrenado (un archivo) y lo ejecuta **capa por capa**. Es el primo chico de TensorFlow: TensorFlow entrena en la PC; TFLM sólo **infiere** en el micro.
+- **CMSIS-NN.** La librería de ARM con los **kernels** (rutinas de cuenta pesada) de redes neuronales optimizados para Cortex-M en **int8**. Es lo mismo que CMSIS-DSP (ADR-019) pero para redes: usa el SIMD del M33 para hacer muchas multiplicaciones a la vez.
+- **pico-tflmicro.** El **paquete ya armado** de TFLM para la familia Pico (lo mantiene Raspberry Pi), con CMSIS-NN adentro.
+- **int8.** El modelo se **cuantiza**: sus números pasan de decimales (float32) a **enteros de 8 bits**. Ocupa ~4× menos y corre más rápido, con una pérdida de precisión chica. Es el formato natural para microcontroladores.
+- **Analogía.** El modelo entrenado es una **partitura** (las notas = los pesos); **TFLM es el director** que la lee y la toca capa por capa; **CMSIS-NN son los músicos afinados para nuestro chip** que tocan cada parte rápido; **pico-tflmicro es la banda ya montada** sobre el RP2350. La opción C sería usar los músicos sin director (dirigís vos a mano); la B, fabricar también los músicos.
+- **Por qué lo elegimos.** Porque ya habíamos decidido **cuantizar con TFLite** y mandar el modelo por **OTA como archivo flatbuffer**; TFLM usa exactamente ese formato y esa forma de cuantizar, así que **el modelo que entrenás es idéntico al que corre** (evita el *train/serve skew* del ADR-018), viaja limpio por OTA (ADR-012) y aprovecha el hardware del M33 vía CMSIS-NN, con muy poca memoria. Hacerlo a mano (B) daría lo mismo con más riesgo de paridad; el punto medio (C) queda de reserva por si el port a RP2350 molesta.
+
+---
+
+## ADR-021 — Catálogo de features compartido y mecanismo de paridad
+**Estado:** aceptada — **Decisión: catálogo declarativo (data file) en `src/firmware/shared/` + dos implementaciones (C firmware / Python worker) reconciliadas por tests de paridad (golden vectors) con tolerancia por-feature. Codegen y C-único-bindeado descartados.**
+
+**Contexto.** ADR-018 fijó la **estrategia anti train/serve skew**; el backlog #9 (y CP-12) pide concretar **el catálogo de features** y resolver "**codegen vs dos implementaciones + tests**". La definición de features es **única y compartida** PC↔micro (invariante), versionada por `feature_set_version`; falta decidir **cómo se mantiene esa unicidad** y **qué formato** tiene el catálogo.
+
+**Opciones evaluadas.**
+- **A — Dos implementaciones + tests de paridad (elegida).** C (firmware) y Python (worker, exploración/validación) por separado; **golden vectors en CI** (input→output esperado en ambos) con **tolerancia por-feature**, gate por `feature_set_version`. *Pros:* cada lado idiomático y óptimo (C con CMSIS-DSP/fixed-point; Python con numpy/scipy); encaja con el fasado (exploración = Python-first, ADR-005 rev c); y como el training de producción usa **las features del micro** (ADR-018 pto 2), la paridad exacta es un **guard/monitor**, no una dependencia dura. *Contra:* dos fuentes → la paridad se **testea** (no se garantiza por construcción); hay que mantener el golden test de cada feature.
+- **B — C único compilado para ambos, bindeado a Python (ctypes/CFFI).** *Pros:* paridad por construcción. *Contra:* build más complejo, C portable obligado, y **se pierde el prototipado rápido en Python** en la exploración. **Descartada** (decisión de Juan: no interesa, ni como escalación).
+- **C — Codegen desde una spec única.** *Pros:* una sola fuente. *Contra:* construir el generador es ingeniería pesada; las features complejas (LDLJ, FFT, SampEn) no entran en un DSL simple; **overkill para una tesis**. Descartada.
+
+**Decisión.** **A + catálogo declarativo.** Codegen y C-único **descartados** (este último, explícitamente, ni como escalación).
+
+**Catálogo (estructura).** Un **archivo de datos declarativo** (JSON/TOML) en `src/firmware/shared/` es la **fuente de verdad de metadata**: por feature `{ id, bloque, scope (foot|bilateral|trunk), inputs, dependencias, params, tolerancia, activo }` + el **set activo** + `feature_set_version`. Lo consumen el **firmware (C)** y el **worker (Python)** —cada uno implementa la **matemática** de la feature— y la **DB** (guarda `feature_set_version` con cada `feature_vectors`). Prender/apagar una feature = cambiar el **set activo** (config), no el código; el set puede distribuirse por config/OTA.
+
+**Paridad (cómo se garantiza).** **Golden vectors en CI**: entrada fija → salida esperada corrida en C y en Python, match element-wise con **tolerancia por-feature**, **gate** atado a `feature_set_version`. Una feature nueva **no se promueve** a producción sin pasar el test. **Escalación si una feature no pasa** (sin recurrir a B/C): (1) **alinear la implementación** (mismo orden de operaciones, misma semántica); (2) **disciplina numérica** (fixed-point/int8 vs float; fijar la implementación de transcendentales — FFT/entropía, LDLJ); (3) **tolerancia por-feature** explícita si el drift es acotado y aceptable; (4) en último caso, **excluir la feature** (la feature selection puede prescindir de ella). Refuerzo continuo: **monitoreo round-trip** sobre vectores reales.
+
+**Justificación.** Cada lado queda idiomático y óptimo; encaja con el fasado (exploración Python-first) y con ADR-018 pto 2 (el training usa las features del micro → la paridad es un guard, no una dependencia dura); evita la sobre-ingeniería de un codegen o de un binding C↔Python para una tesis.
+
+**Consecuencias.** **Refina ADR-018** (su punto 4: se **descartan** el C-compartido y el codegen como escalación; quedan disciplina numérica + tolerancias + monitoreo round-trip). **Resuelve CP-12** (mecanismo de modularidad: catálogo declarativo + set activo versionado; la *selección* data-driven de qué se prende sigue en el backlog #12). Ubicación: `src/firmware/shared/` (catálogo + definición en C) + espejo en el worker (Python) + tests de paridad en CI. Detalle: **Vista 3, Parte B**.
+
+**Fuentes.**
+- Golden/round-trip parity tests con tolerancia + eliminación de train/serve skew — dswok (train/serve skew); Nubank (guía); Confluent (eliminación).
+- Feature store de fuente única (Feast/Tecton) — referencia de la opción codegen (descartada).
+- Bindings C↔Python (ctypes/CFFI) — referencia de la opción B (descartada).
+
+---
+
+## ADR-022 — Framework de entrenamiento y cuantización (worker)
+**Estado:** aceptada — **Decisión: TensorFlow/Keras para entrenar los modelos neuronales; cuantización a int8 por PTQ (post-training) con representative dataset; QAT como fallback.**
+
+**Contexto.** El backlog #10 define el lado del **worker**: con qué framework se entrenan los modelos **neuronales** (autoencoder denso; LSTM si se persigue) y cómo se cuantizan a **int8** para correr en la cintura. Debe encajar con el **runtime del #8** (TFLite Micro / LiteRT for Microcontrollers, ADR-020) y con el **OTA de flatbuffers** (ADR-012).
+
+**Alcance.** Sólo modelos **neuronales**. Mahalanobis (numpy + CMSIS-DSP) e Isolation Forest (**scikit-learn** para entrenar; árboles en C para inferir) **no** usan TF.
+
+**Opciones — framework.**
+- **A — TensorFlow/Keras (elegida).** *Pros:* Juan lo maneja; **integración directa** con el conversor TFLite/LiteRT y con TFLite Micro (una sola cadena TF→conversor→runtime, sin puentes); el conversor soporta full-integer int8 out-of-the-box. *Contra:* —.
+- **B — PyTorch.** *Pros:* popular, ergonómico. *Contra:* para llegar a TFLite Micro requiere un **export extra** (ONNX→TF, o conversores de terceros), más piezas que pueden fallar; sin ventaja para este caso.
+
+**Opciones — cuantización.**
+- **PTQ (post-training quantization) (elegida).** Entrenar en float32 y cuantizar **después** a int8 con un **representative dataset** (muestra de vectores de features reales) para calibrar los rangos de las activaciones. *Pros:* simple, sin reentrenar, sin tocar el training. *Contra:* el modelo no "aprendió" a convivir con el redondeo → puede perder algo de precisión.
+- **QAT (quantization-aware training) — fallback.** Simular el int8 **durante** el entrenamiento (fake-quant) para que el modelo se adapte. *Pros:* recupera precisión. *Contra:* más costoso (modificar el grafo, reentrenar). Se usa **sólo si** PTQ degrada la detección más de lo aceptable.
+
+**Decisión.** **TensorFlow/Keras + PTQ int8** con representative dataset; **QAT como fallback** medido. Estrategia: cuantizar con PTQ, comparar el int8 vs float en validación (AUC / distribución del error de reconstrucción / umbral); escalar a QAT sólo si la caída no es aceptable.
+
+**Pipeline.** TF/Keras entrena (float32) → **conversor TFLite/LiteRT** (full-integer int8: `TFLITE_BUILTINS_INT8`, `inference_input/output_type = int8` para el M33 integer-only; representative dataset de la **captura operativa/calibración**) → **flatbuffer int8** → **OTA** (ADR-012) → **TFLite Micro** (ADR-020) en la cintura.
+
+**Naming (verificado).** TensorFlow Lite se renombró **LiteRT** (sep. 2024); **TFLite Micro = "LiteRT for Microcontrollers"** (mismo runtime del #8; cambió el paquete, no el código). Las **versiones exactas** de TF/LiteRT se fijan al implementar (regla del `stack_tecnologico`).
+
+**Justificación.** Coherencia end-to-end con el #8 (una sola cadena TF→conversor→TFLite Micro, sin export intermedio); familiaridad del equipo; PTQ alcanza para un AE denso/shallow (score robusto = error de reconstrucción) y es lo barato-primero, con QAT reservado y medido. El representative dataset sale de las **features del micro** (coherente con ADR-018 / ADR-005 rev c).
+
+**Consecuencias.** Fija el stack de la **Vista 3**: Deep learning → **TensorFlow/Keras** (`decidido`); Cuantización → **PTQ int8** (`decidido`). El mismo framework cubre el **LSTM** si se persigue. La calidad post-cuantización se **valida** (parte del profiling #11).
+
+**Fuentes.**
+- *Post-training integer quantization* (full-int8, representative dataset, input/output int8) — LiteRT / Google AI Edge.
+- *TensorFlow Lite is now LiteRT* (rename sep. 2024) — Google Developers Blog.
+- *LiteRT for Microcontrollers* (ex-TFLite Micro) — Google AI Edge.
+
+**Nota conceptual (en lenguaje llano).** Qué es cuantizar y la diferencia PTQ/QAT, sin background de ML.
+
+- **Cuantizar = pasar el modelo de float32 a int8.** Los números del modelo (los **pesos**, lo aprendido, y las **activaciones**, los valores intermedios) normalmente son decimales de alta precisión (float32). El micro corre mucho más rápido y ocupa ~4× menos si son **enteros de 8 bits** (int8). Cuantizar es esa traducción. Como un int8 tiene **sólo 256 valores**, es como **redondear todo a una grilla de 256 escalones**: el truco es ponerlos donde importan para perder lo menos posible.
+- **El rango y el "representative dataset".** Para mapear hay que elegir, por tensor, un **rango [min, max]** del mundo real y repartir ahí los 256 escalones. Los **pesos** ya se conocen al terminar de entrenar; las **activaciones** dependen de **qué datos entren**, así que no se saben de antemano. Por eso se pasa un **representative dataset** —un puñado de entradas reales (en nuestro caso, features de la calibración/captura operativa)— **sólo para medir** esos rangos y calibrar los escalones. **No es entrenar** ni necesita etiquetas.
+- **PTQ (post-training).** Entrenás normal en float y **cuantizás al final** (con el representative dataset para calibrar). Simple y rápido, pero el modelo **nunca aprendió** a convivir con el redondeo → puede perder algo de precisión. *Analogía:* escribís un ensayo con detalle y **después** lo comprimís a un telegrama de 256 palabras — se pierde algún matiz.
+- **QAT (quantization-aware training).** Metés el redondeo **durante** el entrenamiento (fake-quant: simula el int8 en la pasada hacia adelante, pero aprende en float), así el modelo **ajusta sus pesos para aguantar** la compresión. Mejor precisión, más laburo. *Analogía:* escribís el ensayo **sabiendo** que será un telegrama, y elegís palabras que sobrevivan.
+- **Por qué PTQ acá.** El AE es **chico y denso** y el score es un **error de reconstrucción** (robusto), así que PTQ suele alcanzar. La regla es **probar barato y medir**: cuantizás con PTQ, comparás int8 vs float; si la caída es aceptable, va PTQ; si no, escalás a QAT.
+- **int8 de punta a punta.** Como el M33 es **integer-only**, se ponen también **entrada y salida en int8**, para que no quede ninguna operación en float que el micro tenga que emular.
+
+---
+
+## ADR-023 — Alcance inicial de features por hardware (2 FSR: punta + talón)
+**Estado:** aceptada — **Decisión: el hardware actual monta 2 FSR (punta + talón, eje antero-posterior). Los primeros modelos se entrenan con un set activo "2-FSR" que excluye las features que requieren separación medial-lateral (bloque E — COP_ML — y feature 18). Todas quedan definidas en el catálogo pero desactivadas; se activan al sumar FSR mediales/laterales, sin reescritura.**
+
+**Contexto.** La placa actual tiene **2 FSR conectados**: ADC0/GP26 (**punta**) y ADC1/GP27 (**talón**) — cobertura **antero-posterior**. Los FSR **medial/lateral** (para COP_ML y ratio M/L) se agregan en una **etapa posterior** con otra disposición (ADC2/GP28 + otro). Con sólo punta+talón, las features de **fuerza medio-lateral / COP no tienen sentido** (no hay resolución medial-lateral). Se aprovecha la modularidad de **ADR-021** (features definidas siempre, activables por config) para no frenar el avance esperando la placa final.
+
+**Decisión.**
+- **Set activo "2-FSR (punta/talón)"** — perfil del hardware actual, versionado por `feature_set_version`:
+  - **ON:** bloque A (espacio-temporales), B (variabilidad), **C** (fuerza por-FSR, instanciado a **punta** y **talón**), D-parcial (**#19 progression AP** — punta vs talón ✓; **#20/#21 simetría** ✓), F/G/H (IMU), I (tronco).
+  - **OFF (diferidas — requieren FSR medial-lateral):** **bloque E completo (#22-25: COP_ML + range + velocity + zero-crossings)** y **#18 (ratio medial/lateral de peak force)**.
+- Las features diferidas quedan **definidas en el catálogo** (Vista 3) pero **desactivadas** en el set activo. **Activación futura** = agregar los FSR medial/lateral → nuevo `feature_set_version` con esas features ON, **sin tocar el código** (firmware ni worker).
+- **Los primeros modelos** (Mahalanobis, Isolation Forest, autoencoder) se entrenan y despliegan **con el set activo 2-FSR**.
+
+**Justificación.** (1) No bloquea el desarrollo por esperar la placa final; (2) evita meter en los modelos features **degeneradas/sin sentido** (un COP_ML con 2 puntos antero-posteriores) que ensuciarían el baseline; (3) la modularidad de ADR-021 permite **prender las features ML en caliente** cuando llegue el hardware, sin retrabajo ni re-flasheo estructural; (4) IC/TO (SPEC-01, `F_total = Σ FSR`), stride length/ZUPT (SPEC-03) y el bloque C siguen funcionando con punta+talón.
+
+**Consecuencias.**
+- **Canales por pie hoy: 8** (accel 3 + gyro 3 + 2 FSR); el formato de paquete reserva slots para **N FSR** (CP-08).
+- **SPEC-06 (COP_ML):** marcada **diferida** (requiere FSR medial-lateral).
+- **Catálogo (Vista 3):** cada feature declara su **requerimiento de FSR/posición**; el set activo 2-FSR aplica el filtro.
+- Actualiza **CP-01** (hoy 2 FSR punta/talón; ML a futuro) y es instancia concreta de **CP-08** (modularidad de FSR).
+- Al agregar los FSR ML: `feature_set_version` nuevo, se re-calibra el baseline por-paciente con las features nuevas activas y se re-evalúan los modelos.
+
+---
+
+## ADR-024 — Asignación de cores por dispositivo (plantilla vs cintura)
+**Estado:** aceptada — **rev 2026-07-20.** **Decisión (revisada): reparto uniforme — en los tres micros el core 0 aloja el radio y el core 1 el procesamiento. Plantilla: core 0 = WiFi-STA + TX + motor, core 1 = adquisición (100 Hz determinística) + eventos (IC/TO) + features por-pie. Cintura: core 0 = radio (WiFi-AP + BLE, coexistencia), core 1 = inferencia + fusión bilateral + IMU + decisión.** *(Originalmente la plantilla aislaba la adquisición —core 1 = adquisición sola, core 0 = WiFi-STA + features + TX + motor—; la revisión la alinea al mismo principio que la cintura: aislar el radio. Ver Revisión abajo.)*
+
+**Contexto.** El RP2350 tiene **2 núcleos** (Cortex-M33). Los dos firmwares tienen **cuellos de botella distintos**: la **plantilla** es *acquisition-bound* (100 Hz duro; radio simple **WiFi-STA**; **no infiere**); la **cintura** es *radio-coexistencia + inferencia* (**WiFi-AP + BLE** simultáneos; inferencia pesada; adquisición liviana — sólo su IMU de tronco, sin FSR). Correcciones de Juan: las plantillas **no tienen BLE ni coexistencia** (sólo WiFi-STA) y **no infieren**; la inferencia toda vive en la cintura.
+
+**Opciones (eje: qué recurso se aísla en su propio núcleo).**
+- **Aislar la adquisición** (un core dedicado al muestreo). Ideal donde el cuello es el 100 Hz duro.
+- **Aislar el radio** (un core dedicado al radio). Ideal donde el cuello es la coexistencia + hay cómputo pesado que separar.
+- **Todo en un core** (el otro ocioso). Descartado: el radio mete jitter en el muestreo.
+- **Swap (radio en core 1).** Pelea con el SDK (`cyw43_arch`/lwIP asumen core 0). Descartado.
+
+**Decisión (A para la plantilla, B para la cintura).**
+- **Plantilla → aislar el radio (rev 2026-07-20):** **core 0 = WiFi-STA + TX + motor**, **core 1 = adquisición + eventos (IC/TO) + features por-pie**. Se agrupa el *pipeline de sensado* (adquisición → eventos → features por-pie) en un núcleo y se aísla el WiFi en el otro. *(Reparto original: core 1 = adquisición sola, core 0 = WiFi-STA + features + TX + motor — ver Revisión.)*
+- **Cintura → aislar el radio:** **core 0 = radio** (WiFi-AP + BLE coexistencia, donde el SDK lo pone y es *timing-sensitive*), **core 1 = inferencia + fusión + IMU + decisión**. La inferencia (lo pesado) tiene su núcleo **lejos del radio**; la adquisición de la cintura es liviana y no necesita un core dedicado.
+
+**Justificación.** Cada dispositivo aísla **su** recurso crítico: la plantilla protege el **muestreo 100 Hz**; la cintura protege la **coexistencia del radio** y le da a la **inferencia** su propio núcleo. La coexistencia WiFi-AP+BLE (riesgo maestro §16) es **sólo de la cintura**. Poner el radio en el core 0 evita pelear con la convención del SDK.
+
+**Consecuencias / pendientes.**
+- **RTOS** y **rate del IMU de la cintura** (CP-17): **resueltos** — RTOS **bare-metal** en ambos (**ADR-025**); rate de la cintura **100 Hz + DMA**, con 50 Hz como fallback validable en #11 (**ADR-026**).
+- **Comunicación entre cores:** FIFO de hardware (`multicore_fifo_*`) / `queue_t` con spinlocks (Pico SDK) o colas de FreeRTOS.
+- Se corrige **Vista 2 §9** al modelo por-dispositivo.
+
+**Revisión (2026-07-20) — la plantilla también aísla el radio → reparto uniforme.**
+Originalmente la plantilla aislaba la **adquisición** (core dedicado al muestreo) por temor a que el **cálculo de features** fuera demasiado pesado para compartir núcleo con el 100 Hz. Al dimensionarlo, esa premisa no se sostiene: las **features por-pie** son livianas — el grueso (FFT del bloque H, entropías, LDLJ) es una **ráfaga de pocos ms ~1 vez por zancada (~1 Hz)**, y lo único por-muestra (el AHRS/Madgwick) cuesta µs en el M33 con FPU. Además, con **adquisición por DMA + IRQ** (ADR-014/026) el muestreo se autoprotege: la IRQ del tick preempta cualquier ráfaga de features y la muestra entra a horario igual.
+
+El **verdadero** inquilino de latencia impredecible es el **WiFi** (driver CYW43), no las features. Por eso conviene **aislar el radio** —no la adquisición— también en la plantilla, agrupando el **pipeline de sensado (adquisición → eventos IC/TO → features por-pie)** en el core 1 y dejando el WiFi solo en el core 0. Beneficios: (a) muestreo y features quedan lejos del WiFi; (b) **data locality** — el crudo a 100 Hz no cruza de core; en edge cruzan sólo los resultados (~1 Hz); (c) queda un **invariante uniforme en los tres micros: core 0 = radio, core 1 = procesamiento**, que simplifica el código compartido. El cambio respecto del reparto original es **mínimo**: mover el cálculo de features del core 0 al core 1 (la radio ya estaba en el core 0).
+
+**Aclaración (anti-confusión).** "features por-pie" = las que sólo necesitan la señal de *ese* pie (bloques A/B/C/E/F/G/H). Las **features bilaterales** (simetría — bloque D — y double support) **no** se calculan en la plantilla: se calculan en la **cintura** a partir de las features por-pie + eventos de ambos pies (ADR-005; maestro §8.1). La revisión no toca eso.
+
+**Salvedad honesta.** La simetría es de **rol**, no de **carga**: el core 0 de la cintura además sostiene la coexistencia WiFi-AP+BLE (más pesado) y su core 1 además infiere. El reparto exacto se **confirma con el profiling (#11)**; si algún caso apretara, hay palancas (mover features, bajar el rate del IMU de cintura a 50 Hz).
+
+**Nota conceptual — cómo se gestionan los dos núcleos a nivel código.**
+- **Bare-metal (Pico SDK).** `main()` corre en el **core 0**; el core 1 queda ocioso hasta lanzarlo con **`multicore_launch_core1(entry)`** (le pasás la función que va a correr). Cada core corre su loop. **Datos entre cores:** **FIFO de hardware** (`multicore_fifo_push/pop`, 32 bits, señales chicas) o **`queue_t`** (`queue_add/remove_blocking`, thread/core-safe vía **spinlocks**) para buffers. **IRQs por-core:** la de ADC/DMA se habilita en el core de adquisición; las del radio en el otro. El `cyw43_arch` (WiFi/BLE) se inicializa en el core 0. Ej. plantilla: `core1_entry()` = loop de muestreo que empuja a una `queue_t`; `main()` (core 0) = WiFi-STA + saca de la cola → features → TX + motor; al arrancar, `multicore_launch_core1(core1_entry)`.
+- **FreeRTOS-SMP.** Creás **tareas** (`xTaskCreate`) con **prioridad**; el scheduler las reparte entre los dos cores; para fijar una tarea a un núcleo, **core affinity** (`vTaskCoreAffinitySet`). Comunicación por colas/semáforos. Más ordenado con mucha concurrencia (cintura).
+- **En una línea:** este ADR decide **qué** corre en cada core; **cómo** se implementa (bare-metal `multicore_launch` vs tareas FreeRTOS) es el RTOS de **CP-17**.
+
+---
+
+## ADR-025 — Modelo de ejecución del firmware: bare-metal (sin RTOS)
+**Estado:** aceptada — **Decisión: bare-metal (Pico SDK, sin RTOS) en ambos firmwares (plantilla y cintura). FreeRTOS evaluado y no adoptado.**
+
+**Contexto.** ADR-024 fijó la asignación de cores por dispositivo y dejó pendiente (CP-17) el **modelo de ejecución**: bare-metal vs FreeRTOS. **Bare-metal** = super-loop + IRQs + DMA, coordinado a mano con las primitivas multinúcleo del SDK. **FreeRTOS(-SMP)** = tareas con prioridad y un scheduler que reparte entre los dos cores.
+
+**Opciones.**
+- **Bare-metal (elegida).** *Pros:* máximo control y **mínimo overhead** (sin scheduler comiendo CPU/RAM); determinismo total; footprint mínimo; nada de OS que aprender/debuggear; encaja con el diseño **DMA + loop de adquisición**; comunicación entre cores con `multicore_launch_core1` + `queue_t`/FIFO/spinlocks e IRQs por-core (ver ADR-024). *Contra:* la coordinación se escribe **a mano**; en la **cintura** (radio-coexistencia + inferencia + OTA concurrentes) hay que ordenar el trabajo sin un scheduler — requiere más disciplina.
+- **FreeRTOS(-SMP).** *Pros:* tareas + prioridades + preempción, cómodo con mucha concurrencia; port oficial para el Pico. *Contra:* overhead (CPU/RAM), dependencia y complejidad (stacks, prioridad-inversión), sobredimensionado para la plantilla. **No adoptada.**
+
+**Decisión.** **Bare-metal en las dos** (plantilla y cintura). La concurrencia de la cintura (radio en core 0; inferencia + fusión + IMU + decisión en core 1) se maneja **a mano** con las primitivas multinúcleo del SDK + IRQs por-core; la decisión/feedback corre a ~1 Hz (por zancada), holgado para un super-loop.
+
+**Justificación.** El sistema está construido sobre **DMA + un loop de adquisición determinístico** y cómputo de baja frecuencia (~1 Hz de decisiones); un super-loop con IRQs alcanza sin el peso ni la complejidad de un RTOS. Máximo control y menor footprint, coherente con el 100 Hz duro (ADR-014) y la separación de cores (ADR-024).
+
+**Consecuencias.** Resuelve la parte de **RTOS de CP-17** (queda abierto sólo el **rate del IMU de la cintura**). Fija la fila RTOS del `stack_tecnologico` (bare-metal, `decidido`). Si la concurrencia de la cintura resultara inmanejable a mano (a ver con el profiling #11), FreeRTOS queda como opción a reconsiderar — pero no es el plan. Detalle de las primitivas multinúcleo: **nota conceptual de ADR-024**.
+
+---
+
+## ADR-026 — Estrategia de muestreo y lectura del IMU (tick maestro + DMA)
+**Estado:** aceptada — **Decisión: leer el IMU en el tick maestro de 100 Hz (polling) con transferencia por DMA, corriendo el IMU con ODR interno alto (~1 kHz) + DLPF activo (sobremuestreo anti-alias). Un timestamp por tupla FSR+IMU. DATA_READY = fallback (requiere traza INT→GPIO en el PCB). FIFO descartada. Aplica a las tres unidades; la cintura muestrea a 100 Hz + DMA, con 50 Hz reservado como fallback validable en #11.**
+
+**Contexto.** Cierra **CP-07** (cómo lee el IMU la plantilla) y la parte abierta de **CP-17** (rate del IMU de la cintura). Complementa **ADR-014** (adquisición determinística): ADR-014 fijó el FSR (ADC free-running + DMA + decimación a 100 Hz) y dejó la lectura del IMU en el tick maestro con la alternativa FIFO/DATA_READY a definir. El MPU-6050 ofrece tres formas de sacar las muestras (polling, DATA_READY por INT, FIFO) que difieren en timestamp, alineación con el FSR y necesidad de PCB.
+
+**Opciones.**
+- **A — Tick maestro (polling a 100 Hz) + DMA (elegida).** El mismo timer de hardware que pasea la adquisición dispara la lectura I²C; el DMA mueve los bytes; se lee accel+gyro junto con el FSR decimado → **un solo timestamp por tupla**. *Pros:* máxima simplicidad; timestamp único por tupla → fusión FSR+IMU y backbone de sync limpios; **no toca el PCB**; lectura pisada por el timer (jitter ~µs); con DMA el costo de CPU ≈ 0. *Contra:* IMU y poll son asíncronos → hay que **correr el IMU a ODR alto (~1 kHz) + DLPF** y pollear a 100 Hz (sobremuestreo + banda limitada <50 Hz evita aliasing y *beating*). Queda una latencia muestra→lectura acotada (≤1 período del IMU, ~1 ms) + group delay del DLPF, **casi constante** → no deforma derivadas/PSD (sólo corre el timing absoluto, que el sync maneja).
+- **B — DATA_READY (interrupción del IMU) — fallback.** El IMU asierta su pin INT al haber muestra nueva; se lee (por DMA) en la ISR y se timestampea ahí. *Pros:* mejor fidelidad temporal; espaciado uniforme por el reloj del IMU. *Contra:* **suma un cable INT→GPIO → cambio de PCB** (hoy no ruteado); más IRQs. **Queda como fallback** si el profiling (#11) mostrara que la latencia/jitter de A ensucia las features de derivada/PSD.
+- **C — FIFO — descartada.** El IMU acumula en su FIFO de 1024 B y se drena por lotes. *Pros:* espaciado uniforme; sin pérdidas; menos overhead por muestra. *Contra:* **peor encaje con la filosofía de sync** — los timestamps de la FIFO se *infieren* del reloj del IMU (otro time base) y hay que anclarlos al timer del RP2350 y al FSR; se pierde el "un timestamp por tupla"; gestión de overflow. **Descartada.**
+
+**Decisión.** **A (tick maestro + DMA)** en las tres unidades, con el IMU a **ODR alto + DLPF**. **B (DATA_READY)** como fallback, con la **traza INT→GPIO ruteada en la próxima rev del PCB** (aunque no se use) para que habilitarlo sea sólo firmware — coordinar con CP-01/CP-08. **Cintura: 100 Hz uniforme + DMA**; **50 Hz** reservado como fallback validable en #11 (las features de tronco son de baja frecuencia, así que no se pierde señal). La lectura por DMA es clave en la cintura, donde el IMU **comparte el core 1 con la inferencia** (ADR-024 rev): el DMA + la IRQ hacen que la llegada de muestras no compita con la inferencia bloqueante.
+
+**Justificación.** A preserva el **timestamp único por tupla** (base del sync y de la fusión) y **no requiere tocar el PCB**; para marcha —señal de baja frecuencia— el DLPF controla el aliasing de sobra; y con DMA el muestreo casi no cuesta CPU. Uniformar a 100 Hz en las tres unidades mantiene el mismo código de features y las mismas ventanas (paridad, ADR-018). B se reserva por si hiciera falta fidelidad temporal extra; C se descarta por chocar con el modelo de sincronización.
+
+**Consecuencias.** Cierra **CP-07** y la parte abierta de **CP-17**. Añade un requisito al PCB: **rutear la traza INT→GPIO del IMU** en la próxima revisión (habilita el fallback B sin otra vuelta de placa) → nota en **CP-01/CP-08**. Fija en el firmware: IMU a ODR alto + DLPF, lectura I²C por DMA en el tick de 100 Hz. Detalle de implementación (registros del MPU-6050, config del DLPF/SMPLRT_DIV, canal DMA de I²C) → se ancla en la **SPEC-04** (módulo IMU) al implementar.
+
+**Apéndice conceptual (en llano).**
+- **Tick maestro / polling.** Un timer de hardware hace *tic* 100 veces por segundo; en cada *tic* el firmware le pregunta al IMU "¿tu valor ahora?" y lo anota junto al FSR (un solo timestamp). "Pollear" = preguntar de a ratos.
+- **Los dos relojes y el *beating*.** El IMU produce muestras con **su** reloj; vos leés con **el tuyo**. Si ambos van a 100 Hz y se corren, a veces leés la muestra vieja (duplicás) o te salteás una. Se evita haciendo que el IMU produzca **mucho más rápido** (~1 kHz) con su filtro (DLPF) prendido: siempre hay dato fresco esperando y tomás el último. (Analogía: alguien anota la temperatura 1000 veces/seg; vos copiás 100 veces/seg lo que haya — nunca la pizarra en blanco, y el número tiene ≤1 ms de viejo.)
+- **DLPF (Digital Low-Pass Filter).** Filtro interno del IMU que limita la banda a <50 Hz → al leer a 100 Hz no hay aliasing.
+- **DMA (Direct Memory Access).** Un circuito ayudante que mueve los bytes del IMU a la RAM **sin la CPU**; la CPU sólo lo arma y sigue con lo suyo. Resuelve el *transporte*, no el *procesamiento*.
+- **Interrupción (IRQ).** Aunque la CPU esté ocupada infiriendo (bloqueante), un timer por hardware la **preempta** un instante para capturar la muestra a horario y vuelve. Por eso, en la cintura, IMU (core 1) e inferencia conviven: **la IRQ garantiza el *cuándo*, el DMA lo hace casi gratis**.
+
+---
+
+## ADR-027 — Diseño del feedback vibrotáctil (monitoreo + alerta por ventana)
+**Estado:** aceptada — **Decisión: el feedback es un monitor de anomalía + alerta, NO un corrector de marcha. Consume un score designado (`feedback_source` en el registry, model-agnostic — Mahalanobis/AE/IF/ensemble) evaluado sobre una ventana de zancadas recientes; ante una anomalía sostenida y confiable emite una alerta escasa (con refractario) en una de 3 bandas de severidad (leve/marcada/riesgo) por umbrales per-paciente, con "riesgo" co-anclado a indicadores de caída (asimetría/sway). Entrega: 3 patrones por ritmo en el motor PWM, ambos pies, calibrados por paciente. Modelo designado, largo de ventana, agregación y umbrales = empíricos (análisis exploratorio).**
+
+**Contexto.** Resuelve **CP-10**. El detector corre en la cintura y el motor en las plantillas (ADR-005; Vista 2 §6). Faltaba definir *qué* dispara el feedback, *cuándo*, con *qué* patrones y a partir de *qué* score. Evidencia (papers de la investigación): **patrones > alertas simples** (Sanchez-Morillo 2025); **la carga cognitiva del biofeedback es real y daña** en dual-task → feedback escaso (Iwata 2019); **umbral + inmediato funciona** clínicamente (Ma 2018), pero su propósito era *corregir* fuerza plantar, no el nuestro; **riesgo de caída = asimetría de carga + sway** (Jung 2017).
+
+**Decisiones (sub-decisiones y por qué).**
+- **Propósito: monitorear y advertir, no corregir.** El sistema detecta que la marcha viene anómala y **avisa**; qué hace el paciente (corregir, descansar, ignorar) es su decisión. Coherente con el título de la tesis (*detección* de anomalías). De los papers de biofeedback se toma **cómo entregar** el aviso, no el objetivo de corregir.
+- **Timing: por ventana, no por zancada (event-locked/terminal, no concurrente).** El detector no juzga la última zancada aislada — evalúa un **tramo reciente** (últimas N zancadas / ~decenas de segundos) y decide si hay anomalía **sostenida**. Se prioriza **eficacia** (certeza, pocos falsos positivos): una anomalía real persiste varias zancadas seguidas. **Concurrente descartado** (mid-zancada): además de más carga cognitiva y dependencia, el score es **por-zancada** (existe recién al cerrar la zancada) → el feedback basado en el detector es **naturalmente terminal**. Un concurrente real necesitaría un disparador aparte sobre la señal cruda (tipo Ma) — opción futura, no v1.
+- **Fuente model-agnostic.** El feedback consume un **score designado** (`feedback_source` en el registry); **qué detector** lo produce —Mahalanobis, autoencoder, Isolation Forest o un **ensemble**— es swappeable **sin tocar la lógica de feedback** (decisor agnóstico al origen del score, ADR-011 rev). Default razonable = **Mahalanobis** (siempre corriendo como sensor de drift, clase L, <100 µs), reemplazable. **Cuál gana = empírico** (exploratorio; distintos modelos cazan anomalías distintas).
+- **Severidad: 3 bandas por umbral per-paciente.** El score (sobre la ventana) se corta en **normal / leve / marcada / riesgo** con **3 umbrales calibrados sobre el baseline del paciente** (percentiles / chi-cuadrado). Extiende el umbral único del detector Mahalanobis a 3 niveles graduados.
+- **"Riesgo" co-anclado a caída.** El nivel más alto escala también por **indicadores clínicos interpretables** (asimetría/sway → Jung), no sólo por score grande.
+- **Localización: ambos pies (v1).** No se localiza *qué pie* se desvía (evita un problema de detección extra). Ambas plantillas vibran el mismo patrón. Palanca futura: detectores por-pie (las features por-pie ya existen → no es algoritmo nuevo, pero suma modelos/config).
+- **Entrega: 3 patrones por ritmo (no por intensidad fina).** El motor es un **ERM por PWM** (GP18) → discrimina bien **ritmos** (uno/dos/largo) y **ubicación**, mal la intensidad fina. Leve = 1 pulso corto; marcada = 2 pulsos; riesgo = pulso largo/triple. *(Si el motor real fuera un LRA con driver, se podrían usar patrones más crispados — a confirmar, como CP-01.)*
+- **Escasez.** Histéresis (sostenido, no una zancada suelta) + **período refractario** (cooldown) + **fading** opcional (bajar la frecuencia a medida que el paciente mejora — evita dependencia).
+
+**Justificación.** Encaja con lo ya decidido (model-agnostic, ADR-011 rev; usa el buffer de zancadas de SPEC-05; corre en la cintura, ADR-005/013). La ventana prioriza eficacia (menos falsos positivos) y la escasez prioriza usabilidad (menos carga cognitiva, Iwata). El propósito "monitorear+advertir" es honesto con el alcance de la tesis y con lo que el hardware simple puede sostener.
+
+**Consecuencias.** Nuevo campo **`feedback_source`** en el registry/config. **Config per-paciente en la DB** (feedback_source, umbrales T1/T2/T3, N de ventana, intensidad, patrones habilitados, refractario) → detalle en **Vista 4**. Detalle de patrones y lógica → **SPEC-09**. **Empírico diferido** (exploratorio, ligado a #12 y al protocolo de calibración): qué modelo, largo de ventana, agregación (persistencia vs features ventaneadas) y valores de umbral. **Seguridad (CP-04):** validar que el patrón "riesgo" **no sobresalte/desestabilice**. Cierra **CP-10**.
+
+**Apéndice conceptual (en llano).**
+- **Monitor vs corrector.** No le decimos al paciente *cómo* caminar en cada paso; le avisamos que su marcha viene rara. Detección + alerta, no entrenamiento paso a paso.
+- **Ventana vs zancada.** En vez de reaccionar a una zancada suelta (que puede ser un tropiezo casual = falso positivo), el algoritmo mira un **tramo** de varias zancadas: si la rareza **se sostiene**, recién ahí avisa. Más certeza, menos falsas alarmas.
+- **Concurrente vs event-locked.** Concurrente = te avisa *mientras* das el paso (corrección en vivo). Event-locked/terminal = te avisa *después* de evaluar el tramo. Elegimos el segundo (menos carga mental, mejor aprendizaje, y es lo natural porque el score existe recién al cerrar la zancada).
+- **Model-agnostic (`feedback_source`).** La lógica de feedback pide "un número de rareza"; de qué algoritmo sale ese número es una perilla configurable — se elige con datos cuál anda mejor (o una combinación).
+- **Bandas por umbral per-paciente.** El "normal" de cada uno es distinto; las 3 líneas (leve/marcada/riesgo) se dibujan sobre el rareza-metro **de ese paciente**, calibrado con su marcha estable.
+
+---
+
+## ADR-028 — Emparejamiento BLE del wearable (sin botón físico)
+**Estado:** aceptada — **Decisión: el pairing user-facing es cintura↔host (BLE); plantilla↔cintura es de fábrica. La cintura entra en pairing por auto-advertise cuando no tiene bond (primer uso) + un gesto sin botón: sacudir la cintura de forma marcada ~5 s mientras las plantillas están quietas (re-emparejar/agregar host), con ventana temporal. Autenticación v1 = passkey fijo impreso (LE Secure Connections, Passkey Entry). Bond list multi-host (N≈4, configurable), reconexión iniciada por el host (una conexión a la vez, primero en llegar), evicción LRU o forget explícito. "Borrar todo"/factory-reset y una eventual pantalla (passkey por sesión) → máxima. Dependencias: CP-04 (nivel de seguridad), CP-15 (UX de la app).**
+
+**Contexto.** Resuelve **CP-14** a nivel mecanismo. Los micros son tipo **auriculares BLE** (nunca WiFi de internet; Vista 1 §3.3): la cintura es periférico GATT y el host (laptop/celu) es central. El micro **no tiene botón ni pantalla**, pero **sí IMU en los tres** y la cintura es el **hub de fusión** (ve los tres IMU en una línea de tiempo común). **BTstack** provee Security Manager con **LE Secure Connections** (Just Works / Passkey Entry / Numeric Comparison / OOB).
+
+**Decisiones (sub-decisiones y por qué).**
+- **Qué se empareja.** *Plantilla↔cintura*: **de fábrica** (WiFi, credenciales grabadas por set; re-pair = operación de servicio). *Cintura↔host (BLE)*: es el pairing user-facing y lo que resuelve este ADR.
+- **Entrar en pairing (el "botón" que no hay).** **Auto-advertise cuando no tiene bond** (primer uso, estilo auriculares recién sacados de la caja) + **gesto por IMU**: la cintura entra en pairing si su IMU detecta una **sacudida marcada y sostenida ~5 s** *y* **las dos plantillas están quietas** en esa ventana (condición **multi-IMU** que evita falsos disparos por bailar / marcar el paso con el pie — si los pies se mueven, no dispara; si se sacude una zapatilla, la cintura está quieta, no dispara). Aprovecha que la cintura ya ve los tres IMU (hub). Requiere plantillas **encendidas + conectadas** (lo están, por el WiFi de fábrica). **Ventana temporal** de pairing tras el gesto (seguridad + energía). *Alternativa no elegida:* trigger por **cargador** (necesita sensado de carga — CP-08/09).
+- **Autenticar sin pantalla/teclado.** **v1 = passkey fijo impreso** en la etiqueta de la unidad; el usuario lo tipea en la app (Passkey Entry con LE Secure Connections → protección MITM). **Just Works descartado** (sin MITM, son datos de salud). **Numeric Comparison / passkey en display descartados** (no hay pantalla). **OOB por QR** queda como opción futura; un **passkey por sesión con pantalla** en la cintura, para **máxima**. El passkey estático es más débil que uno por sesión (si fotografían la etiqueta, lo tienen) → aceptable en v1, se registra en CP-04.
+- **Bond list (multi-host).** La cintura **recuerda N≈4 hosts** (configurable) — p. ej. laptop de la clínica + celu del paciente — para no re-emparejar al cambiar de contexto. Al llenarse: **evicción LRU** (borra el más viejo) o **forget explícito**. La cantidad de bonds se fija en BTstack al build (`le_device_db`).
+- **Conexión / arbitraje.** La cintura **advertisa**; el **host (central) inicia** la conexión y se reconecta solo con las llaves guardadas (sin passkey). **Una conexión a la vez**: si dos hosts conocidos están presentes y buscando, **gana el primero que inicia**; mientras está conectada, la cintura **deja de advertisar como conectable** → el otro no entra hasta que el primero se desconecte. **Cambiar de host** = el conectado suelta (cerrar app / desconectar) y el otro entra. **Preferir** un host (p. ej. la clínica) = advertising dirigido o lógica de la app (CP-15).
+- **Diferido a máxima.** **"Borrar todo" / factory-reset** (privacidad: al reasignar la cintura a otro paciente hay que borrar bonds + datos → requisito de CP-04) y **pantalla** en la cintura (passkey por sesión / numeric comparison).
+
+**Justificación.** Sin botón ni pantalla, el **gesto IMU + la condición multi-IMU** dan un disparador intencional y robusto **reusando hardware**; el **passkey fijo** da MITM decente con LE Secure Connections para v1; el **bond list multi-host** evita re-emparejar entre clínica y casa; y el modelo **"un host a la vez, el host inicia"** es el de BLE estándar (tipo auriculares), simple y predecible. BTstack soporta todo el camino.
+
+**Consecuencias.** Firmware de la cintura: **BTstack SM con Passkey Entry (passkey fijo)**; advertising connectable **cuando no hay bond** y **tras el gesto** (con ventana); **bond storage** (`le_device_db`) con **N configurable**; **detección del gesto** (cintura sacudida + plantillas quietas) con los IMU ya presentes. **Manufactura:** passkey impreso en la etiqueta (único por unidad). **Dependencias abiertas:** **CP-04** (ratifica el nivel de seguridad; requisito de borrar bonds+datos al reasignar), **CP-15** (UX de pairing y gestión de bonds en la app), **máxima** (clear-all, pantalla, OOB). **Cierra CP-14** a nivel mecanismo.
+
+**Apéndice conceptual (en llano).**
+- **Periférico vs central.** La cintura es el **periférico**: "advertisa" (emite *acá estoy*). El host (laptop/celu) es el **central**: escanea y **arranca** la conexión. El periférico **no elige** con quién conectarse; el central inicia.
+- **Pairing vs bonding.** *Pairing* = el intercambio seguro de la **primera vez** (donde entra el passkey). *Bonding* = **guardar las llaves** (LTK) para reconectarse después **sin repetir** el passkey. Un "bond" = una relación segura guardada con un host puntual.
+- **El gesto sin botón.** No hay botón, pero hay IMU en los tres micros. **Sacudir la cintura fuerte ~5 s** = "quiero emparejar". Para que **no** dispare por accidente (bailar, marcar el paso), se exige además que **las plantillas estén quietas**: cintura moviéndose + pies quietos = intención clara. La cintura ya ve los tres IMU (es el hub), así que la condición sale gratis.
+- **Passkey fijo.** La cintura no tiene pantalla para mostrar un número, así que el número va **impreso en la etiqueta**; el usuario lo tipea en la app. Con LE Secure Connections eso protege contra el "hombre en el medio". Es **estático** (más débil que uno por sesión) → v1; la pantalla futura lo mejora.
+- **Bond list / multi-host.** La cintura **recuerda hasta N hosts** (clínica + casa) y no hay que re-emparejar cada vez.
+- **Conexión y desconexión con uno o más dispositivos.**
+  - Con **un** host conocido cerca: la cintura advertisa y el host **se reconecta solo** con las llaves guardadas (sin passkey).
+  - Con **dos** conocidos cerca y las dos apps buscando: **gana el que inicia primero**; la cintura queda ocupada con ese y **deja de advertisar como conectable**, así el otro **no puede entrar** hasta que el primero se desconecte. **Una conexión a la vez.**
+  - **Cambiar** de host: el que está conectado **suelta** (cerrás la app / "desconectar"), la cintura vuelve a advertisar y el otro entra. Es igual que unos **auriculares Bluetooth normales (no multipoint)**.
+  - **Preferir** uno (p. ej. la clínica) = **advertising dirigido** a ese host primero, o lógica de la app.
+- **Olvidar.** Si el bond list se **llena**, se borra el **más viejo** (LRU) o se pide un **forget explícito**. **Borrar todo** (reset de fábrica) queda para más adelante (máxima).
+
+---
+
+## ADR-029 — Ajustes de catálogo de features y de algoritmos tras la auditoría de alineación
+**Estado:** aceptada — **Decisión: se extiende el catálogo con 4 features y un evento de segmentación, se suman 3 algoritmos candidatos al registry (OC-SVM, GMM, VAE), se documenta la sustitución OC-SVM→Mahalanobis y se fija una estrategia progresiva de evaluación de algoritmos. Todo trazable a la auditoría de alineación con el marco teórico y la investigación.**
+
+**Contexto.** Se auditó (2026-07-21) la alineación del catálogo de features (Vista 3) y del stack de algoritmos contra el marco teórico, el documento de features, el anteproyecto y los 22 papers (informe: `docs/investigacion/alineacion_features_algoritmos.md`). El núcleo resultó fuertemente alineado (bloques A–G, los 4 algoritmos, la filosofía), pero se detectaron features que el marco enumera y no estaban en el catálogo, algoritmos con evidencia ausentes del stack (sobre todo el **One-Class SVM**, que ancla la evidencia de Toth) y la falta de una estrategia escrita de evaluación progresiva.
+
+**Decisiones.**
+- **Features agregadas** (Vista 3 Parte A; versionadas por `feature_set_version`, ADR-021):
+  - **#39 Single support time** (bloque A, cintura) — activa; se deriva de los eventos IC/TO (= swing contralateral); su asimetría es informativa.
+  - **#40 Symmetry Angle** (bloque D, cintura) — activa; complementa el Symmetry Index (#20) con mejor comportamiento estadístico (acotado [−100,100]).
+  - **#41 Average zero-crossings de la aceleración** (bloque H, plantilla) — activa, prioridad Fase 4 (opcional, como el resto de H).
+  - **#42 Mean peak sway density del COP_ML** (bloque E, plantilla) — **definida pero diferida** (requiere FSR medial-lateral, junto con el bloque E; ADR-023); top feature de Herbers.
+  - **Mid-stance (MS)** — agregado como **evento de segmentación** (no feature), complementa IC/TO (SPEC-01/02); habilita segmentar presión/COP intra-stance.
+- **Features diferidas/descartadas por hardware** (no entran al set activo): *contact area* (requiere matriz de presión; 2 FSR discretos no miden área — descartada con el hardware actual), *foot progression angle* (requiere yaw absoluto y el MPU-6050 no tiene magnetómetro — diferida), *stride/step width* (requiere referencia medio-lateral común entre IMUs — diferida).
+- **Algoritmos candidatos sumados al registry** (model-agnostic, ADR-011 rev; declarables sin reescritura):
+  - **One-Class SVM — clase E/W:** benchmark de referencia en el worker (offline), por ser el de mejor evidencia (Toth, OC-SVM personalizado AUC 0,967). **No** corre en tiempo real.
+  - **GMM / z-score multivariado — clase L/E:** generalización multimodal de Mahalanobis; baja prioridad.
+  - **VAE — clase E/H:** variante de la rama autoencoder; baja prioridad. (CNN+Transformer de EdgeSense descartado por footprint en el Pico.)
+- **Sustitución OC-SVM → Mahalanobis (documentada):** el detector one-class de **tiempo real es Mahalanobis** (no OC-SVM) por costo/latencia edge (<100 µs, auto-adaptación dato a dato). El OC-SVM queda como benchmark offline. El feedback sigue consumiendo `feedback_source` (ADR-027), agnóstico al detector ganador.
+- **Fuera del stack de detección:** Random Survival Forest, COX y SHAP (pronóstico de recuperación con variables clínicas) son otra tarea → módulo aparte a futuro; **LASSO** es método de selección de features → backlog #12; **SST-AD/SVR/RF** del anteproyecto §6 → se dirimen en CP-11 (SST-AD no está definido en ninguna fuente del corpus).
+- **Estrategia progresiva de evaluación** (Vista 3 §7.1): evaluar de a poco, escalando sólo si el anterior no alcanza — Mahalanobis (baseline) → Isolation Forest → AE denso int8 → LSTM AE, con OC-SVM/GMM/VAE como benchmark offline. Coherente con el pipeline del marco §6.3 y con la economía de cómputo; alimenta el roadmap de implementación.
+
+**Justificación.** Las features nuevas son las que el propio marco enumera y reducen la brecha con la evidencia sin costo estructural (encajan en la modularidad, ADR-021). Las diferidas/descartadas lo son por límites reales del hardware. Sumar OC-SVM/GMM/VAE como candidatos declarativos no cuesta (registry model-agnostic) y preserva el detector RT barato dejando un benchmark fuerte para la fase de datos. La estrategia progresiva evita sobre-ingeniería y ordena el roadmap.
+
+**Consecuencias.** El catálogo pasa de **41 a 45 features nominales** (bloques A–I). Vista 3 (vista consolidada + satélite) actualizadas. El **maestro §8.4** y **`resumen_investigacion.md`** quedan con el conteo/taxonomía viejos (pendiente de sync — el maestro se mantiene intacto por decisión de Juan). Las **advertencias de validez** del informe (validez de plantillas a baja velocidad; validación running→stroke de los eventos IC/TO; stride time no asimétrico en ACV → no usarlo como feature de simetría; feedback correctivo vs monitoreo) se anexan al **plan de captura/validación** (fase de dataset). No cambia ninguna decisión previa; extiende catálogo y registry.
+
+**Referencia.** `docs/investigacion/alineacion_features_algoritmos.md` (informe de auditoría).
+
+---
+
+## ADR-030 — Reconciliación del anteproyecto y el marco teórico con la arquitectura
+**Estado:** aceptada — **Decisión: se registra el *delta* documental entre los documentos fuente (anteproyecto oficial + marco teórico) y la arquitectura real, con su justificación por ADR. Es una reconciliación de coherencia, no una decisión de diseño nueva: las decisiones ya estaban tomadas en ADRs previos. El anteproyecto NO se modifica (documento ya presentado); el marco teórico recibe una nota-puntero a este ADR. Cierra CP-11.**
+
+**Contexto.** El anteproyecto (`docs/Anteproyecto_Tesis.pdf`) y el marco teórico se escribieron al inicio del proyecto y describen un sistema **anterior** a varias decisiones de arquitectura. La **auditoría de alineación** (2026-07-21, `docs/investigacion/alineacion_features_algoritmos.md`) confirmó las divergencias exactas. **CP-11** pedía reconciliarlas. Esta reconciliación es **documental**: sirve para la coherencia de la memoria de tesis (justificar por qué la arquitectura final difiere del anteproyecto) y para el onboarding; no bloquea el código.
+
+**Delta registrado (lo que decían las fuentes → lo que es → por qué).**
+1. **Topología: "plantilla autocontenida" / solo-plantilla → insoles + cintura-hub.** Ni el anteproyecto ni el marco incluyen la unidad de cintura. Resuelto por **ADR-001/ADR-005** (cintura = AP + hub de fusión bilateral; CP-02): reparte cómputo, hace la fusión bilateral donde convergen los datos y capta el tronco (~L4-L5).
+2. **IMU: BMI270 (anteproyecto: dual, uno por pie, bajo el arco) → MPU-6050 + IMU de cintura.** Cambio de part-number (ambos 6-DOF MEMS) + un IMU adicional en la cintura no presupuestado. **El motivo del cambio a MPU-6050 es disponibilidad actual + presupuesto** (ratificado por Juan); en una **próxima iteración de hardware** podría actualizarse a un IMU superior (p. ej. el BMI270 original). Su **impacto en el presupuesto de energía** (el MPU-6050 consume más que el BMI270, de ultra-bajo consumo) se sigue en **CP-09**.
+3. **Bloque I de tronco:** no está en las fuentes; lo agregó la arquitectura (habilitado por la cintura). **Recupera el Improved Harmonic Ratio ML** —feature top-1 del set de 3 de Brasiliano— que el marco **daba por perdido** por no instrumentar el tronco. **ADR-029.** → La "limitación de sensores frente a Brasiliano" que el marco declara **queda resuelta** y debería anotarse así.
+4. **Algoritmos:** el anteproyecto **§4.3** (Mahalanobis, Isolation Forest, AE denso, LSTM AE) **coincide** con el stack; el **§6** ("Autoencoders, SST-AD, SVR, Random Forest") **no**. Se adopta §4.3 (más candidatos declarables de ADR-029); **§6 se descarta** (SST-AD no está definido en ninguna fuente del corpus; SVR/RF eran referencias bibliográficas, no elecciones). La clase de Isolation Forest ya se reconcilió a **E** (ADR-011 rev).
+5. **Feedback:** tensión interna del anteproyecto **edge** (§4.3) vs **"alerta accionada desde el backend"** (§5.3); resuelto **on-device** (la cintura decide) por **ADR-027 / CP-10**.
+
+**Decisión.** Adoptar la arquitectura real (ADRs) como vigente y dejar registrado el delta de arriba. El **anteproyecto permanece como documento histórico** (no se toca: fue presentado). El **marco teórico** (documento de trabajo) recibe una **nota-puntero** al inicio que remite a este ADR-030 para el estado actual. **CP-11 → resuelta** (reconciliación documental). Deriva a otras cuestiones: el motivo/energía del cambio BMI270→MPU-6050 → **CP-09** (y ratificación pendiente del part-number).
+
+**Justificación.** Las decisiones ya estaban tomadas y trazadas en ADRs; lo que faltaba era hacerlas visibles desde los documentos fuente para la memoria de tesis. Registrarlo ahora aprovecha que la auditoría dejó las divergencias identificadas (barato hoy, caro de reconstruir después). No se reescriben los documentos oficiales: se registra el delta y se apunta a él.
+
+**Consecuencias.** CP-11 pasa a Resueltas (ref. ADR-030). El anteproyecto no cambia. El marco teórico gana una nota-puntero (sujeta a OK). **Motivo del MPU-6050 (ratificado):** disponibilidad + presupuesto; posible upgrade de IMU en una iteración futura. Su costo energético (mayor que el BMI270) se sigue en **CP-09**. No cambia ninguna decisión previa.
+
+**Referencia.** `docs/investigacion/alineacion_features_algoritmos.md`; ADR-001/005/011 rev/027/029; CP-02/CP-09/CP-10.
+
+---
+
+## ADR-031 — Esquema de `feature_vectors`: jsonb + columnas generadas (resuelve CP-05)
+**Estado:** aceptada — **Decisión: el vector de features por zancada se guarda como `jsonb` (una fila = un vector, con su `feature_set_version`); las pocas features "calientes" del dashboard se exponen con columnas generadas / índices de expresión; se deja la puerta de salida a un esquema *wide* (columnas fijas) para cuando el `feature_set_version` operativo se congele, si el perfilado lo justifica.**
+
+**Contexto.** La tabla `feature_vectors` (hypertable de TimescaleDB, maestro §11.3) guarda un vector de ~15-25 features por zancada/scope. **CP-05** pedía definir cómo se guarda ese vector: `jsonb` flexible vs. columnas fijas. Dos hechos del proyecto mandan la decisión: (1) el **feature set aún cambia y está versionado** (`feature_set_version`, ADR-021; fase exploratoria; ADR-029 acaba de sumar 4 features), (2) el **volumen es bajo** (~1 vector/s por pie). Y hay **dos consumidores con patrones opuestos**: el worker de ML (quiere el vector completo por fila) y el dashboard clínico (quiere una feature a lo largo del tiempo).
+
+**Opciones evaluadas.**
+- **A — `jsonb` (elegida).** Una fila = un vector `{feature: valor}` + `feature_set_version`. *Pros:* flexible sin migraciones ante el set cambiante; la fila **es** el vector (natural para ML: traer el jsonb y expandir); ya está en el DDL. *Contras:* consulta por-feature más verbosa (`(features->>'x')::float`) y compresión de Timescale subóptima sobre jsonb → se mitigan con columnas generadas/índices.
+- **B — Long / narrow.** Una fila por `(time, scope, feature_name, value)`. *Pros:* dashboard trivial y eficiente (`WHERE feature_name=…`), compresión óptima, flexible. *Contras:* el ML necesita **pivot** para reconstruir el vector; N× más filas; dispersa el "vector por zancada"; `feature_set_version` redundante por fila.
+- **C — Columnas fijas (*wide*).** Una columna por feature. *Pros:* óptimo en storage/consulta/compresión y type-safe **si el set está congelado**. *Contras:* rígido — **migración (`ALTER TABLE`) por cada cambio** del set; con 45+ features y set activo 15-25 la tabla queda ancha y esparsa. Mal encaje con la fase exploratoria.
+
+**Decisión.** **A reforzada:**
+1. **`features jsonb`** como esquema primario (una fila = un vector con su `feature_set_version`).
+2. **Columnas generadas `STORED`** derivadas del jsonb + índices para las features que el dashboard grafica seguido (p. ej. cadencia, score de anomalía, WBA/PSV cuando existan), **sin cambiar el flujo de escritura** (se sigue insertando sólo el jsonb; Postgres mantiene la columna).
+3. **Continuous aggregates** de TimescaleDB para las series agregadas del dashboard (p. ej. promedio por sesión), cuando haga falta.
+4. **Puerta de salida:** al congelarse el `feature_set_version` operativo, se puede materializar una vista/tabla *wide* para ML/dashboard si el perfilado lo pide — **sin rediseñar ahora**.
+
+**Justificación.** La flexibilidad pesa (set cambiante + versionado + fase exploratoria) y el volumen no justifica optimizar por rendimiento (a ~1 Hz, las tres opciones sobran). `jsonb` conserva la **semántica de vector** (uso primario en la mínima = ML) y encaja con `feature_set_version`; sus contras de consulta se resuelven con columnas generadas puntuales. Se descarta *wide* como base ahora por rigidez; *long* se reserva como alternativa si el dashboard pasa a ser el consumidor dominante.
+
+**Consecuencias.** El DDL del maestro §11.3 ya usa `features jsonb` → **no cambia ninguna decisión previa**: se confirma y se extiende con columnas generadas/índices. Se documenta en la **Vista 4**; el futuro `src/db/schema.sql` implementará `jsonb` + columnas generadas + hypertable + índices. **Cierra CP-05.** Ejemplo de columna generada para una feature caliente:
+```sql
+alter table feature_vectors
+  add column cadence numeric generated always as ((features->>'cadence')::numeric) stored;
+create index on feature_vectors (cadence);
+```
+
+**Apéndice conceptual (en llano).** *jsonb* = un tipo de columna que guarda una estructura JSON (pares clave-valor) en **binario** (parseado una vez al insertar), lo que permite consultarla e indexarla rápido — a diferencia del tipo `json`, que guarda el texto crudo. El vector de una zancada va entero en esa columna: **una fila = un paso**. Para sacar una sola feature se "abre el sobre" con `features->>'nombre'` y se castea a número. Una *columna generada* es una columna que **se calcula sola** desde el jsonb (no se escribe a mano): sirve para que las 3-4 features que el médico mira seguido salgan tan rápido como si fueran columnas normales, sin perder la flexibilidad del jsonb para el resto.
+
+**Referencia.** ADR-007 (modelo de datos), ADR-021 (`feature_set_version`), CP-05; maestro §11.3.
+
+---
+
+## ADR-032 — Seguridad y aislamiento de datos: RLS estricto por paciente (resuelve CP-04 a nivel técnico)
+**Estado:** aceptada — **Decisión: aislamiento de datos por paciente con RLS estricto de Supabase en todas las tablas con `patient_id`, mediante una tabla de pertenencia `patient_access` (user→patient→rol); el worker usa `service_role` (saltea RLS, sólo backend); + capa de seguridad (cifrado en tránsito/reposo, `external_code` anónimo + PII mínima, borrado de bonds+datos al reasignar la cintura). El nivel formal (consentimiento, anonimización, auditoría, passkey de ADR-028) queda sujeto al comité de ética → CP-18.**
+
+**Contexto.** Datos de salud en Supabase (ADR-006/007). **CP-04** pedía definir el nivel de rigor de seguridad. Tiene **dos capas**: la **técnica** (esta decisión) y la **ratificación del comité de ética de ITBA** (externa → CP-18). §13 del maestro ya esbozaba la capa de seguridad; acá se concreta el **modelo de RLS**.
+
+**Opciones evaluadas (aislamiento).**
+- **A — RLS estricto por paciente desde el inicio + tabla de pertenencia (elegida).** *Pros:* aislamiento real ya en la mínima (barato en Postgres); la máxima (clínico+paciente) escala **sin reescritura**; coherente con mínima→máxima. *Contra:* definir políticas + tabla de acceso desde ya.
+- **B — RLS simple ahora (un dueño), multi-rol en la máxima.** *Pros:* arranca más rápido. *Contra:* introducir el modelo de acceso al escalar (rompe "sin reescrituras").
+- **C — Máximo rigor desde el inicio** (A + auditoría de accesos + cifrado a nivel de aplicación). *Pros:* postura más defensiva. *Contra:* overkill para una tesis salvo exigencia del comité.
+
+**Decisión — A.**
+- **RLS habilitado en todas las tablas con `patient_id`** (patients, sessions, feature_vectors, gait_events, anomaly_scores, models, model_deployments, retrain_jobs, raw_blobs, anomaly_raw_snippets), con políticas SELECT/INSERT/UPDATE/DELETE por pertenencia.
+- **Tabla de pertenencia `patient_access`** (`user_id`, `patient_id`, `role ∈ {owner, clinician, patient}`); las políticas filtran por `exists (select 1 from patient_access where user_id = auth.uid() and patient_id = <fila>.patient_id)`.
+- **Worker con `service_role`** (saltea RLS; sólo backend seguro, nunca en el cliente). Ingesta del host: mínima con el JWT del investigador (owner) o service-role; máxima con el token del paciente/dispositivo.
+- **Mínima:** un usuario (investigador = owner) con acceso a todos los pacientes del estudio. **Máxima:** se suman filas clinician/patient **sin cambiar el esquema**.
+- **Resto de la capa (confirma §13):** TLS/HTTPS a Supabase, BLE LE Secure Connections, WPA2 en el WiFi privado; cifrado en reposo por la plataforma; **`external_code` anónimo + PII mínima** (birth_year/sex/affected_side, sin nombre); retención tiered (ADR-008); **borrado de bonds + datos al reasignar la cintura** a otro paciente (ligado a ADR-028; factory-reset → máxima).
+
+**Justificación.** RLS es el mecanismo estándar de Supabase para datos de salud multi-tenant; ponerlo desde el inicio es barato y evita reescribir al escalar. La tabla de pertenencia desacopla "quién accede a quién" de las tablas de datos y soporta owner/clinician/patient con la misma política.
+
+**Consecuencias.** **CP-04 → resuelta a nivel técnico**; **CP-18 (nueva)** rastrea la ratificación del comité de ética (consentimiento, anonimización, auditoría, nivel de pairing). El futuro `src/db/schema.sql` implementará `enable row level security` + las políticas + `patient_access`. Se documenta en la **Vista 4** (seguridad). El maestro §13 no se toca (mantiene el overview).
+
+**Apéndice conceptual (en llano).** *RLS* = la base filtra las filas por usuario, no la app. *service-role* = una llave de backend que ve todo (para el worker, que corre en servidor seguro). *Tabla de pertenencia* = la lista de "quién puede ver a qué paciente". Ejemplo de política:
+```sql
+alter table feature_vectors enable row level security;
+create policy "acceso por paciente" on feature_vectors for select
+  using (exists (select 1 from patient_access pa
+                 where pa.user_id = auth.uid() and pa.patient_id = feature_vectors.patient_id));
+```
+
+**Referencia.** ADR-006/007/008/028; maestro §13; CP-04; CP-18.
+
+---
+
+## ADR-033 — Interfaces: UI de control (web local Python) y dashboard clínico (resuelve CP-15)
+**Estado:** aceptada — **Decisión: dos UIs separadas por rol y necesidad técnica. (a) UI de control/operador = app local en Python + UI web (FastAPI sobre el host de ingesta `bleak`); en la máxima → app móvil nativa (mismo firmware BLE, replica el flujo). (b) Dashboard clínico = web de solo-lectura sobre Supabase (RLS), diferido a la máxima (en la exploración alcanzan notebooks); tecnología a decidir entonces.**
+
+**Contexto.** **CP-15** pedía definir las interfaces (UI de usuario + dashboard clínico): alcance, tecnología y datos. Son **dos UIs con usuarios y necesidades opuestas**: la de **control** habla con la cintura por **BLE** (arranca captura, cambia modo) y registra la sesión; el **dashboard** sólo **lee de Supabase**. El host de ingesta ya es Python con `bleak` (stack Vista 4).
+
+**Opciones evaluadas (UI de control).**
+- **A — App local Python + UI web (FastAPI) (elegida).** *Pros:* un solo proceso/stack (BLE + ingesta + UI); el control llama directo a las funciones BLE (sin puente entre "UI" y "quien habla BLE"); el diseño (pantalla de comandos) se traslada a la app móvil de la máxima. *Contra:* algo más de trabajo que un notebook.
+- **B — GUI de escritorio Python (PyQt/Tkinter).** *Pros:* un binario. *Contra:* no se reaprovecha hacia móvil (se rehace).
+- **C — CLI/notebook.** *Pros:* rapidísimo para la instancia cero. *Contra:* provisional, no es UI usable por otro.
+
+**Decisión.**
+- **(a) UI de control = app local Python + UI web.** El host de ingesta (Python/`bleak`) expone una **UI web** (FastAPI + página) que: elige paciente (Supabase), **abre/cierra sesión** (modo captura exploratoria/operativa/edge), manda el **comando de modo a la cintura** (BLE control → propagado a las plantillas por WiFi), muestra **estado** (conexión/muestras/batería) y dispara **OTA**. **En la máxima → app móvil nativa** (BLE nativo); el firmware de la cintura no cambia (periférico agnóstico), la app **replica el mismo flujo/diseño**. *(Para arrancar la instancia cero puede apoyarse en notebook/CLI y montar la UI web encima, reusando las mismas funciones de control.)*
+- **(b) Dashboard clínico = web de solo-lectura sobre Supabase (RLS).** Evolución de marcha, frecuencia de anomalías, WBA/PSV, riesgo de Jung, Z-scores, heatmaps por paciente; comparación con escalas (Berg, Fugl-Meyer, Barthel). **Diferido a la máxima**; en la exploración se usan **notebooks** (mismo stack de análisis). Tecnología (**Streamlit** rápido / **React** producto) **a decidir en la máxima** (backlog Vista 4). No controla las zapatillas.
+
+**Justificación.** Separar por rol (operador vs médico) y por necesidad técnica (BLE local vs web de solo-lectura). La UI de control web-local reutiliza el host de ingesta y su diseño **escala a la app móvil sin tocar el firmware**. El dashboard no es crítico en la instancia cero (notebooks alcanzan), así que se difiere sin bloquear nada.
+
+**Consecuencias.** **CP-15 → resuelta.** La UI de control se implementa junto al host (`src/host/`). El dashboard clínico y la app móvil quedan en el **backlog de la Vista 4** (tecnología a decidir en la máxima). El control de modos que la UI dispara ya está en la arquitectura (Vista 1 §6, canal de control); RLS (ADR-032) aísla lo que el dashboard leerá. Se documenta en la Vista 4; el maestro no se toca.
+
+**Referencia.** ADR-006 (Supabase), ADR-002 (BLE), ADR-005 (fases de captura), ADR-032 (RLS); Vista 1 §6; Vista 4; CP-15.
+
+---
+
+## ADR-034 — Switch mínima↔máxima: el micro es agnóstico al tipo de host (resuelve CP-16)
+**Estado:** aceptada — **Decisión: el micro NO detecta si está conectado a una computadora o a un celular. El pipeline lo determina el host (laptop → worker local; celular → worker en la nube). El modo de operación (captura exploratoria / operativa / edge) es un comando explícito por el canal de control, nunca una inferencia. El host declara su tipo en la metadata de la sesión, sólo para trazabilidad del dataset.**
+
+**Contexto.** **CP-16** preguntaba si el micro puede/debe detectar el tipo de central BLE para switchear pipelines automáticamente, o si el flujo lo determina simplemente qué host se conecta. El **principio rector §2.3** ya establecía que "la infraestructura del lado del micro es la misma mande a una laptop o a un celular; el micro es un periférico BLE (servidor GATT) agnóstico al tipo de central" (ADR-002). CP-16 es, en el fondo, la ratificación de ese invariante.
+
+**Análisis.** La pregunta decisiva no es *si el micro puede* detectarlo, sino *qué haría distinto si lo supiera*: **nada**. Muestrea a 100 Hz igual, calcula features igual, notifica por GATT igual, recibe OTA igual. Lo que cambia entre mínima y máxima es **dónde corre el worker** y **qué hace el host con los datos** — enteramente del lado del host (ADR-009). Técnicamente la detección sería posible por **heurísticas** (MTU negociado, restricciones de connection-interval típicas de iOS, o leer el `Appearance`/Device Name del central si expone un servidor GATT), pero son **frágiles, dependientes de plataforma y sin propósito**.
+
+**Opciones evaluadas.**
+- **A — Micro agnóstico; el host determina el flujo (elegida, con la variante de declaración).** *Pros:* preserva el invariante §2.3 y la reutilización 100 % del firmware de la cintura; sin heurísticas frágiles; cada host implementa su propio pipeline. *Contra:* ninguno relevante (el micro no necesita esa información).
+- **B — Detección por heurísticas en el micro** (MTU, connection params, Appearance). *Pros:* switch "automático". *Contra:* frágil y dependiente de plataforma; acopla el firmware al tipo de central (rompe §2.3); resuelve un problema inexistente.
+- **C — Handshake explícito que cambia el comportamiento del micro.** *Pros:* determinista. *Contra:* mete lógica de pipeline en el borde sin necesidad.
+
+**Decisión — A + declaración del host (variante elegida por Juan).**
+1. **El micro es agnóstico:** no infiere ni recibe el tipo de host como parámetro de comportamiento. Firmware idéntico en mínima y máxima.
+2. **El flujo lo determina el host:** laptop → ingesta + worker local; celular → ingesta + puente, worker en la nube. Punto de variación aislado tras las interfaces de transporte y despliegue (maestro §14).
+3. **Modo ≠ tipo de host:** el modo de operación (exploratoria / operativa / edge) se fija por **comando explícito** desde la UI de control (ADR-033) por el canal confiable. Es lo único que el micro necesita saber, y se lo dicen.
+4. **El host declara su tipo en la metadata de la sesión** (`sessions.host_type ∈ {laptop, mobile}` + versión de la app): **trazabilidad del dataset** (saber con qué setup se capturó cada sesión), **sin efecto sobre el comportamiento** del micro ni del pipeline.
+
+**Justificación.** Mantiene el invariante que hace que la mínima escale a la máxima sin reescrituras, evita heurísticas BLE frágiles, y aun así deja registro de con qué host se capturó cada sesión — útil para el análisis y para la memoria de tesis.
+
+**Consecuencias.** **Cierra CP-16.** El esquema de `sessions` suma `host_type` (+ versión de app); lo escribe el host al abrir la sesión (Vista 4 / ADR-031/032). Sin cambios en el firmware ni en el protocolo. Se refleja en Vista 1 §7 y Vista 4.
+
+**Referencia.** ADR-002 (uplink BLE), ADR-009 (worker), ADR-033 (UI de control), maestro §2.3 y §14; CP-16.
+
+---
+
+## ADR-035 — Encendido/apagado sin botón (resuelve CP-19)
+**Estado:** aceptada — **rev. 2026-07-21** — **Decisión (rev): en la mínima NO hay gestión de energía. El switch físico es el encendido/apagado y todo permanece despierto mientras esté encendido; la autonomía alcanza sin dormir (~10 h contra un objetivo de ≥8 h). No se agrega corte de potencia por hardware. El wake-on-motion (dormant + interrupción del IMU) y el WiFi power-save quedan documentados como opciones para la máxima, no como parte del diseño de la placa nueva.**
+
+> **Nota de revisión.** La versión original de este ADR (misma fecha) fijaba **soft-off + wake-on-motion** como objetivo, con el switch solo como arreglo de la Fase 1. Se revisó **a planteo de Juan**: para capturar dataset, la **robustez vale más que la autonomía** — y la autonomía no hace falta. Los argumentos de la revisión están en "Por qué se revisó", abajo. Lo que **no** cambió: no hay corte por hardware, y la alimentación es celda → VSYS (`esquema_alimentacion.md`).
+
+**Contexto.** Los micros **no tienen botón** y la batería va **soldada permanentemente** (premisa de producto, coherente con ADR-028: el IMU es el "botón"). **CP-19** pedía definir si el encendido/apagado se resuelve por firmware o exige modificar el circuito. Dos hechos empíricos ordenaron la decisión:
+
+1. **Medición de referencia:** en Pico 2 W se alcanza **<800 µA en DORMANT** apagando el CYW43 (que domina el consumo). Con la celda de **1000 mAh** eso da **>50 días** de reposo. El corte por hardware (3V3_EN + latch) llevaría a algunos meses más: **optimiza un problema inexistente**. El consumo que sí importa es el **activo** (CP-09).
+2. **Hallazgo de banco (Juan):** con el cableado original (celda → módulo → boost 5 V → VBUS), el equipo **no arrancaba al conectar la batería** y **se apagaba solo** al quitar el USB — el boost del módulo arranca deshabilitado y corta por baja carga. Eso hacía **imposible** el dormant. **Alimentar VSYS directo desde la celda** (ver `esquema_alimentacion.md`) es lo que **habilita** este ADR.
+
+**Opciones evaluadas.**
+- **A — Sin gestión de energía; el switch es el encendido/apagado (ELEGIDA en la rev).** *Pros:* cero complejidad; **no se pierde ningún paso**; no depende de umbrales de movimiento ni de la traza INT; la autonomía alcanza (~10 h vs ≥8 h). *Contra:* en uso diario domiciliario (máxima) se queda corta.
+- **B — Soft-off + wake-on-motion** (elegida en la versión original). *Pros:* máximo ahorro (dormant ~800 µA → >50 días); UX natural en calzado. *Contra:* **umbrales poco confiables en marcha hemipléjica**; **pierde los primeros pasos** tras el reposo; coordinación de wake entre unidades; depende de la traza INT.
+- **C — La cintura manda, con WiFi power-save.** Plantillas **asociadas** durmiendo entre *beacons*, despertadas por tráfico del hub. *Pros:* coordinado desde el hub; sin traza INT; ahorro intermedio. *Contra:* mucho menos ahorro que el dormant (la radio sigue escuchando) y complejidad de configuración del CYW43.
+- **D — Corte por hardware (transistor sobre 3V3_EN / load switch).** *Pros:* ~10× menos reposo. *Contra:* si se corta el rail el micro **no puede despertarse solo** → exige IMU en rail siempre-vivo + latch + fuente de wake externa. Más componentes por un beneficio que no se necesita.
+- **E — Botón de encendido de cara al usuario.** *Contra:* contradice la premisa sin-botón (ADR-028) e **impracticable en la plantilla** (fina, sellada, bajo el peso del cuerpo, con impactos).
+
+**Decisión (rev) — A: sin gestión de energía en la mínima.**
+
+- **El switch físico es el encendido y el apagado.** Mientras esté cerrado, las tres unidades están **despiertas y operando**: no hay dormant, ni auto-sleep, ni wake por movimiento. Apagar = abrir el switch.
+- **La autonomía alcanza sin dormir:** ~**10 h** a 100 mA con 1000 mAh alimentando VSYS directo, contra el objetivo blando de **≥8 h** (CP-09). **El dormant resolvía un problema que en la mínima no existe.**
+- **Placa actual (ahora):** cableado **puenteado** (celda → VSYS, sensores desde 3V3, VBUS libre) + **switch físico en las tres placas**.
+- **Próxima rev del PCB:** se mantiene el criterio **diferenciado por unidad** para el corte, porque las restricciones mecánicas no son las mismas — **cintura** con slide switch en serie con el positivo (+ pulsador de reset sobre RUN, opcional, para depuración); **plantilla sin actuador mecánico en el camino de potencia** (es fina, sellada, va bajo el peso del cuerpo y recibe impactos en cada paso; un reed switch, además, **rebotaría**), con corte de servicio por **JST/header accesible** al abrir la carcasa.
+- **Traza INT del IMU → GPIO:** se mantiene en el checklist del PCB por el **fallback DATA_READY** (ADR-026) y para dejar la puerta abierta, pero **deja de ser crítica**.
+- **Diferido a la máxima (documentado, no implementado):** **wake-on-motion** (opción B) y **WiFi power-save** (opción C). Se evalúan cuando el uso diario domiciliario lo exija.
+- **Heartbeat cintura→plantillas:** útil, pero **para salud del enlace** (detectar una plantilla caída o sin batería), **no** para gestión de energía. Función aparte.
+
+**Por qué se revisó (planteo de Juan).**
+1. **Los umbrales de movimiento son poco confiables en la población objetivo.** Un umbral calibrado para movimiento normal puede no dispararse con un paciente hemipléjico que arrastra el pie y se mueve lento y débil: se apoyaría el encendido del sistema en la señal más incierta justo donde más importa.
+2. **El auto-sleep hace perder los primeros pasos.** Si todo durmió mientras el paciente estaba sentado, al levantarse hay que despertar tres micros y **re-asociar el WiFi** — y la transición sentado-a-parado y los primeros pasos son de lo más valioso clínicamente. Perderlos por ahorrar energía es un mal negocio.
+3. **Despertar por radio no ahorra energía.** Para que una plantilla *reciba* una orden de la cintura, su radio tiene que estar encendida y escuchando — y el CYW43 **es** el consumo dominante. Además, **re-asociarse en WiFi es lento y caro** (mucho más que reconectar BLE), así que duty-ciclar el enlace se come lo que ahorró.
+4. **La autonomía no lo exige.** Con ~10 h contra 8 h de objetivo, la gestión de energía sería complejidad sin beneficio en esta etapa.
+
+**Justificación.** Para **capturar dataset**, la **robustez y la integridad de los datos valen más que la autonomía** — y la autonomía ya está cubierta. Se elige el esquema con menos partes móviles y sin modos de falla silenciosos (una sesión fragmentada o unos primeros pasos perdidos son daños difíciles de detectar a posteriori). El ahorro de energía se reintroduce recién cuando el caso de uso (máxima) lo justifique.
+
+**Consecuencias.** **Cierra CP-19.** El equipo se enciende y apaga **a mano**; no hay gestión de energía automática en la mínima. Se **simplifica el diseño de la placa nueva** (el wake-on-motion sale del alcance) y quedan **sin efecto** los pendientes de firmware asociados — auto-sleep dependiente del modo, indicador de encendido por pulso del motor, y secuencia de wake cintura↔plantillas —; se reactivarían si se adopta alguna de las opciones de la máxima (B o C). **Se mantiene, y gana importancia, el corte por baja tensión en firmware** (leer VSYS por el ADC y apagar ordenadamente antes de que actúe el PCM): sin dormant, un equipo que quede encendido consume hasta agotar la celda. El resto del **checklist de la rev del PCB** (`esquema_alimentacion.md` §7) no cambia — FSR medial/lateral (CP-01/CP-08), cargador de corriente limitada, alojamiento de la celda. **Nota:** al sellar la plantilla se pierde el acceso físico al BOOTSEL → el **OTA (ADR-012) debe estar probado antes de sellar la primera unidad**. El presupuesto de energía real sigue en **CP-09**.
+
+**Referencia.** `docs/arquitectura/esquema_alimentacion.md`; ADR-026 (DATA_READY/INT), ADR-028 (sin botón, gesto por IMU), ADR-012 (OTA), ADR-014 (SNR); CP-01, CP-08, CP-09, CP-18.
+
+---
+
+## ADR-036 — Registro de la fase de captura y del origen de las features en el esquema
+**Estado:** aceptada (2026-08-18) — **Decisión: `sessions.mode` pasa a tres valores (`exploratory` / `operational` / `edge`), reflejando las fases de ADR-005 rev c; y `feature_vectors` suma `features_source ∈ {device, offline}` para distinguir, fila por fila, el vector calculado por el micro del recalculado off-device.**
+
+**Contexto.** ADR-005 rev c partió la captura en **dos fases con propósitos distintos** (exploratoria = crudo-solo, features off-device; operativa = el micro calcula features + se sube crudo), pero el esquema seguía con el enum anterior `mode in ('capture','edge')`. Detectado en la **auditoría de consistencia entre vistas del 2026-08-18**: la Vista 4 documentaba tres fases y el DDL sólo admitía dos.
+
+**Análisis.** Al escribir el cambio apareció un requisito que el modo a nivel sesión **no cubre**. En la fase **operativa**, para una **misma zancada** van a existir **dos vectores de features**: el que calculó el micro —que es el que entrena los modelos desplegables, *skew-free* por construcción (ADR-018)— y el que se recalcula en Python desde el crudo de esa misma sesión para **validar la paridad**. Si ambos entran a `feature_vectors` sin discriminante, no hay forma de (a) filtrar el set de entrenamiento correcto ni (b) armar los pares para el test de paridad. El origen es un atributo **del vector**, no de la sesión.
+
+**Opciones evaluadas.**
+- **A — Tres valores en `mode` + `features_source` por fila (elegida).** *Pros:* mapea 1:1 con ADR-005 rev c; resuelve el caso de paridad, que es donde el modo por sí solo se queda corto; el discriminante queda donde ocurre la ambigüedad. *Contra:* una columna más en la hypertable (costo despreciable: ~1 vector/s por pie).
+- **B — Sólo tres valores en `mode`.** *Pros:* cambio mínimo. *Contra:* deja sin resolver la convivencia de los dos vectores en la fase operativa; la garantía de ADR-018 quedaría dependiendo de convenciones fuera de la base.
+- **C — `mode in ('capture','edge')` + `capture_phase` aparte.** *Pros:* conserva la distinción de alto nivel captura-vs-edge, que es la que ve el firmware. *Contra:* dos campos que hay que mantener coherentes entre sí (estado redundante, combinaciones inválidas posibles) y consultas más incómodas; la distinción que preserva ya la da el enum de tres valores.
+
+**Decisión.**
+1. `sessions.mode text check (mode in ('exploratory','operational','edge'))`.
+2. `feature_vectors.features_source text check (features_source in ('device','offline'))` — `device` = calculado por el micro; `offline` = re-extraído en Python desde el crudo.
+3. Índice `(session_id, features_source, time desc)` para armar los pares de paridad sin escanear la hypertable.
+
+**Justificación.** Las tres fases no son matices de una misma cosa: cambian **qué transmite el micro**, **quién calcula las features** y **para qué sirve el dato**. Registrarlas es lo que hace que un dataset sea reinterpretable a posteriori. Y el `features_source` es lo que convierte la paridad (ADR-018) de una convención en algo verificable con una consulta.
+
+**Consecuencias.** Cambia el DDL (`src/db/schema.sql`) y el mapa de entidades del maestro §11.3; se refleja en la Vista 4 (§1.1, §1.2, §1.3). **No requiere migración**: todavía no hay datos capturados — a partir de la primera captura sí (la herramienta de migraciones sigue pendiente en la Vista 4). El **firmware no cambia**: el modo ya se manda como comando explícito por el canal de control (ADR-034), sólo se amplía el vocabulario. El nombre en inglés mantiene la convención del resto del esquema.
+
+**Referencia.** ADR-005 rev c (fases de captura), ADR-018 (paridad / anti train-serve skew), ADR-031 (`feature_vectors` en jsonb), ADR-034 (`host_type`), ADR-021 (`feature_set_version`); Vista 4 §1.
+
+---
+
+## ADR-037 — El esquema de la base tiene una sola fuente: `src/db/schema.sql`
+**Estado:** aceptada (2026-08-18) — **Decisión: `src/db/schema.sql` es la fuente única de verdad del esquema. El maestro §11.3 deja de duplicar el DDL y pasa a mantener sólo el mapa de entidades con un puntero al archivo.**
+
+**Contexto.** El DDL estaba escrito **dos veces**: en el maestro §11.3 ("DDL de referencia", 145 líneas) y en `src/db/schema.sql` (163 líneas). La **auditoría de consistencia del 2026-08-18** encontró que las dos copias **ya habían divergido** por su cuenta — distinto orden de tablas, comentarios distintos, acentos removidos en una — sin que nadie lo notara, y que ambas arrastraban los mismos huecos (RLS, `host_type`, config de feedback, fases de captura).
+
+**Análisis.** Es exactamente la clase de problema que el repo ya resuelve para las features con la **regla de layering**: *se define una vez, se ejecuta en varios lados*. Una segunda copia sin mecanismo que la sincronice no es documentación redundante, es una **fuente de verdad en competencia**: ante una diferencia, nada dice cuál gana. Y el costo se paga en cada cambio de esquema, que a partir de ahora van a ser varios.
+
+**Opciones evaluadas.**
+- **A — `schema.sql` manda; el maestro describe (elegida).** *Pros:* el archivo que se ejecuta contra la base es el que manda; aplica la regla de layering ya vigente; el maestro conserva su rol de índice/overview sin cargar con detalle que envejece. *Contra:* el maestro deja de ser lectura autocontenida para el esquema (mitigado con la tabla de entidades).
+- **B — El maestro manda; `schema.sql` derivado.** *Pros:* conserva el documento completo. *Contra:* pone al archivo de código a depender de un documento; el `.sql` es el que se corre, y sería el que puede quedar desactualizado justo cuando importa.
+- **C — Mantener ambas + test de CI que compare.** *Pros:* detecta la divergencia. *Contra:* agrega infraestructura para un problema que se resuelve **no duplicando**; además todavía no hay CI (los tests de paridad de ADR-021 tampoco existen).
+- **D — Dejarlo como está.** *Contra:* ya divergieron sin que nada lo detectara; con el esquema a punto de cambiar, el problema empeora.
+
+**Decisión.** `src/db/schema.sql` contiene tablas, índices, hypertables, RLS y políticas. El maestro §11.3 pasa a **"Esquema — entidades"**: tabla de `capa | tabla | qué guarda` + puntero. La **Vista 4** sigue siendo la definición canónica *conceptual* del backend (qué guarda cada cosa y por qué); el `.sql` es la definición *ejecutable*.
+
+**Justificación.** Coherente con cómo el proyecto ya trata las features y los modelos: una definición, varios consumidores. Deja el maestro en el rol que ADR-000/§0 le asignaron —índice y overview— en vez de segunda copia de todo.
+
+**Consecuencias.** El maestro pierde ~150 líneas de DDL y gana una tabla de entidades. Toda modificación futura del esquema entra **sólo** por `src/db/schema.sql`; el maestro y la Vista 4 se actualizan si cambia el *mapa* (una tabla nueva, un cambio de propósito), no si cambia una columna. Refuerza la necesidad de la **herramienta de migraciones** (pendiente en la Vista 4): con una sola fuente, el historial del esquema pasa a ser el historial de ese archivo más sus migraciones.
+
+**Referencia.** ADR-006/007 (Supabase, modelo de datos), ADR-031 (jsonb), ADR-032 (RLS), ADR-036 (fases y origen de features); maestro §0 (regla de layering) y §11.3; Vista 4 §1.
+
+---
+
+## ADR-038 — Adopción de mid-stance (MS) como evento de segmentación y partición del apoyo
+**Estado:** aceptada (2026-08-18) — **Decisión: se adopta MS por completo. Se detecta en la plantilla como el cruce de carga retropié→antepié (SPEC-01), parte el apoyo en carga `[IC,MS]` y propulsión `[MS,TO]` (SPEC-02), instancia las features #12/#13/#14 del bloque C por sub-fase, y suma dos features nuevas: #43 push-off time ratio y #44 propulsive impulse ratio.**
+
+**Contexto.** **ADR-029** (21/07) agregó mid-stance como *"evento de segmentación (no feature), complementa IC/TO (SPEC-01/02)"*, pero **SPEC-02 nunca se actualizó**: seguía listando mid-stance entre las *"sub-fases opcionales (diferidas) — no las requiere el feature set actual"*, y `gait_events.type` sólo admitía `IC`/`TO`. La **auditoría de consistencia del 2026-08-18** lo levantó como contradicción directa entre la Vista 3 y la SPEC. Había que dirimirla en un sentido o en el otro.
+
+**Análisis.** El argumento a favor de diferirlo era que el consumidor que ADR-029 mencionaba —segmentar el **COP** intra-apoyo— pertenece al **bloque E**, que está **apagado** hasta tener los FSR medial/lateral (ADR-023). Pero al revisarlo apareció que ese no es el único consumidor, ni el más importante:
+
+1. **Con los 2 FSR actuales (punta + talón) MS ya es detectable**, y de forma robusta: el instante en que las dos curvas de fuerza se cruzan. No depende del hardware pendiente.
+2. **El déficit de push-off es el hallazgo más característico de la marcha post-ACV** en la propia bibliografía del proyecto: Kang (2025, paper #20) muestra que el lado parético **no logra activar las regiones anteromediales** y que el peak force en metatarsianos está sistemáticamente reducido; Sanghan et al. (2014) reportan diferencias de presión plantar del 30 ± 12 %; el marco teórico lo llama *"uno de los hallazgos clínicos más característicos"*.
+3. Hoy las features del bloque C se calculan **sobre el apoyo completo, como un solo número**. La firma típica del lado parético —apoya, se queda en el talón y despega sin empujar— **se promedia y se pierde** en esa agregación. Partido en dos, es directamente visible.
+
+O sea: el evento que parecía bloqueado por hardware es, en realidad, el que da acceso barato al marcador clínico central del cuadro, con el hardware que ya está en la mesa.
+
+**Opciones evaluadas — alcance.**
+- **A — Adoptar completo (elegida).** Detección en SPEC-01 + sub-fases en SPEC-02 + `'MS'` en el esquema + features que lo consumen. *Pros:* captura el déficit de propulsión desde la primera captura; activo con 2 FSR; deja el bloque E listo para cuando prenda. *Contra:* trabajo de firmware adicional en el detector; hay que definir features nuevas antes de tener datos.
+- **B — Sólo catálogo y esquema.** Agregar `'MS'` al enum y registrarlo en V3 sin escribir detección ni features. *Pros:* cierra la contradicción a costo cero. *Contra:* deja el evento como declaración sin uso; alguien tiene que volver igual.
+- **C — Diferirlo con el bloque E.** Marcar MS como "definido pero diferido", igual que #42. *Pros:* cero trabajo. *Contra:* posterga el marcador clínico más característico por una dependencia (FSR M/L) que **no es real** para este uso.
+
+**Opciones evaluadas — definición del evento.**
+- **A' — Cruce de carga `F_ante ≥ F_post` (elegida).** *Pros:* el FSR lo entrega robusto; es el instante **funcionalmente** relevante para la propulsión; mantiene la arquitectura de SPEC-01 (FSR primario + confirmación IMU). *Contra:* no es el mid-stance **cinemático** clásico.
+- **B' — Cinemático por IMU** (tibia vertical / cruce por cero de ω sagital en pie plano). *Pros:* es la definición de Perry. *Contra:* invierte la jerarquía de SPEC-01 (el IMU es menos preciso en el instante: RMSE ~50-61 ms vs ~14 ms); y en marcha hemipléjica el pie plano puede no darse limpio.
+- **C' — Geométrico (50 % del stance).** *Pros:* trivial. *Contra:* no es un evento, es una división arbitraria; no aporta información.
+
+Se elige **A' con B' como confirmación**: el cruce de carga dispara, el pie-plano del IMU anota confianza. La **divergencia entre ambos** queda registrada como candidata de feature a futuro.
+
+**Decisión.**
+1. **SPEC-01** detecta **MS** = primer instante en `[IC, TO]` con `F_ante ≥ F_post` (banda muerta `h_ms`, una vez por apoyo), confirmado por el pie-plano del IMU dentro de `±W`. **Si no hay cruce** (el paciente nunca transfiere carga), se emite en el **máximo de `F_ante/F_post`** con baja confianza y flag **`no_crossover`** — *que es señal de anomalía, no error*.
+2. **SPEC-02** parte el apoyo en **carga `[IC, MS]`** y **propulsión `[MS, TO]`**.
+3. **Bloque C:** **#12, #13 y #14** se instancian **por FSR × sub-fase**. **#15** no se parte; **#16** (loading rate) queda con dominio explícito en la carga; **#17** sigue medido desde IC. Es **instanciación**, no entradas nuevas de catálogo — el mismo mecanismo que el bloque C ya usa por-FSR.
+4. **Dos features nuevas** (catálogo 45 → **47**): **#43 push-off time ratio** = `(t_TO−t_MS)/(t_TO−t_IC)`, bloque A, per-pie, adimensional; y **#44 propulsive impulse ratio** = `PTI[MS,TO]/PTI[IC,TO]` sobre `F_total`, bloque D, per-pie. #44 es la contraparte **temporal** de #19 (que es **espacial**): no se duplican.
+5. **Esquema:** `gait_events.type ∈ {IC, TO, MS}`.
+
+**Justificación.** Se adopta la definición de carga porque es la que el hardware entrega bien y la que apunta al fenómeno clínico; se elige el alcance completo porque el costo marginal (un cruce con histéresis dentro de un detector que ya existe) es chico frente a lo que habilita. Las dos features nuevas son **adimensionales**, lo que las hace comparables entre velocidades de marcha y entre pacientes — deseable para un baseline personalizado. Y todo esto queda **activo en el perfil 2-FSR**, sin esperar la rev del PCB.
+
+**Consecuencias.** Cambian SPEC-01 y SPEC-02, la Vista 2 §3, la Vista 3 (Parte A: bloques A/C/D + nota de conteo) y el esquema (`src/db/schema.sql`, `gait_events`). El catálogo pasa a **47** entradas nominales; el vector real crece más por la instanciación del bloque C. Las features que dependen de MS declaran esa dependencia en el catálogo (ADR-021), así que un MS de baja confianza las apaga sin tocar el resto. **Cierra la contradicción ADR-029 ↔ SPEC-02.** Se suman parámetros calibrables (`h_ms`, mapeo FSR→región) al `feature_set_version`. La validación de la detección de MS en marcha hemipléjica real queda para la fase de captura, junto con la de IC/TO (advertencia ya registrada en el informe de alineación).
+
+**Referencia.** ADR-029 (propuesta original de MS), ADR-015 (IC/TO), ADR-023 (set activo 2-FSR), ADR-021 (catálogo y dependencias), ADR-038 → SPEC-01 / SPEC-02; Kang (2025, paper #20), Sanghan et al. (2014), Ma, Zheng & Lee (2018); marco teórico (fases del ciclo, líneas ~252-253; déficit de propulsión, línea ~35).
+
+---
+
 ## Puntos abiertos (a ratificar)
 
-Se llevan en el registro vivo **`docs/cuestiones_pendientes.md`** (única fuente de verdad, IDs CP-01 a CP-06). Cuando una cuestión se resuelve mediante una decisión de arquitectura, se cierra allí y se agrega/actualiza el ADR correspondiente en esta bitácora.
+Se llevan en el registro vivo **`docs/cuestiones_pendientes.md`** (única fuente de verdad). Cuando una cuestión se resuelve mediante una decisión de arquitectura, se cierra allí y se agrega/actualiza el ADR correspondiente en esta bitácora.

@@ -1,0 +1,29 @@
+%% Adquisicion determinista sin frenar la inferencia (cintura, core 1)
+%% Cadena timer -> IRQ -> DMA -> buffer, con la inferencia corriendo al lado
+%% Ref: ADR-014 (adquisicion), ADR-026 (IMU tick+DMA), ADR-024 rev (cores)
+flowchart LR
+
+    TIMER["Timer HW<br/>100 Hz (cada 10 ms)"]
+    IRQ{{"IRQ<br/>(interrupcion)"}}
+    DMA["DMA<br/>mueve los bytes sin CPU"]
+    SENS["IMU (I2C) / FSR (ADC)"]
+    BUF[("Buffer en RAM<br/>muestras + ventana de zancadas")]
+
+    subgraph CORE["Core 1 - computo (bloqueante)"]
+        direction TB
+        INF["Inferencia + features<br/>(corriendo)"]
+        PROC["Por zancada (~1 Hz):<br/>procesa la ventana -> score -> feedback"]
+        INF -.->|"al cerrar la zancada"| PROC
+    end
+
+    TIMER -->|"cada tick"| IRQ
+    IRQ -->|"arma la lectura y vuelve (~us)"| DMA
+    SENS -->|"bytes"| DMA
+    DMA -->|"escribe la muestra"| BUF
+    IRQ -. "preempta ~us; la inferencia sigue donde iba" .-> INF
+    BUF -->|"lee la ventana (~1 Hz)"| PROC
+
+    classDef acq fill:#e8f0fe,stroke:#3b6fd6,stroke-width:1px,color:#10233f;
+    classDef core fill:#fff4e6,stroke:#d68b2c,stroke-width:1px,color:#3f2a10;
+    class TIMER,IRQ,DMA,SENS,BUF acq;
+    class INF,PROC core;

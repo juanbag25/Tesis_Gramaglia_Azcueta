@@ -4,8 +4,8 @@ flowchart TB
 
     subgraph BORDE["PLANO DE BORDE - 3x Raspberry Pi Pico 2 W (C/C++)"]
         direction TB
-        PI["PLANTILLA IZQ<br/>MPU-6050 + 3 FSR + motor PWM<br/>100 Hz (ADC+DMA sobremuestreo -> decimacion)<br/>features por-pie + eventos IC/TO<br/>timestamp + seq por muestra"]
-        PD["PLANTILLA DER<br/>MPU-6050 + 3 FSR + motor PWM<br/>100 Hz (ADC+DMA sobremuestreo -> decimacion)<br/>features por-pie + eventos IC/TO<br/>timestamp + seq por muestra"]
+        PI["PLANTILLA IZQ<br/>MPU-6050 + 2 FSR (punta+talon) + motor PWM<br/>100 Hz (ADC+DMA sobremuestreo -> decimacion)<br/>features por-pie + eventos IC/TO<br/>timestamp + seq por muestra"]
+        PD["PLANTILLA DER<br/>MPU-6050 + 2 FSR (punta+talon) + motor PWM<br/>100 Hz (ADC+DMA sobremuestreo -> decimacion)<br/>features por-pie + eventos IC/TO<br/>timestamp + seq por muestra"]
         CI["UNIDAD CINTURA - HUB<br/>MPU-6050<br/>AP WiFi - maestro de sync (beacon+drift)<br/>fusion bilateral (simetria, double support)<br/>detector L/E - sensor de drift - uplink BLE"]
     end
 

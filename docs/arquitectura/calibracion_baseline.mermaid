@@ -1,0 +1,47 @@
+%% Calibracion / baseline por paciente: entrenamiento inicial personalizado (= captura operativa)
+%% Construye el modelo de normalidad (Mahalanobis mu/Sigma + baseline de los demas) y el umbral por paciente
+%% Ref: Vista 3 seccion 5 ; ADR-005 rev c (fases de captura) ; ADR-017/SPEC-04 (calibracion IMU) ; ADR-018 (skew-free)
+
+flowchart TB
+
+    subgraph PREP["1 - Preparacion (calibraciones fisicas)"]
+        direction TB
+        FSR["Curva fuerza-resistencia por-FSR<br/>(por hardware)"]
+        IMU["Alineacion del frame del IMU<br/>estatica (dejar quieto) + re-zero de giro en stance + pie-plano<br/>SPEC-04"]
+    end
+
+    subgraph SESION["2 - Sesion de calibracion (~100 zancadas de marcha normal/estable)"]
+        direction TB
+        MUE["Plantillas: muestreo 100 Hz + features por-pie<br/>captura operativa -> skew-free (ADR-018)"]
+        FUS["Cintura: fusion bilateral<br/>simetria, double support"]
+        SUB["Subir features del micro + crudo continuo<br/>-> host -> Supabase"]
+        MUE --> FUS --> SUB
+    end
+
+    subgraph BASE["3 - Construccion del baseline personalizado (entrenamiento inicial)"]
+        direction TB
+        MAHA["Mahalanobis: ajuste inicial de mu, Sigma"]
+        OTROS["Baseline de los demas modelos<br/>(clase E: AE denso, Isolation Forest)"]
+        UMBR["Umbral por paciente<br/>percentil ~99 (chi-cuadrado) de la calibracion"]
+        MAHA --> UMBR
+        OTROS --> UMBR
+    end
+
+    subgraph REG["4 - Registro y despliegue"]
+        direction TB
+        DB[("Supabase: tabla models<br/>patient_id, feature_set_version, metricas + artefacto")]
+        HUB["Baseline activo en la cintura (hub)<br/>habilita el modo edge"]
+        DB --> HUB
+    end
+
+    PREP --> SESION --> BASE --> REG
+    REG -.->|"drift (Mahalanobis) -> recalibracion / reentrenamiento"| RECAL["Ciclo de vida de modelos<br/>ver ciclo_de_vida_modelos.mermaid"]
+
+    classDef prep fill:#eef3ff,stroke:#3b6fd6,stroke-width:1px,color:#10233f;
+    classDef sesion fill:#eefcf3,stroke:#2fa35b,stroke-width:1px,color:#0f3320;
+    classDef base fill:#fff7ee,stroke:#d68b2c,stroke-width:1px,color:#3f2a10;
+    classDef reg fill:#f3eefe,stroke:#7a4fd6,stroke-width:1px,color:#221033;
+    class FSR,IMU prep;
+    class MUE,FUS,SUB sesion;
+    class MAHA,OTROS,UMBR base;
+    class DB,HUB reg;

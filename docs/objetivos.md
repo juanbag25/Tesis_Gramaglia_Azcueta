@@ -30,14 +30,17 @@ Desarrollar un **sistema de plantillas inteligentes bilaterales** para la **dete
 
 - **Personalización primero.** Un baseline por paciente supera ampliamente a los modelos poblacionales (evidencia: one-class personalizado AUC≈0,97 vs. ~55 % de un modelo global). La heterogeneidad inter-paciente en ACV es enorme.
 - **Bilateral.** La simetría inter-miembro es el diferencial clínico y se explota como familia de features.
-- **Edge / on-device.** Inferencia en el micro por latencia y privacidad; la nube/host sólo para el reentrenamiento pesado y la persistencia.
+- **Edge / on-device.** Inferencia en el micro por latencia y privacidad; el **host** infiere en tiempo real sólo si un modelo no entra en el micro (fallback por config); la nube, sólo reentrenamiento pesado y persistencia.
 - **Economía de features.** El *sweet spot* está en ~15–25 features bien elegidas; más features suele agregar ruido (Chen plateauó en 18, Brasiliano en 9).
 
-## 6. Enfoque de algoritmos (3 niveles / taxonomía L-E-W)
+## 6. Enfoque de algoritmos (taxonomía L/E/H/W)
+
+> **Ruteo de inferencia (model-agnostic, ADR-011 rev):** en tiempo real corre en el **micro (hub) si entra**; si no, en el **host**; nunca en el worker/nube. Cambiar micro→host es un **switch de config** (`inference_target`), sin reescritura. El **reentrenamiento** va al worker (disparado por drift), salvo los detectores triviales (clase L) que se reentrenan en el micro.
 
 - **Clase L (Local-Local):** inferencia y reentrenamiento en el micro, **dato a dato** (Mahalanobis con EMA, z-score/EWMA, probabilísticos simples). Mahalanobis además actúa como **sensor de drift**.
-- **Clase E (Edge + Worker):** inferencia en el micro (int8), reentrenamiento en el worker (autoencoder denso cuantizado).
-- **Clase W (Worker-heavy):** inferencia y/o reentrenamiento en el worker (LSTM autoencoder, Isolation Forest).
+- **Clase E (Edge + Worker):** inferencia en el micro, reentrenamiento en el worker (autoencoder denso int8, **Isolation Forest**).
+- **Clase H (Host):** inferencia en el host (celular/laptop) en tiempo real cuando el modelo no entra en la cintura; reentrenamiento en el worker.
+- **Clase W (Worker-only, offline):** inferencia/reentrenamiento en el worker, **sólo batch/offline** (análisis, re-scoring). El **LSTM AE** es E/H/W según dónde entre (profiling).
 
 ## 7. Validación (referencia)
 

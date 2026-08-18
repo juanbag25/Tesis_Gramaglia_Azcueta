@@ -1,0 +1,37 @@
+%% Esquema de ALIMENTACION - estado objetivo (celda directo a VSYS)
+%% Solo potencia. Las señales (I2C, ADC, PWM) van en la tabla de conexiones del documento.
+%% Tres dominios: entrada de sistema (VSYS) - riel de sensores (3V3) - motor (VSYS via NPN)
+%% Ref: esquema_alimentacion.md ; CP-19, CP-09, CP-01 ; ADR-014
+
+flowchart TB
+
+    USB["USB-C<br/><i>solo carga</i>"]
+    MOD["Modulo cargador<br/><b>OJO: 2.4 A -> limitar a &lt;=500 mA</b><br/>salida 5V: SIN USAR"]
+    CELL[("LiPo 102050<br/>3.7 V - 1000 mAh<br/>PCM 2 A integrado")]
+    SW["Switch de servicio<br/><i>corta el positivo</i>"]
+    VSYS["<b>VSYS - pin 39</b><br/>entrada del sistema<br/>1.8 a 5.5 V"]
+    REG["RT6150 buck-boost<br/><i>interno del Pico</i>"]
+    V33["<b>3V3 OUT - pin 36</b><br/>3.3 V fijos y regulados"]
+    IMU["MPU-6050<br/><i>VCC</i>"]
+    FSR["Divisores FSR<br/>punta + talon<br/><i>excitacion ratiometrica</i>"]
+    MOT["Motor vibrador<br/><i>via NPN + diodo flyback</i>"]
+    VBUS["<b>VBUS - pin 40</b><br/>NO CONECTAR NADA<br/><i>era de aca que salia el 5V</i>"]
+
+    USB -->|"5 V"| MOD
+    MOD -->|"B+ / B-"| CELL
+    CELL -->|"3.0 - 4.2 V"| SW
+    SW -->|"positivo de la celda"| VSYS
+    SW -->|"alimentacion del motor"| MOT
+    VSYS --> REG
+    REG --> V33
+    V33 -->|"riel de sensores"| IMU
+    V33 -->|"riel de sensores"| FSR
+
+    classDef bat fill:#eefcf3,stroke:#2fa35b,stroke-width:1px,color:#0f3320;
+    classDef pico fill:#eef3ff,stroke:#3b6fd6,stroke-width:1px,color:#10233f;
+    classDef sens fill:#fff7ee,stroke:#d68b2c,stroke-width:1px,color:#3f2a10;
+    classDef bad fill:#ffecec,stroke:#d64545,stroke-width:2px,color:#3f1010,stroke-dasharray: 5 3;
+    class USB,MOD,CELL,SW bat;
+    class VSYS,REG,V33 pico;
+    class IMU,FSR,MOT sens;
+    class VBUS bad;

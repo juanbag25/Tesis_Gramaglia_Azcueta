@@ -6,7 +6,7 @@
 
 Sistema de **plantillas inteligentes bilaterales** para **detección personalizada de anomalías de marcha en pacientes post-ACV**, con **feedback vibrotáctil en tiempo real** e **inferencia en el borde (edge)**. Tesis de maestría (ITBA).
 
-**Estado actual:** arquitectura definida (v1.0). Sin código todavía. Próximo paso: roadmap de implementación por fases.
+**Estado actual:** arquitectura definida y reorganizada en 4 vistas; en fase de **diseño detallado** — specs de algoritmos por backlog (SPEC-01 a SPEC-09 hechas). Decisiones en ADR-000 a 028 (últimas: muestreo/lectura del IMU ADR-026, feedback vibrotáctil ADR-027/SPEC-09, pairing BLE sin botón ADR-028). Sin código todavía. Más adelante: roadmap de implementación.
 
 ## Orden de lectura recomendado (onboarding)
 
@@ -28,15 +28,15 @@ Sistema de **plantillas inteligentes bilaterales** para **detección personaliza
 - **Topología:** plantillas ↔ cintura por **WiFi** (cintura = **Access Point**); cintura ↔ host por **BLE** (desde la mínima). La cintura es el **hub de fusión y decisión** (las plantillas calculan sus features por-pie).
 - **Transporte:** canal rápido-tolerante (**UDP** / notificaciones GATT) para el stream + canal confiable (**TCP** / writes con ACK) para control y modelos.
 - **Sincronización:** backbone de reloj (**timestamp + secuencia por muestra + beacon periódico + corrección de drift**), en capa de aplicación (portable WiFi↔BLE); emparejado de zancadas por evento (heel-strike/IC) como **refinamiento**.
-- **Cómputo de features distribuido:** cada plantilla calcula sus features **por-pie** (en ambos modos); la cintura hace la **fusión bilateral** (simetría, double support desde eventos). Los modos difieren en qué se transmite/almacena — *captura* (features + **crudo continuo** → host, para dataset) y *edge* (features + eventos en vivo + **crudo por snippet ante anomalía**). **Única definición de features compartida** plantilla↔cintura↔worker.
+- **Cómputo de features distribuido:** cada plantilla calcula sus features **por-pie**; la cintura hace la **fusión bilateral** (simetría, double support desde eventos). **Captura por fases (ADR-005 rev c):** *captura exploratoria* = crudo-solo (features off-device para explorar/seleccionar el set); *captura operativa* (post-congelamiento; incl. calibración/baseline) = features del micro + **crudo continuo** (entrenar skew-free + validar paridad sobre ese set nuevo); *edge* = features + eventos en vivo + **crudo por snippet ante anomalía**. El micro calcula features en operativa y edge, **no** en la exploratoria. **Única definición de features compartida** plantilla↔cintura↔worker.
 - **Muestreo determinístico (100 Hz):** ADC disparado por hardware + DMA con **sobremuestreo (~1 kHz) y decimación** a 100 Hz (mejora SNR del FSR); IMU leído en el tick maestro; **timestamp + secuencia por muestra**; core dedicado a adquisición. Todo interno al RP2350, **sin componentes extra en el PCB**.
 - **Persistencia:** **Supabase** (PostgreSQL + TimescaleDB + object storage + auth). Supabase **no entrena**; el entrenamiento corre en un worker (laptop en mínima, nube en máxima).
 - **Modelos (taxonomía L/E/H/W):** cada modelo declara su clase en el registry (`inference_target ∈ {hub, host, worker}`).
   - **L (Local-Local):** infiere y reentrena en la cintura, dato a dato (Mahalanobis EMA, probabilísticos simples).
-  - **E (Edge+Worker):** infiere en la cintura (int8), reentrena en el worker (autoencoder denso).
+  - **E (Edge+Worker):** infiere en la cintura, reentrena en el worker (autoencoder denso int8, **Isolation Forest**).
   - **H (Host):** infiere en el host (celular/laptop) en tiempo real cuando el modelo no entra en la cintura; reentrena en el worker.
-  - **W (Worker-heavy):** infiere/reentrena en el worker, **batch/offline** (LSTM AE, Isolation Forest) — nunca en tiempo real.
-  - **Inferencia en tiempo real (feedback): en `hub` o `host`, nunca en el worker/nube.** Mahalanobis también es **sensor de drift** que dispara el reentrenamiento de E/H/W.
+  - **W (Worker-only, offline):** infiere/reentrena en el worker, **batch/offline** — nunca en tiempo real (análisis/reportes, re-scoring). El LSTM AE es E/H/W según dónde entre; IF es E.
+  - **Inferencia en tiempo real (feedback): en `hub` o `host`, nunca en el worker/nube.** Default = micro (hub); si no entra, host — cambiar `hub`→`host` es un **switch de config** (`inference_target`, model-agnostic, sin reescritura; host con runtime espejo). Mahalanobis también es **sensor de drift** que dispara el reentrenamiento de E/H/W.
 - **Firmware:** **C/C++ con el Pico SDK** (no Arduino IDE).
 - **OTA:** pesos + firmware completo, esquema **A/B** con checksum y rollback.
 
@@ -78,13 +78,15 @@ tesis/
 
 - **Idioma de la documentación:** español (Argentina).
 - **Cintura = AP** y **hub de fusión/decisión**: es un invariante del sistema (permanente mínima→máxima). Las plantillas calculan sus features por-pie; la cintura fusiona (simetría, double support), infiere y decide el feedback.
-- **Definición de features única y compartida** PC↔micro, versionada por `feature_set_version`. Nunca dupliques fórmulas divergentes.
+- **Definición de features única y compartida** PC↔micro, versionada por `feature_set_version`. Nunca dupliques fórmulas divergentes. La paridad se **garantiza** con tests C↔Python en CI y entrenando con las features del micro (ADR-018, anti *train/serve skew*).
 - **Sincronización a nivel de aplicación** (portable WiFi↔BLE): no la ates a un transporte.
 - **El registry declara la clase de cada modelo** (L/E/W): no hardcodees el ruteo.
 - **Personalización primero:** baseline por paciente; evita modelos poblacionales salvo justificación.
 - **Datos de salud:** cifrado en tránsito/reposo, RLS por paciente, `external_code` anónimo; minimiza PII.
 
 ## Flujo de trabajo para agentes (definición de "hecho")
+
+> **Regla de interacción (con Juan) — explicar y consultar ANTES de decidir.** Ante cualquier decisión de diseño/arquitectura, primero exponé el problema, las **opciones con pros/cons** y una recomendación, y **esperá la confirmación de Juan** antes de escribir ADRs/specs o editar docs con una decisión ya tomada. No avances a la escritura sin ese OK. (Registrado 2026-07-19, tras tomar ADR-019/SPEC-07 sin consultar.)
 
 Al completar una tarea significativa:
 
@@ -97,7 +99,7 @@ Al completar una tarea significativa:
 
 ## Cuestiones pendientes
 
-El registro vivo está en **`docs/cuestiones_pendientes.md`** (única fuente de verdad). Ahí se agregan las cuestiones abiertas y se sacan a medida que se resuelven (ver el flujo de trabajo, paso 1). Actualmente abiertas: CP-01, CP-03 a CP-12 (tercer FSR/GP28, dónde detectar el IC, rigor de seguridad, esquema de `feature_vectors`, proveedor del worker, lectura del IMU, modularidad de FSR/ADC, energía/batería, patrones de feedback, reconciliación anteproyecto/marco, modularidad de features). CP-02 (cintura-hub vs features-en-plantilla) quedó **resuelta** a favor de features distribuidas por-pie.
+El registro vivo está en **`docs/cuestiones_pendientes.md`** (única fuente de verdad). Ahí se agregan las cuestiones abiertas y se sacan a medida que se resuelven (ver el flujo de trabajo, paso 1). Actualmente abiertas: CP-01, CP-04, CP-05, CP-06, CP-08, CP-09, CP-11, CP-15, CP-16 (FSR 2 hoy punta/talón, rigor de seguridad, esquema de `feature_vectors`, proveedor del worker, modularidad de FSR/ADC, energía/batería, reconciliación anteproyecto/marco, interfaces de mínima, detección compu/celu). **Resueltas:** CP-02 (features distribuidas por-pie), CP-03 (detección de IC en la plantilla), CP-07 (lectura del IMU: tick maestro + DMA — ADR-026), CP-10 (patrones de feedback: monitor+alerta por ventana — ADR-027/SPEC-09), CP-12 (mecanismo de modularidad de features), CP-13 (fases de captura), CP-14 (pairing BLE sin botón — ADR-028) y CP-17 (RTOS bare-metal ADR-025; rate del IMU de cintura 100 Hz+DMA ADR-026).
 
 ## Glosario rápido
 

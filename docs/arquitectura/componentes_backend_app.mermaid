@@ -1,0 +1,56 @@
+%% Componentes y flujos del backend / aplicacion (Vista 4)
+%% Que hace cada pieza fuera de los micros y como se conectan
+%% Ref: 4_vista_backend_app.md ; ADR-006/007/008/009/012/031/032/033/034
+
+flowchart TB
+
+    subgraph BORDE["Borde (Vista 2)"]
+        CI["Cintura (hub)<br/>features + eventos + scores<br/>periferico BLE"]
+    end
+
+    subgraph HOST["Host - laptop (minima) / celular (maxima)"]
+        direction TB
+        ING["Ingesta BLE + buffer local<br/>(bleak)"]
+        UI["UI de control (FastAPI)<br/>paciente - sesion - modo - estado - OTA"]
+        MIR["Runtime espejo<br/>(inferencia clase H)"]
+        PUE["Puente OTA"]
+    end
+
+    subgraph SB["Supabase - sistema de registro"]
+        direction TB
+        DB[("PostgreSQL + TimescaleDB<br/>metadata - gait_events<br/>feature_vectors (jsonb) - anomaly_scores")]
+        OBJ[("Object Storage<br/>crudo Parquet - modelos - firmware")]
+        AUTH["Auth + RLS por paciente<br/>tabla patient_access"]
+        REG["Registry de modelos<br/>models - deployments - retrain_jobs"]
+    end
+
+    WK["Worker de reentrenamiento<br/>laptop (min) / nube (max)<br/>entrena E/H/W + cuantiza int8<br/>service_role"]
+    DASH["Dashboard clinico (maxima)<br/>web SOLO LECTURA<br/>evolucion - anomalias - WBA/PSV - Z-scores"]
+
+    CI -->|"BLE: notif (stream) + writes ACK (control)"| ING
+    UI -->|"comando de modo / config de feedback"| CI
+    ING --> DB
+    ING --> OBJ
+    UI --> DB
+    ING -.->|"clase H"| MIR
+    MIR -.->|"score"| CI
+
+    DB -->|"flag de drift -> encola job"| REG
+    REG -->|"job + datos"| WK
+    WK -->|"artefacto int8 + version + metricas"| OBJ
+    WK -->|"registrar version"| REG
+    REG -->|"modelo nuevo disponible"| PUE
+    OBJ -->|"descarga del artefacto"| PUE
+    PUE -->|"OTA A/B por BLE"| CI
+
+    AUTH -.->|"filtra filas por paciente"| DB
+    DB -->|"consulta con RLS"| DASH
+
+    classDef borde fill:#eef3ff,stroke:#3b6fd6,stroke-width:1px,color:#10233f;
+    classDef host fill:#fff7ee,stroke:#d68b2c,stroke-width:1px,color:#3f2a10;
+    classDef sb fill:#eefcf3,stroke:#2fa35b,stroke-width:1px,color:#0f3320;
+    classDef ext fill:#f3eefe,stroke:#7a4fd6,stroke-width:1px,color:#221033;
+    class CI borde;
+    class ING,UI,MIR,PUE host;
+    class DB,OBJ,AUTH,REG sb;
+    class WK,DASH ext;
