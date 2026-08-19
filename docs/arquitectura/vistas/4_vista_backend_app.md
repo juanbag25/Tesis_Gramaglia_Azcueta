@@ -2,7 +2,7 @@
 
 > **Nivel de abstracción:** todo lo que vive **fuera de los micros** — persistencia, worker de reentrenamiento, app host (ingesta + UI de control) y dashboard clínico. No entra en internals de firmware (Vista 2) ni en la definición de features/modelos (Vista 3).
 >
-> **Estado:** consolidada — aquí vive la **definición canónica** del backend y las aplicaciones. El maestro (§11–§13) mantiene además la vista general.
+> **Estado:** consolidada — aquí vive la **definición canónica** del backend y las aplicaciones. El maestro (§10–§12) mantiene una vista general breve y apunta acá; el mapa de entidades está en su §11.
 >
 > **Regla de layering:** los modelos se **definen** en la Vista 3 y el backend los **entrena, versiona y sirve**; el firmware (Vista 2) los ejecuta.
 
@@ -27,7 +27,7 @@
 **Blobs:** `raw_blobs` (crudo continuo en Parquet) y `anomaly_raw_snippets` (crudo puntual retenido ante anomalía).
 **Registry y ciclo de vida:** `models` (clase L/E/H/W, `inference_target`, `retrain_target`, versión, linaje, métricas, artefacto), `model_deployments` (qué corre en cada micro), `firmware_images` (OTA A/B), `retrain_jobs` (orquestación).
 
-**DDL:** **`src/db/schema.sql`** es la **fuente única** del esquema (ADR-037) — incluye tablas, índices, RLS y políticas. El maestro §11.3 mantiene sólo el mapa de entidades y apunta ahí. Diagrama ER: `../esquema_base_de_datos.mermaid`.
+**DDL:** **`src/db/schema.sql`** es la **fuente única** del esquema (ADR-037) — incluye tablas, índices, RLS y políticas. El maestro §11 mantiene sólo el mapa de entidades y apunta ahí. Diagrama ER: `../esquema_base_de_datos.mermaid`.
 
 ### 1.2 `feature_vectors` — jsonb + columnas generadas [ADR-031, resuelve CP-05]
 

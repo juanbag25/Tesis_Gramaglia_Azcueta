@@ -10,7 +10,7 @@
 
 ## 0. Estructura de la documentación (vistas)
 
-Esta arquitectura se documenta en **cuatro vistas** a distinto nivel de abstracción, más una capa transversal de tecnología. Este documento maestro funciona como **índice y overview**: mantiene lo transversal (objetivos, resumen, objetivos de rendimiento, seguridad, evolución mínima→máxima, resumen de decisiones) y enlaza las vistas, donde vive el detalle.
+Esta arquitectura se documenta en **cuatro vistas** a distinto nivel de abstracción, más una capa transversal de tecnología. Este documento maestro funciona como **índice y overview**: da la foto completa del sistema en una lectura, mantiene lo genuinamente transversal (alcance, evolución mínima→máxima, riesgos, mapa de entidades) y **apunta a las vistas, donde vive el detalle**. No duplica el contenido de las vistas ni el índice de la bitácora (**ADR-039**).
 
 | Vista | Contenido | Archivo |
 |---|---|---|
@@ -22,7 +22,7 @@ Esta arquitectura se documenta en **cuatro vistas** a distinto nivel de abstracc
 
 **Regla de layering:** cada algoritmo/feature se **define una vez en la Vista 3** (fórmula, parámetros, versionado) y se **ejecuta en la Vista 2** (firmware) y en el worker.
 
-> **Nota:** la migración del contenido detallado desde las secciones §1–§17 de abajo hacia las vistas es **incremental**; hasta completarse, esas secciones siguen siendo la fuente, y cada vista indica qué sección del maestro le corresponde.
+> **Dónde vive qué.** Las **cuatro vistas** son la fuente canónica de su dominio. El **esquema ejecutable** de la base es `src/db/schema.sql` (ADR-037). El **qué y el porqué de cada decisión** están en `../decisiones/bitacora_decisiones.md`, que tiene su propio índice. Lo que queda abierto, en `../cuestiones_pendientes.md`. Este documento **no mantiene una segunda copia de nada de eso**: si una sección de acá y una vista discrepan, **manda la vista**.
 
 ---
 
@@ -65,26 +65,14 @@ Migrar la infraestructura de "entorno controlado con computadora cerca" a **uso 
 
 ## 3. Hardware
 
-| Nodo | Cómputo | Sensores | Actuador | Rol |
-|---|---|---|---|---|
-| **Plantilla izquierda** | Raspberry Pi Pico 2 W (RP2350, Cortex-M33 @150 MHz, 520 KB SRAM, WiFi+BLE CYW43439) | MPU-6050 (IMU 6-DOF, I²C) + **2× FSR** (ADC0-1; punta+talón; 3º/4º ML a futuro) | Motor vibrador (PWM) | Sensado del pie izq + feedback |
-| **Plantilla derecha** | Ídem | Ídem | Motor vibrador (PWM) | Sensado del pie der + feedback |
-| **Unidad de cintura** | Raspberry Pi Pico 2 W | MPU-6050 | — | **Hub**: AP WiFi, maestro de sync, fusión bilateral, detección, uplink BLE |
+Tres nodos, todos **Raspberry Pi Pico 2 W** (RP2350, Cortex-M33 @150 MHz, 520 KB SRAM, WiFi+BLE CYW43439), muestreando a **100 Hz**:
 
-**Muestreo:** 100 Hz. **Canales por pie:** **8 hoy** (accel XYZ, gyro XYZ, 2× FSR); el formato reserva para **N FSR** (CP-08). La cintura suma su propio IMU (6 canales) como referencia de tronco/pelvis.
+- **Dos plantillas** (una por pie): IMU **MPU-6050** + **2 FSR** (punta y talón; el 3º/4º medial-lateral en la próxima revisión del PCB, con mux analógico — ADR-023 / ADR-041) + **motor vibrador** PWM.
+- **Una unidad de cintura**: IMU MPU-6050 a la altura de ~L4-L5. Es el **hub**: AP WiFi, maestro de sincronización, fusión bilateral, detección y uplink BLE.
 
-**Pinout de referencia (plantilla)** — hoy **2 FSR conectados**: **ADC0/GP26 (punta)** y **ADC1/GP27 (talón)**. El 3º/4º (**medial/lateral**, para COP_ML) van a **ADC2/GP28** (+ otro) en una etapa posterior (**ADR-023**; CP-01/CP-08).
+**Consideración de radio:** el CYW43439 es un chip único WiFi+BLE con **una sola antena** en 2,4 GHz. La cintura debe sostener **WiFi-AP + BLE simultáneos** por **coexistencia** (time-division). Es un requisito permanente de la máxima y se asume desde la mínima (**§15**, Riesgos).
 
-| GPIO | Pin | Modo | Conectado a |
-|---|---|---|---|
-| GP20 | 26 | I²C0 SDA | IMU MPU-6050 |
-| GP21 | 27 | I²C0 SCL | IMU MPU-6050 |
-| GP26 | 31 | ADC0 | FSR 1 — **punta** (divisor) |
-| GP27 | 32 | ADC1 | FSR 2 — **talón** (divisor) |
-| GP28 | 34 | ADC2 | FSR 3 — medial/lateral (divisor) *(a futuro — ADR-023)* |
-| GP18 | 24 | PWM | Base NPN → motor vibrador (con diodo flyback) |
-
-**Consideración de radio:** el CYW43439 es un chip único WiFi+BLE con **una antena** en banda 2.4 GHz. La cintura debe sostener **WiFi-AP (a las plantillas) + BLE (al host)** de forma simultánea mediante **coexistencia** (time-division del radio). Esta coexistencia es un requisito permanente de la máxima y se asume desde la mínima (ver §12, Riesgos).
+> **Detalle** (tabla de nodos, canales por pie, pinout de referencia): **Vista 1 §1**. Estado del PCB y checklist de la próxima revisión: `esquema_alimentacion.md`.
 
 ---
 
@@ -92,18 +80,16 @@ Migrar la infraestructura de "entorno controlado con computadora cerca" a **uso 
 
 El sistema se organiza en cuatro planos:
 
-1. **Plano de sensado y borde** (los 3 micros): adquisición a 100 Hz, sincronización, detección de eventos, cálculo de features (modo edge), inferencia local (clases L/E) y feedback vibrotáctil.
+1. **Plano de sensado y borde** (los 3 micros): adquisición a 100 Hz, sincronización, detección de eventos, cálculo de features (en captura operativa y en edge), inferencia local (clases L/E) y feedback vibrotáctil.
 2. **Plano de transporte:** WiFi (plantillas↔cintura) y BLE (cintura↔host), cada uno con un **canal rápido-tolerante** (stream) y un **canal confiable** (control/modelos).
-3. **Plano de host y cómputo:** laptop (mínima) o celular + worker en la nube (máxima). Ingesta, entrenamiento/reentrenamiento pesado, orquestación.
+3. **Plano de host y cómputo:** laptop (mínima) o celular + worker en la nube (máxima). Ingesta, entrenamiento pesado, orquestación.
 4. **Plano de persistencia:** Supabase (PostgreSQL + TimescaleDB + object storage + auth), que actúa como **sistema de registro** de datos, features, scores y modelos.
-
-El diagrama detallado de topología y flujos está en `diagrama_arquitectura.mermaid`; el esquema de la base de datos en `esquema_base_de_datos.mermaid`. Ambos se reproducen dentro de este documento (§9 y §10).
 
 ```mermaid
 flowchart LR
     subgraph BORDE["Plano de borde (3× Pico 2 W)"]
-        PI["Plantilla IZQ\nIMU+3FSR+motor\n100 Hz"]
-        PD["Plantilla DER\nIMU+3FSR+motor\n100 Hz"]
+        PI["Plantilla IZQ\nIMU+2FSR+motor\n100 Hz"]
+        PD["Plantilla DER\nIMU+2FSR+motor\n100 Hz"]
         CI["Unidad CINTURA\nIMU · Hub\nAP · Sync · Detector"]
     end
     subgraph HOST["Plano host + cómputo"]
@@ -130,207 +116,104 @@ flowchart LR
     LT -- "OTA pesos/firmware" --> CI
 ```
 
----
-
-## 5. Topología de red y conectividad
-
-### 5.1 Enlace plantillas ↔ cintura — WiFi, cintura como Access Point
-
-La cintura crea su propia red WiFi (SSID propio) y actúa como **Access Point (AP)**; las dos plantillas se conectan como **estaciones (STA)**. Este enlace es **permanente**: no cambia entre mínima y máxima. La cintura es, por diseño, el punto de convergencia de ambos pies, lo que la convierte en el lugar natural para la fusión bilateral (§8).
-
-**Justificación:** una topología en estrella de un solo salto (single-hop star) minimiza la complejidad, evita depender de infraestructura externa (funciona en cualquier lugar) y coloca la lógica de fusión donde los datos ya coinciden.
-
-### 5.2 Enlace cintura ↔ host — BLE desde la mínima
-
-La cintura expone un **servidor GATT BLE**; el host (laptop en mínima, celular en máxima) es el **central** que se conecta. Se adopta BLE **desde la mínima** (no WiFi) porque:
-
-- El firmware BLE de la cintura es **idéntico** mande a laptop o a celular (el periférico es agnóstico al central), de modo que **se reutiliza al 100 %** en la máxima.
-- Se enfrenta **temprano** el riesgo técnico central de la máxima: la coexistencia WiFi-AP + BLE en un solo chip.
-- El caudal de datos (~5 KB/s incluyendo timestamps) está **muy por debajo** de lo que BLE soporta, por lo que no hay penalidad de ancho de banda.
-
-**Restricción de diseño:** el firmware se dimensiona a las **restricciones del celular** desde el inicio (MTU BLE ~185 B típico en iOS, límites de connection-interval), para no sobre-ajustar a la BLE más permisiva de una laptop.
-
-**Beneficio colateral:** como el uplink ya no ocupa el adaptador WiFi del host, la **laptop conserva internet** y puede empujar datos a Supabase sin conflicto.
-
-### 5.3 Modelo de conectividad (tipo auriculares BLE)
-
-Los micros **nunca se conectan a WiFi de internet**: el único WiFi es el enlace privado plantillas↔cintura (cintura = AP, sin internet). La cintura habla con su host (compu/celu) sólo por **BLE**; el host tiene internet y empuja a Supabase, y el **OTA** va por BLE. No hay provisioning de redes de infraestructura. El **pairing cintura↔host** (sin botón) se resuelve en **ADR-028**: gesto de sacudir la cintura ~5 s con las plantillas quietas + passkey fijo impreso + bond list multi-host. → detalle en Vista 1 §3.3.
+> Diagrama fuente: `diagrama_arquitectura.mermaid`. Otros diagramas: `esquema_base_de_datos`, `ciclo_de_vida_modelos`, `adquisicion_dma_irq`, `calibracion_baseline`, `componentes_backend_app`, `esquema_alimentacion`.
 
 ---
 
-## 6. Transporte y protocolos
+## 5. Topología y transporte
 
-Principio general: **dos canales por enlace**, uno optimizado para latencia y otro para integridad.
+**Plantillas ↔ cintura: WiFi, cintura como Access Point** [ADR-001]. Estrella de un solo salto, sin infraestructura externa, con la fusión donde los datos ya convergen. Enlace permanente: no cambia entre mínima y máxima.
 
-| Enlace | Canal rápido-tolerante (stream de 100 Hz) | Canal confiable (control, modelos, config) |
+**Cintura ↔ host: BLE desde la mínima** [ADR-002]. La cintura expone un servidor GATT; el host (laptop o celular) es el central. Se adopta BLE desde el inicio porque el firmware de la cintura queda **idéntico** en ambos horizontes, se enfrenta **temprano** el riesgo de coexistencia, y el caudal (~5 KB/s) sobra.
+
+**Modelo de conectividad tipo auriculares** [ADR-028]. Los micros **nunca se conectan a WiFi de internet**: el único WiFi es el enlace privado plantillas↔cintura. El host tiene internet y empuja a Supabase; el OTA va por BLE. Sin provisioning de redes. Pairing cintura↔host sin botón: gesto de sacudida + passkey fijo + bond list multi-host.
+
+**Dos canales por enlace** [ADR-003]: rápido-tolerante para el stream (**UDP** / notificaciones GATT) + confiable para control y modelos (**TCP** / writes con ACK). A 100 Hz, perder una muestra es irrelevante; el *head-of-line blocking* de TCP no lo es.
+
+> **Detalle** (justificaciones, restricciones del celular, formato de paquete): **Vista 1 §3 y §4**.
+
+---
+
+## 6. Sincronización temporal
+
+La simetría inter-miembro —el diferencial clínico del sistema— exige relacionar ambos pies sobre una **misma línea de tiempo a nivel de muestra**. El mecanismo es un **backbone de reloj en la capa de aplicación** (portable WiFi↔BLE): timestamp + nº de secuencia por muestra, **beacon** periódico emitido por la cintura, y **corrección de drift** por regresión lineal (offset + skew) [ADR-004].
+
+**El backbone es el único mecanismo de sincronización.** El emparejado de zancadas por evento **IC** usa el reloj **ya sincronizado** para asociar la zancada izquierda con la derecha: no sincroniza relojes ni compensa drift, y **no es un fallback** si el backbone falla. Un IC anómalo es *señal de anomalía* y se mide como feature; usarlo como marca temporal no entra en conflicto con eso.
+
+> **Detalle** (mecanismo completo, aclaración conceptual): **Vista 1 §5**. **Implementación** (beacon en firmware, regresión de drift): **Vista 2 §4**.
+
+---
+
+## 7. Pipeline de datos y cómputo
+
+**Cómputo distribuido** [ADR-005]: cada **plantilla** calcula sus **features por-pie** y detecta sus eventos **IC/TO/MS**; la **cintura** hace la **fusión bilateral** (simetría, double support), calcula las features de tronco, corre el detector y decide el feedback. Definición de features **única y compartida**, versionada por `feature_set_version`.
+
+**Tres fases de operación** [ADR-005 rev c]:
+
+| Fase | Qué sube | Para qué |
 |---|---|---|
-| **Plantillas ↔ cintura (WiFi)** | **UDP** con nº de secuencia + timestamp por muestra | **TCP** |
-| **Cintura ↔ host (BLE)** | **Notificaciones GATT** (sin ACK) | **Writes con respuesta / Indicaciones** (con ACK) |
+| **Exploratoria** | Crudo continuo, **sin features del micro** | Ingeniería y selección de features, barrido de ventanas y algoritmos → congela un `feature_set_version` |
+| **Operativa** (incluye calibración/baseline) | **Features del micro + crudo** | Entrenar *skew-free* (ADR-018) y validar paridad C↔Python sobre ese set nuevo |
+| **Edge** (uso real) | Features + eventos + scores en vivo; **crudo sólo por snippet ante anomalía** | Operación |
 
-**Justificación (UDP para el stream):** a 100 Hz, perder una muestra ocasional es irrelevante (la siguiente llega en 10 ms), mientras que la retransmisión de TCP introduce *head-of-line blocking* — picos de latencia justo en el peor momento de un flujo en vivo. UDP con nº de secuencia + timestamp permite detectar y tolerar huecos sin frenar el flujo. **TCP para control** porque la transferencia de pesos/firmware exige que lleguen **todos los bytes** en orden. Sobre BLE el mismo principio se materializa con **notificaciones** (análogo a UDP) y **writes con ACK/indicaciones** (análogo a TCP).
+**Adquisición determinística a 100 Hz** [ADR-014 / ADR-026]: ADC disparado por hardware + DMA con sobremuestreo ~1 kHz y decimación ×10 (que además mejora el SNR del FSR); IMU leído en el **tick maestro por DMA** (un timestamp por tupla FSR+IMU). Todo interno al RP2350, sin componentes extra en el PCB.
 
-**Formato de paquete de muestra (stream):** `[device_id | seq (uint32) | t_device (uint32, µs) | ax ay az gx gy gz (int16) | fsr1 fsr2 fsr3 (uint16)]`. El `seq` y `t_device` son la base de la sincronización (§7) y de la detección de pérdidas.
+**Feedback vibrotáctil** [ADR-027 / SPEC-09]: el detector corre en la cintura y el motor está en la plantilla, así que el enlace es **bidireccional**. Es **monitoreo y alerta, no corrección**: score designado sobre una **ventana de zancadas** → anomalía sostenida → 3 bandas per-paciente → alerta escasa.
 
----
-
-## 7. Sincronización temporal
-
-La sincronización es crítica porque la **simetría inter-miembro** —el diferencial clínico del sistema— exige relacionar lo que ocurre en ambos pies sobre una **misma línea de tiempo a nivel de muestra**. Muchas features se calculan sobre **ventanas deslizantes de la señal bilateral** o requieren **simultaneidad** (p. ej. *double support* = lapso en que ambos pies tocan el piso a la vez; velocidad y cruces por cero del COP-ML; LDLJ; entropías; PSD). El emparejado por evento por sí solo **no** alcanza para estas features.
-
-### 7.1 Backbone de reloj (mecanismo primario)
-
-Se adopta un **backbone fuerte**, implementado en la **capa de aplicación** (por lo tanto **portable entre WiFi y BLE** sin cambios):
-
-1. **Timestamp + nº de secuencia por muestra:** cada plantilla sella cada muestra con su propio reloj monotónico y un contador. La alineación se hace por el **instante de generación** del dato, no por el de llegada, de modo que un paquete demorado (jitter) igual cae en su lugar.
-2. **Beacon de sincronización periódico:** la cintura emite un mensaje de referencia (estilo *Reference Broadcast* / sync a nivel de aplicación sobre BLE, documentado en la literatura con precisión de decenas de µs). Las plantillas expresan sus timestamps en el "tiempo de cintura".
-3. **Corrección de drift por regresión lineal:** el reloj de cada nodo se modela como recta (offset + skew) contra la referencia y se corrige. Esto compensa el drift típico de cristal (~±0,2 ms/min).
-
-**Problema que resuelve:** *offset* (relojes que arrancan en ceros distintos) y *skew/drift* (cristales que corren a ritmos algo distintos). Es el enfoque alineado con productos comparables (p. ej. Moticon mantiene la sincronización de las plantillas durante toda la grabación) y con la literatura de WBSN.
-
-### 7.2 Emparejado por evento (capa de refinamiento, no primaria)
-
-Sobre el backbone de reloj, se **empareja zancadas por eventos de contacto inicial (IC)** — el instante en que el pie empieza a cargar (detectado por umbral de FSR, respaldado por el pico del IMU), **no** un "talón primero" prolijo. Esto:
-
-- Provee el **marcador biomecánico de zancada**; sobre el timeline común (backbone), los tiempos de IC de cada pie **asocian la zancada izq↔der** para la simetría **por zancada** (Symmetry Index).
-- **No sincroniza relojes ni compensa el drift** (de eso se encarga el backbone): usa el reloj **ya sincronizado**. Con los relojes sincronizados (beacon) se emparejan las zancadas; el IC no sincroniza nada.
-- Cada pie se segmenta con su **propia** señal (un pie anómalo no ensucia la segmentación del otro).
-
-**Nota conceptual importante:** el evento IC **no sincroniza relojes** — empareja *zancadas*. La sincronización de reloj (backbone) es la que ordena las muestras de ambos pies para las ventanas y la simultaneidad. El IC es refinamiento para la simetría por zancada. Además, el IC ya se detecta para las features espacio-temporales (stance, swing, double support, loading rate, orientación en IC/toe-off), por lo que reutilizarlo para el emparejado es **gratuito**.
-
-**Aclaración sobre patología:** un IC anómalo (reducido, ausente, demorado, asimétrico) **es parte de la señal de anomalía** y se mide como feature; usar el IC como marca temporal (sólo su índice) no entra en conflicto con medir su morfología (calidad del contacto) como feature de detección.
+> **Detalle:** definición de features y algoritmos → **Vista 3**; ejecución en firmware (adquisición, eventos, cores, inferencia, OTA) → **Vista 2** y `vistas/2_specs_algoritmos_firmware.md`.
 
 ---
 
-## 8. Pipeline de datos y cómputo
+## 8. Modelos y Machine Learning
 
-### 8.1 Cómputo distribuido de features
+La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en el registry y el runtime rutea inferencia y reentrenamiento según esa declaración [ADR-011 rev].
 
-El cálculo de features está **distribuido** para repartir cómputo entre los micros (resuelve CP-02):
-
-- **Cada plantilla** calcula sus **features por-pie** (bloques A, B, C, E, F, G, H, sobre su propia señal) y detecta sus **eventos IC/TO**, con una **única definición de features compartida** plantilla↔cintura↔worker, versionada por `feature_set_version`. **Corre en captura operativa y en edge** — no en la captura exploratoria (§8.1.1).
-- **La cintura** hace la **fusión bilateral**: features de simetría (bloque D, comparando el feature-por-pie izq vs der) y **double support** (solapamiento de los intervalos [IC, TO] de ambos pies, calculado a partir de los **eventos** ya alineados por el backbone de sync — no requiere el crudo de ambos pies co-localizado). Corre el detector y decide el feedback.
-
-#### 8.1.1 Fases de operación (dónde se calculan las features)
-
-Lo que se calcula on-device **depende de la fase** (ADR-005 rev c). Hay tres fases con propósitos distintos; lo que cambia respecto de versiones previas es que **la captura exploratoria es crudo-solo** (el micro no calcula features hasta que el feature set esté congelado):
-
-- **Captura exploratoria** (investigación, one-time): se sube **sólo crudo continuo** → host → DB/object storage. Las features se calculan **off-device (Python)** para ingeniería/selección de features y para barrer tamaños de ventana y algoritmos. Salida: un `feature_set_version` congelado. El crudo es el "seguro" que permite re-extraer con cualquier definición.
-- **Captura operativa** (post-congelamiento; incluye la **calibración/baseline por paciente**): las plantillas calculan sus features por-pie y se suben **features del micro + crudo continuo**. Las **features del micro** entrenan los modelos desplegables (*skew-free* por construcción, ADR-018); la **paridad** se valida sobre **este crudo nuevo** (re-extracción Python vs feature del micro, misma zancada), **sin reprocesar el crudo exploratorio**. BW del crudo sobre WiFi despreciable.
-- **Modo edge** (uso real): las plantillas envían **features por-pie + eventos** en vivo (no el crudo continuo); la cintura fusiona, infiere y emite **features/scores** + **crudo sólo por snippets ante anomalía** (§10.3), desde un **buffer circular que mantiene cada plantilla** y que envía cuando la cintura lo solicita.
-
-> **Distinción clave (ADR-005 rev c + ADR-018).** El micro calcula features en **operativa y edge** (misma carga de cómputo, ensayo fiel del borde), **no** en la exploratoria. La paridad y el entrenamiento skew-free se anclan a una **captura operativa nueva**, no al crudo exploratorio. La re-extracción off-device desde el crudo sigue disponible como **capacidad de análisis** y es el modo de trabajo de la fase exploratoria.
-
-### 8.2 La cintura como hub de fusión y decisión
-
-La cintura es el punto donde converge la información de ambos pies. Con el cómputo distribuido (§8.1), su rol es la **fusión y la decisión**: recibe **features por-pie + eventos** de las plantillas (o crudo, en captura), mantiene la **línea de tiempo común**, calcula las **features bilaterales** (simetría, double support), **corre los detectores** de clase L/E (o delega en el host, clase H), actúa como **sensor de drift** y **decide el feedback**. Las plantillas dejan de ser sensores "tontos": calcular sus features por-pie **reparte el cómputo** y descarga a la cintura, que es el nodo más exigido (radio AP+BLE + inferencia). La carga sigue siendo liviana: features por zancada (~1 Hz de decisiones) e inferencia int8 sobre un vector de ~25 features.
-
-### 8.3 Camino de feedback vibrotáctil
-
-El detector corre en la cintura, pero el **motor vibrador está en las plantillas**. Por lo tanto el enlace plantillas↔cintura es **bidireccional**: datos hacia arriba (plantilla→cintura) y **comandos de feedback hacia abajo** (cintura→plantilla, por el canal WiFi). La *política* de feedback (cuándo/cómo vibrar) se define en **ADR-027** (monitoreo + alerta por ventana, model-agnostic; **no corrige**) y **SPEC-09** (patrones + lógica de disparo); aquí se garantiza el **camino**.
-
-### 8.4 Features (referencia)
-
-El conjunto consolidado es de **41 features en 8 bloques** (A espacio-temporales, B variabilidad, C fuerza/FSR, D simetría, E COP-1D, F cinemática IMU, G smoothness/LDLJ, H frecuencia/entropía). La definición canónica vive en un **módulo compartido** versionado (`feature_set_version`) usado tanto por el firmware (C/C++) como por el worker (Python), de modo que el crudo histórico siempre pueda re-procesarse con la misma semántica.
-
-### 8.5 Dónde corre cada operación
-
-| Operación | Modo captura (dataset/eval) | Modo edge (uso real) |
+| Clase | Infiere | Reentrena |
 |---|---|---|
-| Muestreo 100 Hz | Plantillas | Plantillas |
-| Detección de eventos (IC/TO) | Plantilla o cintura *(CP-03)* | Plantilla o cintura *(CP-03)* |
-| Cálculo de features por-pie | Exploratoria: **off-device (Python)** · Operativa: **plantillas (on-device)** | **Plantillas (on-device)** |
-| Fusión bilateral (simetría, double support) | **Cintura** | **Cintura** |
-| Inferencia en tiempo real (feedback) | Opcional, en host, sólo para evaluar (no feedback clínico) | **Cintura (hub)** o **host** — clases L/E/H; nunca en el worker |
-| Inferencia batch/offline (análisis, re-scoring, reportes) | Worker | Worker — clase W |
-| Reentrenamiento | L: cintura · E/H/W: worker (laptop) | L: cintura · E/H/W: worker (nube) |
-| Almacenamiento de crudo | Continuo → host → object storage | Snippet por anomalía → host → storage |
-| Almacenamiento features/scores | Exploratoria: features off-device → DB · Operativa: **features del micro → DB** (junto con el crudo) | Continuo → host → DB |
-| Feedback vibrotáctil | (opcional) | Cintura decide → motor de la plantilla |
+| **L** — Local-Local | Cintura | **Cintura**, dato a dato |
+| **E** — Edge + Worker | Cintura | **Worker** |
+| **H** — Host | **Host** (celular/laptop), tiempo real | **Worker** |
+| **W** — Worker-only | **Worker**, batch/offline | **Worker** |
 
-En una línea: **tiempo real y feedback = cintura (o host si el modelo no entra); entrenamiento pesado y análisis offline = worker; el host es puente + almacenamiento** (y, en clase H, motor de inferencia en tiempo real).
+**Invariante:** la inferencia en tiempo real corre en **`hub`** (preferido) o en **`host`** (si el modelo no entra), **nunca en el worker/nube** [ADR-013]. Pasar de `hub` a `host` es un **switch de config** (`inference_target`), sin reescritura, porque el decisor de feedback es agnóstico al origen del score y el host aloja un runtime espejo.
 
-### 8.6 Adquisición determinística (muestreo exacto a 100 Hz)
+**Mahalanobis cumple doble función:** detector en vivo de clase L (<100 µs, primero a implementar) **y sensor de drift** que dispara el reentrenamiento de las clases E/H/W.
 
-El muestreo debe ser **exacto y periódico** pese a la actividad del radio: el jitter arruina las features de derivada/espectro (COP velocity, jerk, PSD) y ensucia la sincronización. Un `sleep()` —o un timer que "levanta un flag" para que el loop lea— **no** alcanzan: introducen jitter de software (latencia de interrupción, scheduling, radio). El estándar de industria es que **un periférico de hardware dispare la conversión y el DMA la almacene, sin CPU en el lazo de tiempo**. Todo esto es **interno al RP2350 y se configura por firmware; no requiere componentes extra en el PCB.**
+**Personalización primero:** el baseline es por paciente, definido en una sesión de calibración (~100 zancadas). La evidencia lo sostiene: one-class personalizado AUC≈0,97 vs ~55 % de un modelo global.
 
-- **FSR (ADC):** el ADC corre en **free-running** por su propio reloj (divisor interno) a ~**1 kHz**, empujando cada muestra a la FIFO; un canal **DMA** la copia solo a un buffer en RAM (cadena `ADC → FIFO → DREQ → DMA → RAM`). Como el divisor del ADC no baja de ~730 Hz, se **sobremuestrea a 1 kHz y se decima (promedio ×10) a 100 Hz**, lo que además **reduce el ruido del FSR** (√10 ≈ 3,2×). El buffer de sobremuestreo es diminuto (~120 B) y el 1 kHz **se decima al vuelo y se descarta**: nunca se almacena ni se transmite (sólo viaja el 100 Hz).
-- **IMU (MPU-6050):** se lee en el **tick maestro de 100 Hz por DMA** (un solo timestamp por tupla FSR+IMU), con el IMU a **ODR interno alto (~1 kHz) + DLPF** (sobremuestreo anti-alias) para que cada lectura sea fresca — **ADR-026**. La lectura por **DATA_READY** (espaciado uniforme por el reloj interno del IMU) queda como **fallback** (traza INT→GPIO en la próxima rev del PCB — CP-01); **FIFO descartada**. Cierra **CP-07**.
-- **Común:** cada muestra se sella con el **timer de µs** (instante real) + **nº de secuencia**; la adquisición corre en un **core dedicado** (aislada del radio); el buffer DMA evita pérdidas ante picos del radio.
-
-Esto complementa ADR-004: la adquisición garantiza la **periodicidad intra-dispositivo**; el beacon + corrección de drift garantizan la **alineación entre dispositivos**.
+> **Detalle** (catálogo de features, tabla de algoritmos, estrategia progresiva de evaluación, calibración): **Vista 3** y `vistas/3_analisis_features_y_algoritmos.md`.
 
 ---
 
-## 9. Modelos y Machine Learning
+## 9. Ciclo de vida de modelos y OTA
 
-### 9.1 Taxonomía de modelos (ruteo declarado en el registry)
+**Dónde entrena:** clase **L en el micro** (nunca toca el worker); clases **E/H/W en el worker** — laptop en la mínima, nube en la máxima. **Supabase no entrena**: es el sistema de registro (sus Edge Functions sólo disparan jobs).
 
-La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en el registry, y el runtime rutea inferencia y reentrenamiento según esa declaración. Esto es esencial porque **el reparto exacto depende de qué modelos se prueben**.
+**Disparo:** por **drift** (Mahalanobis), por **schedule** o **manual**; queda registrado en `retrain_jobs`.
 
-| Clase | Inferencia | Reentrena | Granularidad | Ejemplos candidatos | ¿Usa OTA? |
-|---|---|---|---|---|---|
-| **L — Local-Local** | Cintura (hub) | **Cintura** | Dato a dato (online) | Mahalanobis (EMA de media + covarianza), z-score/EWMA, probabilísticos simples, running stats | No (se auto-actualiza) |
-| **E — Edge + Worker** | Cintura (hub) | **Worker** | Periódico / async | Autoencoder denso int8, **Isolation Forest** | Sí (recibe pesos) |
-| **H — Host** | **Host** (celular/laptop), tiempo real | **Worker** | Periódico / async | Modelos que no entran en la cintura pero sí en el host | Sí (al host) |
-| **W — Worker-only (offline)** | **Worker** (batch/offline, **no** tiempo real) | **Worker** | Batch | Análisis/reportes, re-scoring histórico; modelos que no entran ni en el host en tiempo real | — |
+**Despliegue OTA A/B desde el inicio** [ADR-012], por BLE desde el host: pesos (artefacto del modelo a un slot de flash, con checksum y conmutación atómica) y **firmware completo** (bootloader A/B con reversión si la imagen nueva no reporta OK). El riesgo de brickeo se mitiga con A/B + checksum + watchdog + modo de recuperación.
 
-**Ubicación de la inferencia en tiempo real:** la inferencia que dispara el feedback corre en **`hub`** (preferido) o en **`host`** (fallback si el modelo no entra en la cintura), **nunca en `worker`/nube** (latencia + conectividad). El `worker` sólo infiere **batch/offline** (evaluación de algoritmos, re-scoring histórico, reportes). Salvedad de la clase H para la máxima: el modelo debe entrar en el **celular** (más débil que una laptop); si sólo entra en la laptop, es tiempo real sólo en la mínima.
+**Versionado y respaldo:** todo modelo queda en la DB (fila en `models` + artefacto en storage) con versión, métricas y linaje; la versión anterior se conserva como *last-known-good*.
 
-El campo `inference_target ∈ {hub, host, worker}` y `retrain_target ∈ {micro, worker}`. Cada fila de la tabla `models` declara `(class, inference_target, retrain_target, granularity)`. Sumar un modelo nuevo = declarar su clase; la infraestructura ya soporta el camino. Las asignaciones de ejemplo son un primer pase y se ajustan a medida que se valida.
-
-**Ruteo de inferencia (rev. 2026-07-19, model-agnostic).** La inferencia en tiempo real default es el **micro (hub)**; si un modelo no entra por footprint/latencia, pasa al **host**; nunca al worker/nube. Cambiar `hub`→`host` es un **switch de config** (`inference_target`), **sin reescritura**, porque el decisor de feedback es **agnóstico al origen del score**; el **host aloja un runtime de inferencia espejo** para recibir un modelo que se cae de la cintura. Vale para cualquier modelo futuro. **Isolation Forest es clase E** (infiere en la cintura, recorrido de árboles); la clase **W** queda para lo **estrictamente offline** (análisis/reportes, re-scoring), y el LSTM AE es E/H/W según dónde entre (profiling §16).
-
-### 9.2 Mahalanobis como detector y sensor de drift
-
-La distancia de Mahalanobis cumple **doble función**: (a) detector en vivo de clase L (z-score multivariado con matriz de covarianza inversa y umbral calibrado por chi-cuadrado), y (b) **sensor de drift** — cuando la distribución de la marcha se aleja del baseline, dispara el **reentrenamiento** de los modelos de clase E/W. Los modelos de clase L **no** necesitan disparo: se adaptan continuamente, dato a dato, en el micro.
-
-### 9.3 Personalización
-
-El baseline es **por paciente**: se define en una **sesión de calibración** con marcha normal/estable del sujeto, y todos los modelos personalizados (`patient_id` no nulo en el registry) se anclan a ese baseline. La evidencia (p. ej. one-class personalizado AUC≈0,97 vs. ~55 % de un modelo global) sostiene esta decisión.
+> **Detalle:** mecánica de firmware → **Vista 2 §8**; lado backend y registry → **Vista 4 §6**; ciclo conceptual → **Vista 3 §6** y `ciclo_de_vida_modelos.mermaid`.
 
 ---
 
-## 10. Ciclo de vida de modelos
+## 10. Persistencia y backend
 
-### 10.1 Dónde se entrena
+**Supabase** como plataforma gestionada [ADR-006/007]: PostgreSQL + **TimescaleDB** para series + **object storage** para blobs + auth. Modelo en tres capas: relacional para metadata, hypertables para eventos/features/scores, object storage para crudo (Parquet), artefactos de modelos e imágenes de firmware.
 
-- **Clase L:** en el **micro**, dato a dato. Nunca toca el worker.
-- **Clase E/W en mínima:** en la **laptop** (Python: sklearn/PyTorch), sobre los datos capturados. La laptop **es** el worker en la mínima.
-- **Clase E/W en máxima:** en el **worker de la nube** (VPS/contenedor/instancia con GPU si hace falta), que jala datos de Supabase, reentrena, escribe el modelo nuevo a Supabase y avisa al celular; el celular lo baja y lo despliega al micro.
+**Retención tiered por fase** [ADR-008]: en fase de dataset se guarda **crudo completo** (máxima trazabilidad); en uso real se guardan features/eventos/scores y el **crudo sólo alrededor de anomalías** — evita ~4 GB/mes/paciente conservando lo clínicamente interesante.
 
-Supabase **no** entrena: es el sistema de registro. Sus *Edge Functions* pueden usarse como **disparador** liviano (p. ej. "al escribirse un flag de drift, encolar un job de reentrenamiento"), no como entrenador.
+**Worker de reentrenamiento** [ADR-009]: separado de Supabase. Laptop en la mínima, nube en la máxima (proveedor concreto → **CP-06**). Entrena E/H/W, cuantiza a int8 y publica al registry; corre con `service_role`.
 
-### 10.2 Despliegue OTA — pesos y firmware (A/B)
+**App host y UI de control** [ADR-033]: el host es puente (ingesta BLE, buffer local, escritura a Supabase, puente OTA, runtime espejo para clase H) **y** sede de la UI de control — app local en Python (`bleak` + FastAPI) en la mínima, app móvil en la máxima. El **dashboard clínico** es de solo-lectura y está **diferido a la máxima**.
 
-Se adopta **OTA completo (pesos + firmware) desde el inicio**, con esquema **A/B** y bootloader:
-
-- **Pesos (modelos):** se envía sólo el artefacto del modelo (Mahalanobis = media + inversa de covarianza; AE/LSTM = flatbuffer int8 de TFLite Micro) a un **slot** libre de modelo en flash; se valida **checksum**; se **conmuta atómicamente**; el modelo anterior queda como **last-known-good** para **rollback**.
-- **Firmware:** un **bootloader A/B** mantiene dos imágenes de firmware; arranca la nueva y, si no "reporta OK" tras el arranque, **revierte** a la anterior. Habilita corregir bugs y actualizar el código de inferencia **remotamente, sin cable** — imprescindible con equipos en casa del paciente (máxima).
-
-**Contrapartida asumida:** mayor complejidad (bootloader robusto) y riesgo de brickeo ante fallos de energía/bootloader; se mitiga con A/B, validación por checksum, watchdog y un modo de recuperación. El uso de flash aumenta (dos firmwares + dos slots de modelo), dentro de la capacidad del RP2350.
-
-### 10.3 Versionado, respaldo y disparo
-
-Todo modelo se **respalda en la base de datos** (fila en `models` + artefacto en object storage) con versión, métricas y linaje (`parent_version`), de modo que si el micro se rompe o se pierde, el modelo se recupera. El **disparo** de reentrenamiento puede ser por **drift** (Mahalanobis), por **schedule** (periódico) o **manual**; queda registrado en `retrain_jobs`. Cuando un modelo se reentrena fuera del micro, los **pesos/modelo nuevos se envían al micro** para que los cargue y empiece a usarlos, y la versión anterior se conserva para rollback.
+> **Detalle** (tablas, `feature_vectors` en jsonb, trazabilidad de sesión, dashboard): **Vista 4**. **Esquema ejecutable: `src/db/schema.sql`** — fuente única (ADR-037); el mapa de entidades está en **§11**.
 
 ---
 
-## 11. Persistencia — Base de datos
-
-### 11.1 Plataforma y motor
-
-**Supabase** como plataforma gestionada: **PostgreSQL** (con extensión **TimescaleDB** para series temporales) + **object storage** (crudo comprimido, artefactos de modelos, imágenes de firmware) + **auth** + **API REST/realtime autogenerada**. Justificación: mínima operación (sin sysadmin), Postgres real y extensible, storage y auth integrados, y un camino de escalado limpio hacia la máxima con el reentrenamiento en un worker externo.
-
-**Modelo de datos:** relacional para metadata (pacientes, sesiones, dispositivos, modelos), **hypertables de Timescale** para series (features, scores, eventos, snippets de crudo por anomalía), y **object storage** para blobs pesados (crudo continuo en Parquet, artefactos de modelos/firmware) referenciados desde tablas.
-
-### 11.2 Política de retención (tiered por fase)
-
-Se adopta la política **tiered desde el inicio**:
-
-- **Fase de dataset:** se guarda **crudo completo** (Parquet en storage) + features + eventos + scores + modelos → máxima trazabilidad para re-extraer features y reevaluar algoritmos.
-- **Uso real rutinario (máxima):** se guardan **features/eventos/scores**; el **crudo sólo se retiene alrededor de eventos de anomalía/drift** (buffer circular disparado por el evento). Ahorra almacenamiento (~4 GB/mes/paciente de crudo continuo evitados) conservando lo clínicamente interesante. Encaja de forma natural con el sensor de drift de Mahalanobis.
-
-### 11.3 Esquema — entidades
+## 11. Esquema — entidades
 
 > **El DDL vive en `src/db/schema.sql`** (fuente única — **ADR-037**). Esta sección mantiene el mapa de entidades; el detalle de columnas, índices y políticas RLS **no se duplica acá**. Definición canónica del backend: **Vista 4**. Diagrama ER: `esquema_base_de_datos.mermaid`.
 
@@ -351,103 +234,67 @@ Se adopta la política **tiered desde el inicio**:
 | Registry | `retrain_jobs` | Orquestación del reentrenamiento (`drift` / `schedule` / `manual`) |
 | Config | `feedback_config` | Política de feedback vibrotáctil per-paciente: `feedback_source`, bandas T1/T2/T3, N de ventana, intensidad, refractario, histéresis (ADR-027 / SPEC-09) |
 
-**Decisiones de esquema ya reflejadas en el DDL:** `feature_vectors.features` como **`jsonb`** (ADR-031) · **RLS estricto** por paciente vía `patient_access`, con `service_role` para el worker (ADR-032) · `sessions.host_type` (ADR-034) · **fase de captura de tres valores + origen de las features por fila** (ADR-036).
+**Decisiones de esquema ya reflejadas en el DDL:** `feature_vectors.features` como **`jsonb`** (ADR-031) · **RLS estricto** por paciente vía `patient_access`, con `service_role` para el worker (ADR-032) · `sessions.host_type` (ADR-034) · **fase de captura de tres valores + origen de las features por fila** (ADR-036) · `gait_events.type ∈ {IC,TO,MS}` (ADR-038).
 
 **Pendiente:** las **columnas generadas `STORED`** e índices de expresión sobre las features calientes del dashboard (ADR-031) no se pueden fijar hasta congelar el `feature_set_version` y saber qué grafica el dashboard (**CP-20**).
 
 ---
 
-## 12. Backend de reentrenamiento
+## 12. Seguridad y privacidad
 
-- **Mínima:** la **laptop** corre los scripts de entrenamiento (Python) sobre los datos capturados, produce artefactos, los sube a Supabase y los despliega al micro por OTA.
-- **Máxima:** un **worker en la nube** (VPS/contenedor/instancia; con GPU si el modelo lo requiere) jala datos de Supabase, reentrena cualquier modelo (incluidos los pesados de clase W), escribe el artefacto a Supabase, registra la versión y notifica al celular, que lo despliega al micro. El **tier 1 (clase L) permanece en el micro**; el worker sólo interviene en E/W.
+Se tratan **datos de salud**, con postura de defensa en capas. El aislamiento se resuelve con **RLS estricto por paciente** [ADR-032]: Row-Level Security en todas las tablas con `patient_id`, filtrando por la tabla de pertenencia `patient_access` (`user_id`, `patient_id`, `role`). La base misma filtra las filas — la app no puede pedir de más. El **worker corre con `service_role`**, que saltea RLS por diseño (backend seguro, nunca en el cliente).
 
-Orquestación: un job en `retrain_jobs` se dispara por drift/schedule/manual; el worker lo toma, entrena, publica el modelo y actualiza el registry. La app (laptop/celular) observa el registry y ejecuta el despliegue OTA.
+Cifrado **en tránsito** (WPA2 en el enlace privado, BLE LE Secure Connections, HTTPS/TLS hacia Supabase) y **en reposo** (gestionado por la plataforma; artefactos validados por checksum). **Minimización:** `external_code` anónimo en lugar de PII directa. Al **reasignar** la cintura a otro paciente hay que borrar bonds + datos.
 
----
+En la mínima hay un solo usuario (el investigador, rol `owner`); la máxima suma filas `clinician`/`patient` **sin cambiar el esquema**.
 
-## 13. Seguridad y privacidad
-
-Al tratarse de **datos de salud**, se adopta una postura de defensa en capas (propuesta para revisión):
-
-- **En tránsito:** WiFi WPA2 en el enlace plantillas↔cintura; **emparejamiento/cifrado BLE** (LE Secure Connections) en cintura↔host; **HTTPS/TLS** hacia Supabase.
-- **En reposo:** cifrado del object storage y de la base gestionado por la plataforma; artefactos validados por checksum.
-- **Aislamiento por paciente:** **Row-Level Security (RLS)** de Supabase para que cada usuario/paciente sólo acceda a sus datos; `external_code` anónimo en lugar de PII directa siempre que sea posible.
-- **Consentimiento y minimización:** consentimiento informado; la política de retención tiered (crudo sólo ante anomalías en uso real) reduce la superficie de datos sensibles.
+> **Nivel formal pendiente (CP-18):** consentimiento informado, alcance de la anonimización, auditoría de accesos y ratificación del nivel de pairing dependen del **comité de ética**. El diseño técnico ya está; falta el requisito externo.
+>
+> **Detalle:** **Vista 4 §2**.
 
 ---
 
-## 14. Evolución mínima → máxima
+## 13. Evolución mínima → máxima
 
-| Componente | Mínima | Máxima | ¿Cambia? |
-|---|---|---|---|
-| Plantillas ↔ cintura | WiFi (AP), UDP+TCP | Ídem | **No** |
-| Sincronización | Backbone reloj (capa app) + IC | Ídem (portable a BLE) | **No** |
-| Cintura ↔ host | **BLE** (GATT) | **BLE** (GATT) | **No** (sólo cambia el central) |
-| Host | Laptop (ingesta + worker) | Celular (ingesta + puente) | Sí (app) |
-| Worker de reentrenamiento | Laptop | **Nube** | Sí (ubicación) |
-| Base de datos | Supabase | Supabase | **No** |
-| Retención | Tiered (dataset) | Tiered (crudo por anomalía) | Evoluciona la fase |
-| OTA | Pesos + firmware A/B | Ídem | **No** |
+Los únicos puntos de variación son la **app del host** (laptop → celular) y la **ubicación del worker** (laptop → nube). Todo lo demás —enlace plantillas↔cintura, sincronización, uplink BLE, base de datos, OTA— **no cambia**; los dos puntos de variación están aislados detrás de las interfaces de transporte y de despliegue, así que la migración no toca el borde ni la persistencia.
 
-Los únicos puntos de variación (app del host y ubicación del worker) están **aislados detrás de interfaces** (transporte y despliegue), por lo que la migración no toca el borde ni la persistencia.
+**El switch no existe en el micro** [ADR-034]: el firmware es **idéntico** en ambos horizontes y **agnóstico al tipo de central**. El flujo lo determina el host; el **modo** de operación es un **comando explícito** por el canal de control, nunca una inferencia. El host declara su tipo en `sessions.host_type` sólo para trazabilidad.
+
+> **Detalle** (tabla componente por componente): **Vista 1 §7**.
 
 ---
 
-## 15. Resumen de decisiones
+## 14. Decisiones
 
-| # | Decisión | Elección | Justificación breve |
-|---|---|---|---|
-| 1 | Enlace plantillas↔cintura | WiFi, cintura = AP | Estrella single-hop, sin infraestructura externa, fusión donde convergen los datos; permanente en máxima |
-| 2 | Uplink cintura↔host | BLE desde la mínima | Firmware de cintura reutilizado 100 %; de-riskea la coexistencia temprano; BW sobra |
-| 3 | Transporte | UDP stream + TCP control (WiFi); GATT notif + writes ACK (BLE) | Canal rápido-tolerante + canal confiable; evita head-of-line blocking en el stream |
-| 4 | Sincronización | Backbone reloj (timestamp+seq+beacon+drift) + emparejado por IC | Simetría bilateral necesita timeline a nivel de muestra; IC como refinamiento gratuito |
-| 5 | Cálculo de features | Distribuido: por-pie en plantillas, fusión bilateral en cintura; **captura por fases** (exploratoria crudo-solo / operativa con features del micro) | Reparte cómputo, descarga la cintura; no calcula features en el micro antes de definir el set (resuelve CP-02; CP-13) |
-| 6 | Hub de cómputo | Cintura | Ambos pies convergen ahí; carga liviana |
-| 7 | Hosting/DB | Supabase (Postgres+Timescale+storage+auth) | Mínima operación, Postgres real, escalado limpio |
-| 8 | Modelo de datos | Postgres + TimescaleDB + object storage | Relacional + series + blobs, un solo mundo SQL |
-| 9 | Retención | Tiered por fase (+ crudo por anomalía) | Trazabilidad en dataset, costo/privacidad en uso real |
-| 10 | Backend de reentrenamiento (máxima) | Worker en la nube (E/W); micro mantiene L | Cómputo sin límites para lo pesado; lo simple queda local |
-| 11 | Firmware | C/C++ con Pico SDK | ML on-device + coexistencia + 100 Hz duro |
-| 12 | Ruteo de modelos | Clase declarada en el registry (L/E/H/W); inferencia micro→host por config (model-agnostic) | Agnóstico al modelo; switch hub↔host sin reescritura; IF es clase E (ADR-011 rev) |
-| 13 | OTA | Pesos + firmware completo (A/B) desde el inicio | Fix/inferencia remotos en casa del paciente; rollback seguro |
-| 14 | Inferencia en tiempo real | En `hub` o `host`, nunca en el worker/nube (clase H) | Baja latencia + offline para el feedback; escalón de cómputo sin ir a la nube |
-| 15 | Adquisición / muestreo | ADC HW-paced + DMA, sobremuestreo 1 kHz → decimación a 100 Hz; IMU en tick maestro | Muestreo exacto sin CPU en el lazo (jitter ~ns) + mejora SNR; sin cambios de PCB |
-| 16 | Detección IC/TO | Fusión FSR + IMU, en la plantilla (resuelve CP-03) | Ground-truth de contacto + robustez en patología; alimenta ZUPT |
-| 17 | Stride length | Doble integración + ZUPT (stance por FSR) | Estándar en marcha lenta; FSR da el stance robusto |
-| 18 | Módulo IMU | Compartido; Fusion/Madgwick (C + `imufusion` Python) | Reutilización + paridad firmware↔worker; desbloquea ZUPT |
-| 19 | Paridad de features | Tests de paridad C↔Python en CI + entrenar con features del micro (de captura operativa) | Evita train/serve skew; paridad sobre set operativo nuevo, no sobre el crudo exploratorio |
-| 20 | DSP on-device (FFT/PSD) | CMSIS-DSP (float32); `arm_rfft_fast_f32`; bloque H (ventana Hann N=256) | M33 tiene FPU+DSP; librería probada; costo despreciable a ~1 Hz (ADR-019) |
-| 21 | Runtime de inferencia int8 | TFLite Micro + CMSIS-NN (NN int8 on-device); Mahalanobis en CMSIS-DSP; IF por árboles en C | Calza con TFLite→int8 y OTA de flatbuffers; paridad train↔serve; CMSIS-NN acelera en M33 (ADR-020) |
-| 22 | Catálogo de features / paridad | Catálogo declarativo (data file) + dos implementaciones (C/Python) + tests de paridad (golden vectors) | Una fuente de metadata; codegen/C-único descartados; encaja con el fasado y ADR-018 (ADR-021) |
-| 23 | Framework de entrenamiento + cuantización | TensorFlow/Keras; PTQ int8 (representative dataset), QAT fallback | Familiaridad + integración con TFLite Micro (#8); PTQ alcanza para el AE denso (ADR-022) |
-| 24 | Alcance inicial de features (hardware) | Set activo **2-FSR** (punta+talón); COP_ML (bloque E) y #18 M/L **definidas pero desactivadas** hasta sumar los FSR medial-lateral | Refleja el HW actual (2 FSR); se activan sin reescritura al cambiar el `feature_set_version` (ADR-023) |
-| 25 | Asignación de cores | **Uniforme:** core 0 = radio, core 1 = procesamiento (los 3 micros). Plantilla: core 1 = adquisición+eventos+features por-pie. Cintura: core 1 = inferencia+fusión+IMU+decisión | Aísla el WiFi (latencia impredecible), no las features (livianas); data locality; código compartido uniforme (ADR-024 rev) |
-| 26 | Modelo de ejecución (RTOS) | Bare-metal (Pico SDK, sin RTOS) en ambos firmwares; FreeRTOS evaluado y no adoptado | DMA + loop determinístico + decisiones a ~1 Hz → super-loop alcanza; mínimo overhead/footprint (ADR-025) |
-| 27 | Muestreo/lectura del IMU | Tick maestro (polling 100 Hz) + **DMA**; ODR alto + DLPF (anti-alias); un timestamp por tupla. DATA_READY = fallback (traza en PCB); FIFO descartada. Cintura 100 Hz + DMA (50 Hz fallback #11) | Timestamp único por tupla; sin tocar PCB; DMA no roba CPU a la inferencia (ADR-026) |
-| 28 | Feedback vibrotáctil | **Monitor + alerta** (no corrige); score designado (`feedback_source`, model-agnostic) sobre **ventana de zancadas** → anomalía sostenida → 3 bandas per-paciente → alerta escasa (3 ritmos, ambos pies); "riesgo" co-anclado a caída | Menos falsos positivos (ventana) y menos carga cognitiva (escaso); honesto con el alcance (detección) (ADR-027/SPEC-09) |
-| 29 | Emparejamiento BLE (sin botón) | Cintura↔host; auto-advertise sin bond + gesto (sacudir la cintura ~5 s con plantillas quietas); passkey fijo impreso (v1); bond list multi-host N≈4; host inicia, uno a la vez. Clear-all/pantalla → máxima | Onboarding sin botón, robusto (multi-IMU) y con MITM; deps CP-04/CP-15 (ADR-028) |
+Todas las decisiones de arquitectura, con sus opciones evaluadas y su justificación, viven en **`docs/decisiones/bitacora_decisiones.md`**, que tiene su propio **índice al inicio** (ADR-000 en adelante, con tema, decisión y estado).
+
+**Este documento ya no mantiene una segunda lista de decisiones.** La tabla "Resumen de decisiones" que ocupaba esta sección duplicaba ese índice y se desactualizó: quedó detenida en ADR-028 mientras la bitácora seguía creciendo, y esa clase de duplicación fue el origen de la mayoría de las incoherencias detectadas en la auditoría del 2026-08-18 (**ADR-039**). Vale la misma regla que para el esquema de la base (ADR-037): **una sola fuente, varios consumidores.**
+
+Para saber *qué* se decidió: el índice de la bitácora. Para saber *por qué*: el ADR correspondiente. Para saber *cómo funciona el sistema*: este documento y las cuatro vistas.
 
 ---
 
-## 16. Riesgos y mitigaciones
+## 15. Riesgos y mitigaciones
 
 | Riesgo | Impacto | Mitigación |
 |---|---|---|
 | Coexistencia WiFi-AP + BLE en el CYW43439 | Paquetes caídos / desconexiones en la cintura | Enfrentarla desde la mínima; tuning de intervalos; priorización; pruebas de carga tempranas |
-| Precisión de sincronización insuficiente | Errores en features bilaterales | Backbone con beacon + drift; validación de precisión; fallback a emparejado por IC |
+| Precisión de sincronización insuficiente | Errores en features bilaterales | Backbone con beacon + corrección de drift; **validación empírica de la precisión** contra una referencia común; subir la cadencia del beacon si hace falta. *(El emparejado por IC **no** es fallback: usa el reloj ya sincronizado y no compensa drift — ADR-004.)* |
 | Detección de IC poco fiable en marcha muy patológica | Segmentación/emparejado ruidoso | Detección por umbral de FSR (robusta), degradación a reloj solo, IC como refinamiento no crítico |
-| ML on-device excede recursos del RP2350 | Inferencia lenta / no cabe | Cuantización int8 (TFLite Micro); modelos pesados en clase W (worker) |
+| ML on-device excede recursos del RP2350 | Inferencia lenta / no cabe | Cuantización int8 (TFLite Micro); si un modelo no entra, pasa a **clase H (host)** por config (`inference_target`), con runtime espejo. **Nunca al worker para tiempo real** (ADR-011 rev / ADR-013); la clase W queda para análisis offline |
 | Brickeo por OTA de firmware | Dispositivo inutilizable | Bootloader A/B, checksum, watchdog, modo recuperación, last-known-good |
 | Crecimiento de crudo en uso diario | Costo de almacenamiento | Retención tiered + crudo sólo por anomalía |
 | Train/serve skew (features PC vs micro) | Modelo degradado en producción | Tests de paridad C↔Python en CI + entrenar con features del micro (ADR-018) |
-| Datos de salud | Privacidad/compliance | Cifrado en tránsito/reposo, RLS por paciente, anonimización, consentimiento |
+| Datos de salud | Privacidad/compliance | Cifrado en tránsito/reposo, **RLS estricto** por paciente vía `patient_access` (ADR-032), anonimización, consentimiento (nivel formal → CP-18) |
+| **Port de `pico-tflmicro` a RP2350 no mergeado** | Cae el runtime de inferencia elegido (SPEC-08) y parte del pipeline de ADR-022 | Validación de banco **temprana** (compilar el fork y correr un modelo int8 de juguete, sin depender del firmware del proyecto); **fallback documentado: CMSIS-NN directo** (ADR-020, opción C) — viable porque el AE denso es chico. **CP-21** |
 
 ---
 
-## 17. Cuestiones abiertas (para revisión)
+## 16. Cuestiones abiertas
 
-Las cuestiones abiertas y puntos a ratificar se llevan en un **registro vivo aparte**, que es la única fuente de verdad: **`docs/cuestiones_pendientes.md`**. Incluye CP-01 a CP-12 (abiertas: CP-01, CP-04 a CP-12; resueltas: CP-02 features distribuidas, CP-03 detección de IC en la plantilla).
+Se llevan en un **registro vivo aparte**, que es la única fuente de verdad: **`docs/cuestiones_pendientes.md`**. Ahí se agregan las cuestiones al detectarlas y se mueven a *Resueltas* con su ADR. Este documento **no** duplica el estado — sólo apunta.
+
+Al 2026-08-18 hay **7 abiertas**: **CP-01** (FSR y traza INT contra el PCB) · **CP-06** (proveedor del worker en la nube) · **CP-08** (modularidad de FSR y límite de ADC) · **CP-09** (presupuesto de energía) · **CP-18** (ratificación de seguridad/ética con el comité) · **CP-20** (columnas generadas sobre `features`) · **CP-21** (port de `pico-tflmicro` a RP2350 — ver §15).
 
 ---
 

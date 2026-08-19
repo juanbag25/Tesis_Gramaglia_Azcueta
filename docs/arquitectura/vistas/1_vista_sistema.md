@@ -2,7 +2,7 @@
 
 > **Nivel de abstracción:** alto. La "foto" del sistema: qué nodos hay, cómo se conectan y cómo fluyen los datos de punta a punta. No entra en internals de firmware (Vista 2) ni en fórmulas de features (Vista 3).
 >
-> **Estado:** consolidada — el detalle migró aquí desde el maestro (§3–§7, §8.5, §14). El maestro conserva un overview + puntero a esta vista.
+> **Estado:** consolidada — el detalle migró aquí desde el maestro (§3–§7, §13). El maestro conserva un overview + puntero a esta vista.
 
 ## 1. Nodos y hardware
 
@@ -12,7 +12,7 @@
 | **Plantilla derecha** | Ídem | Ídem | Motor vibrador (PWM) | Sensado del pie der + feedback |
 | **Unidad de cintura** | Raspberry Pi Pico 2 W | MPU-6050 | — | **Hub**: AP WiFi, maestro de sync, fusión bilateral, detección, uplink BLE |
 
-**Muestreo:** 100 Hz. **Canales por pie:** **8 hoy** (accel XYZ, gyro XYZ, 2× FSR); el formato de paquete reserva slots para **N FSR** (CP-08). La cintura suma su IMU (6 canales) como referencia de tronco/pelvis (~L4-L5), que habilita las features del bloque I.
+**Muestreo:** 100 Hz. **Canales por pie:** **8 hoy** (accel XYZ, gyro XYZ, 2× FSR); el formato de paquete reserva **4 slots** — el máximo de diseño (ADR-041). La cintura suma su IMU (6 canales) como referencia de tronco/pelvis (~L4-L5), que habilita las features del bloque I.
 
 **Pinout de referencia (plantilla).** Hoy hay **2 FSR conectados**: **ADC0/GP26 (punta)** y **ADC1/GP27 (talón)** — eje antero-posterior. El 3º/4º FSR (**medial/lateral**, para COP_ML) van a **ADC2/GP28** (+ otro) en una **etapa posterior** de la placa (**ADR-023**; CP-01/CP-08). Hasta entonces, las features de fuerza medio-lateral (bloque E + #18) quedan **definidas pero desactivadas** en el set activo.
 
@@ -25,7 +25,7 @@
 | GP28 | 34 | ADC2 | FSR 3 — medial/lateral (divisor) *(a futuro — ADR-023)* |
 | GP18 | 24 | PWM | Base NPN → motor vibrador (con diodo flyback) |
 
-**Radio (coexistencia).** El CYW43439 es un único chip WiFi+BLE con **una antena** en 2.4 GHz. La cintura sostiene **WiFi-AP (a las plantillas) + BLE (al host)** en simultáneo por **coexistencia** (time-division del radio). Es un requisito permanente de la máxima, asumido desde la mínima (ver Riesgos, maestro §16).
+**Radio (coexistencia).** El CYW43439 es un único chip WiFi+BLE con **una antena** en 2.4 GHz. La cintura sostiene **WiFi-AP (a las plantillas) + BLE (al host)** en simultáneo por **coexistencia** (time-division del radio). Es un requisito permanente de la máxima, asumido desde la mínima (ver Riesgos, maestro §15).
 
 ## 2. Vista general (cuatro planos)
 
@@ -37,8 +37,8 @@
 ```mermaid
 flowchart LR
     subgraph BORDE["Plano de borde (3× Pico 2 W)"]
-        PI["Plantilla IZQ\nIMU+3FSR+motor\n100 Hz"]
-        PD["Plantilla DER\nIMU+3FSR+motor\n100 Hz"]
+        PI["Plantilla IZQ\nIMU+2FSR+motor\n100 Hz"]
+        PD["Plantilla DER\nIMU+2FSR+motor\n100 Hz"]
         CI["Unidad CINTURA\nIMU · Hub\nAP · Sync · Detector"]
     end
     subgraph HOST["Plano host + cómputo"]
@@ -87,7 +87,7 @@ Principio: **dos canales por enlace**, uno optimizado para latencia y otro para 
 
 **Justificación.** A 100 Hz, perder una muestra ocasional es irrelevante (la próxima llega en 10 ms), mientras que la retransmisión de TCP mete *head-of-line blocking* — picos de latencia en el peor momento del stream. UDP con seq+timestamp detecta y tolera huecos sin frenar el flujo. TCP para control porque pesos/firmware exigen **todos los bytes en orden**. Sobre BLE el mismo principio: **notificaciones** (≈UDP) + **writes con ACK/indicaciones** (≈TCP).
 
-**Formato de paquete de muestra (stream):** `[device_id | seq (uint32) | t_device (uint32, µs) | ax ay az gx gy gz (int16) | fsr1 fsr2 fsr3 (uint16)]`. El `seq` y `t_device` son la base de la sincronización (§5) y de la detección de pérdidas.
+**Formato de paquete de muestra (stream):** `[device_id | seq (uint32) | t_device (uint32, µs) | ax ay az gx gy gz (int16) | fsr1 fsr2 fsr3 fsr4 (uint16)]`. **Cuatro slots fijos de FSR** — el máximo de diseño (**ADR-041**) — con los no poblados en cero; hoy sólo `fsr1` (punta) y `fsr2` (talón) llevan dato. El **set activo del catálogo** (ADR-021) declara cuáles son válidos, así que **el protocolo no cambia al sumar hardware**. Cuesta 4 bytes por muestra (400 B/s por pie sobre ~5 KB/s totales) y evita versionar el protocolo con plantillas ya selladas. El `seq` y `t_device` son la base de la sincronización (§5) y de la detección de pérdidas.
 
 ## 5. Sincronización (alto nivel)
 

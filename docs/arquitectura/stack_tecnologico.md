@@ -6,7 +6,7 @@
 > - Las elecciones significativas de librería son **decisiones** → cada una tiene su **ADR** en `../decisiones/bitacora_decisiones.md`.
 > - **No se fijan versiones de memoria**: se verifican y anclan al implementar. Estado `decidido` = elegido; `candidato` = probable, a confirmar; `a definir` = sin decidir.
 >
-> **Estado:** andamiaje. Se completa a medida que avanza el backlog de investigación.
+> **Estado:** al día con las 4 vistas consolidadas y con el backlog #1–#10 resuelto. Las filas marcadas `a definir` corresponden a la **máxima** (app móvil, dashboard) o a decisiones de implementación aún no tomadas.
 
 ## Vista 2 — Firmware (C/C++)
 
@@ -20,7 +20,7 @@
 | Catálogo de features + paridad | data file (JSON/TOML) en `shared/` + impl C + espejo Python + **golden tests** en CI | definición única de features; anti train/serve skew | decidido (ADR-021) |
 | DSP | **CMSIS-DSP** (float32) | FFT/PSD (bloque H), decimación/filtrado FIR, álgebra (Mahalanobis) | decidido (ADR-019) |
 | IMU | driver I²C MPU-6050 | lectura accel+gyro (**tick maestro + DMA**; ODR alto + DLPF; DATA_READY fallback) | decidido (sensor; ADR-026) |
-| Orientación / AHRS | **Fusion** (xioTechnologies, Madgwick) | orientación + accel lineal sin gravedad; bias de giro en runtime | candidato (ADR-017) |
+| Orientación / AHRS | **Fusion** (xioTechnologies, Madgwick) | orientación + accel lineal sin gravedad; bias de giro en runtime | decidido (ADR-017) |
 | RTOS | **bare-metal** (Pico SDK, sin RTOS) | scheduling a mano: `multicore_launch_core1` + `queue_t`/FIFO + IRQs por-core | decidido (ADR-025) |
 
 ## Vista 3 — Datos y ML (Python)
@@ -39,10 +39,11 @@
 |---|---|---|---|
 | DB / plataforma | **Supabase** (Postgres + TimescaleDB + Storage + Auth) | persistencia, storage de modelos, auth/RLS | decidido (ADR-006/007) |
 | Worker ↔ DB | **supabase-py** | pull datos / push modelos | candidato |
-| App host (mínima) | **bleak** (Python) | central BLE, ingesta | candidato |
+| App host (mínima) | **bleak** (Python) | central BLE, ingesta | decidido (ADR-033) |
+| UI de control (mínima) | **FastAPI** + página web servida por el mismo proceso de ingesta | elegir paciente, abrir/cerrar sesión, cambiar el modo, ver estado, disparar OTA | decidido (ADR-033) |
 | App móvil (máxima) | *(a definir)* | ingesta + puente + OTA | a definir |
 | Dashboard | *(a definir: React+Supabase / Streamlit / Plotly Dash)* | visualización clínica | a definir |
-| Migraciones DB | Supabase migrations o similar | versionado del esquema | a definir |
+| Migraciones DB | Supabase migrations o similar | versionado del esquema (el DDL vive en `src/db/schema.sql` — ADR-037) | a definir |
 
 ## Vista 1 — Sistema (transversal)
 El transporte (lwIP/BTstack) y la sincronización (código propio de capa de aplicación) se implementan en el firmware (Vista 2). No hay librerías propias de esta vista.
