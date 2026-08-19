@@ -28,7 +28,7 @@
 - **MS sin cruce (caso patológico esperado):** si el paciente **nunca transfiere la carga al antepié**, las curvas no se cruzan. En ese caso se emite MS en el instante de **máximo del cociente `F_ante/F_post`** dentro del apoyo, con **baja confianza** y **flag `no_crossover`**. Ese flag **no es un error: es señal de anomalía** (déficit de propulsión) y se propaga a la cintura como tal.
 - **Degradación con gracia:** si el IMU no confirma de forma sistemática (paciente/sensor), operar en **FSR-solo**; la alineación fina se apoya en el backbone de sync (ADR-004).
 
-**Latencia.** El **cruce de FSR emite el evento de inmediato** (sirve al feedback <50 ms); la confirmación IMU **anota confianza sin bloquear** la emisión.
+**Latencia.** El **cruce de FSR emite el evento de inmediato**; la confirmación IMU **anota confianza sin bloquear** la emisión. **Criterio:** el evento tiene que estar disponible dentro de la **misma zancada**, porque lo consumen el ZUPT (SPEC-03), el buffer de zancadas (SPEC-05) y la fusión bilateral de la cintura. *No* es una latencia de lazo cerrado: ADR-027 derogó el objetivo "<50 ms" al hacer el feedback **terminal por ventana**.
 
 **Salida.** Evento `{ tipo: IC|TO|MS, t_evento (µs), pie, confianza, flags }` → (1) buffer local (features + segmentación de fases + ZUPT) y (2) envío a la **cintura** (fusión bilateral / double support, refinamiento de sync, timing de feedback). Persistido en `gait_events.type ∈ {IC,TO,MS}`.
 
@@ -235,7 +235,7 @@ Solapamiento (hop) configurable (p. ej. 50 %). **N y hop versionados con `featur
 - **LSTM AE:** **TFLM** si entra en tiempo real en el M33; si no, host (H) u offline (W) — profiling (#11).
 
 **Flujo del AE denso (clase E).**
-1. Entrenamiento + cuantización en el worker: PyTorch/TF → **TFLite converter → flatbuffer int8**.
+1. Entrenamiento + cuantización en el worker: **TensorFlow/Keras** → **conversor TFLite/LiteRT (PTQ int8, representative dataset)** → **flatbuffer int8** (ADR-022).
 2. **OTA** del flatbuffer a la cintura (ADR-012, esquema A/B con checksum/rollback).
 3. En la cintura: TFLM carga el flatbuffer en una **tensor arena** (bloque de RAM reservado) y, por zancada, corre `interpreter.invoke()`; CMSIS-NN acelera las capas.
 4. Score de anomalía = error de reconstrucción (MSE input vs. output); umbral por percentil de calibración.
@@ -292,3 +292,92 @@ Solapamiento (hop) configurable (p. ej. 50 %). **N y hop versionados con `featur
 **Seguridad (CP-04).** Validar que el patrón "riesgo" no sobresalte ni desestabilice.
 
 **Referencias.** ADR-027 (decisión); ADR-011 rev (score agnóstico); SPEC-05 (buffer de zancadas); SPEC-08 (score); papers 02 (patrones>alertas), 09 (carga cognitiva), 10 (Ma), 17 (Jung, caída).
+
+## SPEC-10 — Features de tronco (bloque I): IHR ML, RMS y LDLJ
+
+**Decisión:** ADR-040. **Placement:** **cintura** (core 1). **Estado:** **definido — DIFERIDO** (bloque OFF en el set activo; se prende con un `feature_set_version` nuevo, sin reescritura).
+
+> **Esta spec es una guía para cuando se prenda el bloque, no un encargo inmediato.** Recoge lo investigado para que activarlo sea leer esto y cambiar la config, en vez de rehacer el análisis.
+>
+> **Fundamento:** la explicación en llano está en el **apéndice de ADR-040**; el **desarrollo matemático completo** (DFT, ortogonalidad, teorema de simetría de media onda, leakage, y los tests de verificación) está en **`docs/investigacion/fundamento_dft_ihr.md`**. Varias reglas de esta spec —no aplicar ventana de Hann, restar la media, descartar zancadas con IC dudoso— **se justifican ahí**, no acá.
+
+**Objetivo.** Calcular, por zancada y en la cintura, tres descriptores del movimiento del tronco a partir del IMU ubicado a ~L4-L5: **#45 Improved Harmonic Ratio ML**, **#46 RMS de aceleración de tronco** (AP/ML/V) y **#47 LDLJ de tronco**.
+
+**Entradas.** Aceleración triaxial del IMU de cintura a 100 Hz (calibrada y con gravedad removida — SPEC-04) + **eventos IC de ambas plantillas**, ya alineados sobre el timeline común (ADR-004). La cintura tiene todo esto sin pedir nada nuevo.
+
+---
+
+### Segmentación (común a las tres)
+
+Cada feature se calcula **por zancada**, sobre el segmento entre `IC(n)` e `IC(n+1)` del **mismo pie de referencia** (fijar cuál en la config y mantenerlo: cambiar de pie de referencia cambia la fase, no el valor del IHR, pero sí la comparabilidad de las series).
+
+**Dependencia dura con la calidad del IC.** Si `IC(n)` o `IC(n+1)` vienen con **baja confianza** (SPEC-01), el segmento no es una zancada exacta: la ventana deja de ser un período y la energía se desparrama entre bins (*spectral leakage*), lo que **se lee como asimetría aunque no la haya**. **Recomendación: descartar la zancada** para #45, o emitirla marcada, y dejar la elección como parámetro. #46 y #47 son mucho menos sensibles (no dependen de que la ventana sea un período exacto).
+
+---
+
+### #45 — Improved Harmonic Ratio ML
+
+**Cálculo.**
+1. Cortar el segmento de aceleración **ML** entre dos IC consecutivos.
+2. **Remuestrear a un número fijo de muestras** (recomendado: potencia de 2, p. ej. **256**, para el `arm_rfft_fast_f32` de CMSIS-DSP — SPEC-07). **No usar zero-padding**: rompe la propiedad "una ventana = un período", que es lo que hace que el bin *k* sea el armónico *k*.
+3. FFT real → potencia por bin. **Por construcción, el bin *k* es el armónico *k*** — no hay que estimar la frecuencia fundamental ni buscar picos.
+4. `IHR = Σ P(intrínsecos) / Σ P(intrínsecos + extrínsecos)`, sumando hasta el armónico **N**.
+
+**Asignación intrínseco / extrínseco — por eje, fija, no depende del paciente:**
+
+| Eje | Intrínsecos | Extrínsecos |
+|---|---|---|
+| **Medio-lateral (ML)** | armónicos **impares** | pares |
+| Vertical y antero-posterior | armónicos **pares** | impares |
+
+**Por qué esa asignación y no otra:** es un **teorema** sobre simetría de media onda, no un ajuste empírico — demostrado en `fundamento_dft_ihr.md` §7. En marcha simétrica, el desfasaje de media ventana introduce un factor $(-1)^k$ que anula exactamente un conjunto de coeficientes.
+
+**Reglas que salen del fundamento (§9 de ese documento):**
+- **Ventana rectangular, SIN Hann.** Contraintuitivo viniendo de SPEC-07, pero acá la ventana ya está enganchada al período: una Hann derramaría energía a los bins vecinos, **que son de paridad opuesta**, sesgando el IHR hacia 0,5.
+- **Restar la media** del segmento antes de transformar: el bin 0 es par y un offset residual lo contamina.
+- **Los bins altos son artefacto** del remuestreo (100 muestras reales → 256 interpoladas): usar sólo los primeros 10-20 armónicos, nunca leer significado más arriba.
+
+**A verificar antes de implementar:** la variante *Improved* de Brasiliano et al. (2026) — confirmar contra el paper qué armónicos entran exactamente en cada conjunto y citarlo. La regla par/impar de arriba es la base estándar del harmonic ratio; la forma acotada de la fórmula (`Σ P^I / Σ(P^I + P^E)`, entre 0 y 1) es la que registra el marco teórico.
+
+**Parámetros a fijar (versionados con `feature_set_version`).**
+
+| Parámetro | Recomendación | Nota |
+|---|---|---|
+| `N_armonicos` | 10 o 20 | Fijo para todos los pacientes. Valores con distinto N **no son comparables entre trabajos** — documentarlo. |
+| `L_remuestreo` | 256 muestras | Potencia de 2 por el FFT. Verificar que no distorsione con cadencias muy variables. |
+| Método de remuestreo | interpolación lineal o cúbica | **Decidir con datos:** en marcha hemipléjica la duración de zancada varía mucho más que en sana (el CoV de stance es top-3 de Brasiliano), así que conviene medir el efecto antes de fijarlo. |
+| Pie de referencia | fijo por sesión | Cambiarlo rompe la comparabilidad de la serie. |
+| Política ante IC de baja confianza | descartar la zancada | Ver arriba. |
+
+**Confusor conocido — velocidad de marcha.** El HR baja con la velocidad **incluso en sujetos sanos**. Si el paciente camina más lento un día, el IHR cae por un motivo que no es empeoramiento del patrón. `stride_speed` (#7) ya está en el catálogo → **recomendación: registrar la velocidad junto al IHR y condicionar el baseline por rango de velocidad**, o al menos dejarlo documentado como covariable en el análisis.
+
+**Lo que la personalización ya resuelve.** El sistema es one-class personalizado: el baseline se construye con la calibración del propio paciente, así que todo lo constante para él —colocación del cinturón, altura, el `N` elegido, un sesgo del remuestreo— se absorbe y desaparece. Lo único que no se absorbe es lo que varía **dentro** del paciente, o sea la velocidad.
+
+---
+
+### #46 — RMS de aceleración de tronco (AP / ML / V)
+
+**Cálculo.** RMS por eje sobre el segmento de zancada, con la aceleración lineal (sin gravedad, SPEC-04). Tres valores por zancada.
+
+**Sin incógnitas metodológicas.** No requiere remuestreo ni FFT, y tolera un IC impreciso. Es la más barata de las tres.
+
+**Nota:** normalizar o no por la velocidad de marcha es una decisión de análisis, no de firmware — el RMS crece con la velocidad. Recomendación: **emitir el valor crudo** y dejar la normalización al worker, que tiene la velocidad de la misma zancada.
+
+---
+
+### #47 — LDLJ de tronco
+
+**Cálculo.** Misma fórmula que el bloque G (SPEC de referencia: features #32-34): `LDLJ = −ln((t₂−t₁) · max‖a‖ · ∫|a′|² dt)`, aplicada a la aceleración de tronco sobre la zancada.
+
+**Diferencia clave con el LDLJ del pie.** En el pie, el LDLJ se calcula **sólo en swing** para evitar la contaminación de los impactos de heel-strike y push-off (adaptación propia del proyecto, documentada en el marco teórico). **En el tronco eso no hace falta**: la cadena cinemática filtra los impactos, y es precisamente por eso que Brasiliano lo mide en tronco y esternón. **Se calcula sobre la zancada completa.**
+
+---
+
+**Costo de cómputo.** Una FFT de 256 puntos por zancada (~1 Hz) más dos cálculos triviales. Con CMSIS-DSP en el M33 con FPU, **<0,5 % de duty cycle** (medido en SPEC-07). El cómputo **no es el motivo para diferirlo** — el motivo son las decisiones metodológicas de #45.
+
+**Salida.** Tres features por zancada al vector de la cintura, con `scope = bilateral` (son del tronco, no de un pie). Se suman al vector fusionado antes de la inferencia.
+
+**Referencias.** ADR-040 (decisión + apéndice conceptual completo); Brasiliano et al. (2026) *Sci Rep* 16:8908 — IHR ML top-1 del set de 3 que llega a 90,2 % en clustering no supervisado; ADR-030 (el bloque I recupera lo que el marco daba por perdido); SPEC-01 (confianza del IC), SPEC-04 (IMU y gravedad), SPEC-07 (FFT con CMSIS-DSP), ADR-021 (set activo); `docs/investigacion/ihr_armonicos_explicacion.html`.
+
+---
+

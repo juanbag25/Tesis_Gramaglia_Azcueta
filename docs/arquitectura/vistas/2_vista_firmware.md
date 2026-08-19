@@ -2,9 +2,9 @@
 
 > **Nivel de abstracción:** internals de los micros (C/C++, Pico SDK). Cómo cada dispositivo **adquiere, procesa y actúa** en tiempo real. Aquí vive la **ejecución** de los algoritmos; su **definición** canónica está en la Vista 3 (regla: se define en V3, se ejecuta en V2 + worker).
 >
-> **Estado:** consolidada — el detalle migró aquí desde el maestro (§8.2/8.3/8.6, §10.2). El maestro conserva un overview + puntero.
+> **Estado:** consolidada — el detalle migró aquí desde el maestro (§7, §9). El maestro conserva un overview + puntero.
 >
-> **Specs de algoritmos (guías de implementación):** `2_specs_algoritmos_firmware.md` — SPEC-01 (IC/TO), SPEC-02 (segmentación), SPEC-03 (stride/ZUPT), SPEC-04 (módulo IMU), SPEC-05 (buffer de zancadas), SPEC-06 (COP_ML, **diferido** ADR-023), SPEC-07 (FFT/DSP), SPEC-08 (runtime de inferencia), SPEC-09 (feedback vibrotáctil).
+> **Specs de algoritmos (guías de implementación):** `2_specs_algoritmos_firmware.md` — SPEC-01 (IC/TO), SPEC-02 (segmentación), SPEC-03 (stride/ZUPT), SPEC-04 (módulo IMU), SPEC-05 (buffer de zancadas), SPEC-06 (COP_ML, **diferido** ADR-023), SPEC-07 (FFT/DSP), SPEC-08 (runtime de inferencia), SPEC-09 (feedback vibrotáctil), SPEC-10 (features de tronco — **diferida**, ADR-040).
 
 ## 1. Arquitectura de firmware (dos builds + código compartido)
 
@@ -56,6 +56,7 @@ Muestreo **exacto y periódico** pese a la actividad del radio (el jitter arruin
 - **Módulo de features por-pie (ejecución):** el firmware **implementa** las features desde el **catálogo compartido** (definición única, ADR-021); su definición canónica vive en la Vista 3. Corre en **captura operativa y edge** (no en la exploratoria — ADR-005 rev c). Aplica el **set activo** vigente (perfil **2-FSR**: bloque E + #18 **OFF**, ADR-023).
 - **Dependencias de cómputo:** módulo IMU (orientación/gravedad — SPEC-04), buffer de N zancadas (SPEC-05), stride length/ZUPT (SPEC-03), COP_ML (SPEC-06, **diferido**), FFT/DSP con **CMSIS-DSP** (SPEC-07, ADR-019).
 - **Fusión bilateral (cintura):** simetría (bloque D) y **double support** desde los **eventos alineados** por el backbone de sync — no necesita el crudo de ambos pies co-localizado.
+- **Features de tronco (cintura, bloque I #45-47 — SPEC-10):** IHR ML, RMS y LDLJ sobre la aceleración del IMU de cintura, segmentada por zancada con los **eventos IC** que llegan de las plantillas. **Diferidas: el bloque está OFF en el set activo** (ADR-040) — el rol queda asignado y la spec escrita, pero no entra en la primera iteración de firmware.
 
 ## 4. Sincronización (implementación) — [ADR-004]
 
@@ -70,7 +71,7 @@ Corre en la **cintura** (hub); si un modelo no entra, pasa al **host** (switch p
 - **Isolation Forest (E):** recorrido de árboles (tablas de splits) en **C**.
 - **LSTM AE:** por TFLM **si entra**; si no, host/offline.
 
-## 6. Feedback vibrotáctil — [§8.3]
+## 6. Feedback vibrotáctil — [ADR-027 / SPEC-09]
 
 El detector corre en la **cintura**, pero el **motor está en la plantilla** → el enlace plantillas↔cintura es **bidireccional** (datos arriba, **comando de feedback abajo** por WiFi). **Es monitoreo + alerta, no corrección** (ADR-027): score designado (`feedback_source`, model-agnostic) evaluado sobre **ventana de zancadas** → anomalía **sostenida** → **3 bandas** per-paciente (leve/marcada/riesgo) → **alerta escasa** (histéresis+refractario) → **3 ritmos** en el PWM, ambos pies. Detalle: **SPEC-09**; config per-paciente en DB (Vista 4).
 
@@ -78,7 +79,7 @@ El detector corre en la **cintura**, pero el **motor está en la plantilla** →
 
 Cada plantilla mantiene un **ring buffer** de crudo; en **edge**, ante una anomalía la cintura **pide el snippet** y se envía (§10.3). En **captura operativa** se sube el crudo **continuo** junto con las features del micro.
 
-## 8. OTA A/B (pesos + firmware) — [ADR-012 / §10.2]
+## 8. OTA A/B (pesos + firmware) — [ADR-012]
 
 **OTA completo desde el inicio**, por **BLE** desde el host, esquema **A/B**:
 
@@ -90,7 +91,7 @@ Cada plantilla mantiene un **ring buffer** de crudo; en **edge**, ante una anoma
 **Reparto uniforme (ADR-024 rev 2026-07-20):** en los tres micros, **core 0 = radio**, **core 1 = procesamiento**. Difiere la *carga*, no el *rol*:
 
 - **Plantilla** (WiFi-STA sólo, **sin BLE/coexistencia**, **no infiere**): **core 0 = WiFi-STA + TX + motor**; **core 1 = adquisición (100 Hz duro) + eventos IC/TO + features por-pie**. Se agrupa el *pipeline de sensado* en el core 1 (data locality: el crudo a 100 Hz no cruza de core) y se aísla el WiFi —el inquilino de latencia impredecible— en el core 0. *(Las features **bilaterales** —simetría, double support— no se calculan acá: van en la cintura, ADR-005.)*
-- **Cintura** (acota el radio + la inferencia): **core 0 = radio** (WiFi-AP + BLE, **coexistencia**, donde lo pone el SDK); **core 1 = inferencia + fusión bilateral + IMU + decisión**. La **coexistencia** WiFi-AP+BLE (riesgo maestro §16) es **sólo de la cintura**. El **IMU se lee por DMA** (ADR-026) para no competir con la inferencia del core 1.
+- **Cintura** (acota el radio + la inferencia): **core 0 = radio** (WiFi-AP + BLE, **coexistencia**, donde lo pone el SDK); **core 1 = inferencia + fusión bilateral + IMU + decisión** (+ **features de tronco** cuando se prenda el bloque I — ADR-040/SPEC-10). La **coexistencia** WiFi-AP+BLE (riesgo maestro §15) es **sólo de la cintura**. El **IMU se lee por DMA** (ADR-026) para no competir con la inferencia del core 1.
 
 **Comunicación entre cores:** FIFO de hardware (`multicore_fifo_*`) / `queue_t` con spinlocks (Pico SDK).
 
@@ -114,6 +115,6 @@ Pico SDK (`hardware_adc/dma/timer/pio/i2c`), **lwIP**, **BTstack**, **CMSIS-DSP*
 **Diagrama de esta vista:** pipeline de firmware (arriba) + `../adquisicion_dma_irq.mermaid` (adquisición por DMA/IRQ sin frenar la inferencia del core 1). Un diagrama de calibración/baseline vive en la Vista 3.
 
 ## Pendiente de definir / investigar (backlog)
-- **Validación de footprint/latencia** (#11) contra los objetivos (feedback <50 ms, Mahalanobis <100 µs, AE ~ms); incluye confirmar el reparto de cores de la plantilla (ADR-024 rev) y el rate del IMU de la cintura (100 Hz vs 50 Hz — ADR-026).
+- **Validación de footprint/latencia** (#11) contra los objetivos: **Mahalanobis <100 µs**, **AE denso ~ms**, y que la **decisión por-zancada entre con margen** dentro del presupuesto de ~1 Hz. *(El objetivo "feedback <50 ms" quedó **derogado por ADR-027**: el feedback es una alerta **terminal por ventana de zancadas**, no un lazo cerrado.)* Incluye confirmar el reparto de cores de la plantilla (ADR-024 rev) y el rate del IMU de la cintura (100 Hz vs 50 Hz — ADR-026).
 
 *(Resueltos: **CP-07** lectura del IMU → ADR-026; **CP-10** patrones de feedback → ADR-027/SPEC-09; **CP-14** pairing BLE → ADR-028; **asignación de cores** → ADR-024 rev; **RTOS y rate del IMU de cintura (CP-17)** → ADR-025/026.)*

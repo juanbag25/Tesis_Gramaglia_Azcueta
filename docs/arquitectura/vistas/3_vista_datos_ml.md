@@ -2,7 +2,7 @@
 
 > **Nivel de abstracción:** *qué* se calcula y *qué* modelos se usan, independiente de *dónde* corre (eso es la Vista 2/4). Aquí vive la **definición canónica** de features y modelos, versionada y compartida (regla de layering: se **define aquí**, se **ejecuta** en el firmware —Vista 2— y en el worker).
 >
-> **Estado:** consolidada — aquí vive la **definición canónica** de features y modelos (datos/ML). El maestro (§8.4/§9/§10) mantiene además la **vista general** completa.
+> **Estado:** consolidada — aquí vive la **definición canónica** de features y modelos (datos/ML). El maestro (§7–§9) mantiene una vista general breve y apunta acá.
 >
 > **Documento satélite (detalle):** `3_analisis_features_y_algoritmos.md` — catálogo completo de features (Parte A), mecanismo de modularidad (Parte B, CP-12/ADR-021), tabla de algoritmos con clase/footprint/librería (Parte C) y **backlog de investigación** ordenado (Parte D). *(Relación análoga a `2_specs_algoritmos_firmware.md` con la Vista 2.)*
 
@@ -10,11 +10,15 @@
 
 ## 1. Definición de features (referencia)
 
-El catálogo nominal es de **47 features en bloques A–I** (A espacio-temporales, B variabilidad, C fuerza/FSR, D simetría, E COP-ML 1D, F cinemática IMU, G smoothness/LDLJ, H frecuencia/entropía, **I tronco** desde el IMU de cintura) — 38 originales (A–H) + 3 de tronco (I) + **4 agregadas tras la auditoría de alineación (ADR-029): single support, symmetry angle, avg zero-crossings y sway density (diferida)** + **2 agregadas con la adopción de mid-stance (ADR-038): push-off time ratio (#43) y propulsive impulse ratio (#44)**. El conteo *real* del vector es mayor: el bloque C se instancia **por FSR × sub-fase del apoyo** (carga/propulsión, ADR-038) y hay features de tronco; la **feature selection** (backlog #12) reduce al sweet spot **15-25**.
+El catálogo nominal es de **47 features en bloques A–I** (A espacio-temporales, B variabilidad, C fuerza/FSR, D simetría, E COP-ML 1D, F cinemática IMU, G smoothness/LDLJ, H frecuencia/entropía, **I tronco** desde el IMU de cintura, **#45-47, diferido** — ADR-040) — 38 originales (A–H) + 3 de tronco (I) + **4 agregadas tras la auditoría de alineación (ADR-029): single support, symmetry angle, avg zero-crossings y sway density (diferida)** + **2 agregadas con la adopción de mid-stance (ADR-038): push-off time ratio (#43) y propulsive impulse ratio (#44)**. El conteo *real* del vector es mayor: el bloque C se instancia **por FSR × sub-fase del apoyo** (carga/propulsión, ADR-038) y hay features de tronco; la **feature selection** (backlog #12) reduce al sweet spot **15-25**.
 
 - **Placement por defecto:** casi todo es **per-pie (plantilla)**; lo **bilateral** (comparar ambos pies: simetría bloque D, double support) va en la **cintura**; el bloque **I (tronco)** corre en la **cintura** (IMU ~L4-L5).
 - **Definición única y compartida** plantilla↔cintura↔worker, versionada por **`feature_set_version`** — invariante anti *train/serve skew* (ADR-018). El crudo histórico siempre puede re-procesarse con la misma semántica.
-- **Set activo actual — perfil "2-FSR (punta/talón)" (ADR-023):** las features de fuerza **medial-lateral** están **OFF** (bloque E completo #22-25 COP_ML + #18 ratio M/L); quedan **definidas** y se **activan** (nuevo `feature_set_version`) al sumar los FSR medial/lateral, sin reescritura.
+- **Set activo actual (ADR-023 + ADR-040).** Hay dos motivos distintos para tener una feature apagada:
+  - **(a) Por hardware** — las de fuerza **medial-lateral**: bloque E completo (**#22-25** COP_ML + **#42** sway density) y **#18** (ratio M/L). Se prenden al sumar los FSR medial/lateral.
+  - **(b) Por alcance** — el **bloque I completo (#45-47, tronco)**, diferido hasta resolver las decisiones metodológicas del IHR (SPEC-10). El hardware ya está: la cintura tiene su IMU y los eventos IC.
+
+  En ambos casos quedan **definidas** y se **activan** con un `feature_set_version` nuevo, **sin reescritura**. El catálogo es una **biblioteca de features disponibles**; el **set activo** es lo que efectivamente se calcula, y no tiene por qué ser todo desde el día uno (ADR-040).
 
 **Catálogo detallado (cálculo, entrada, placement, fase) → satélite Parte A.** Es la fuente humana canónica del catálogo hasta que exista el **archivo de datos declarativo** en `src/firmware/shared/` (ADR-021), que pasará a ser la fuente única implementada por firmware (C) y worker (Python).
 
@@ -40,9 +44,9 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 - **Isolation Forest = clase E** (infiere en la cintura por recorrido de árboles; reentrena en el worker).
 - **LSTM AE = E/H/W** según dónde entre (micro→host→offline; profiling en **#11**).
 - La clase **W** queda para lo **estrictamente offline** (análisis/reportes, re-scoring).
-- El anteproyecto §6 menciona además **SST-AD, SVR, Random Forest**: entran como candidatos declarando su clase (unificar la lista → **CP-11**).
+- El anteproyecto **§6** mencionaba **SST-AD, SVR, Random Forest**: **descartados** (ADR-030, que cerró CP-11). Se adopta la lista del **§4.3** — Mahalanobis, Isolation Forest, AE denso, LSTM AE — más los candidatos declarables de ADR-029. *SST-AD no está definido en ninguna fuente del corpus; SVR/RF eran referencias bibliográficas, no elecciones.*
 
-*(Esquema de registry / DDL de la tabla `models` → maestro §11.3 / Vista 4.)*
+*(Esquema de la tabla `models` → `src/db/schema.sql` (ADR-037); mapa de entidades → maestro §11; definición canónica → Vista 4.)*
 
 ---
 
@@ -76,7 +80,7 @@ La calibración es, a la vez, el **entrenamiento inicial personalizado** y una *
 
 ## 6. Ciclo de vida de modelos
 
-Nivel conceptual (dónde entrena, disparo, versionado). La **mecánica de despliegue** vive en otras vistas: **OTA A/B de pesos y firmware → Vista 2 §8**; **worker y persistencia → Vista 4 (maestro §11/§12)**.
+Nivel conceptual (dónde entrena, disparo, versionado). La **mecánica de despliegue** vive en otras vistas: **OTA A/B de pesos y firmware → Vista 2 §8**; **worker y persistencia → Vista 4 (maestro §10)**.
 
 - **Dónde entrena:** clase **L en el micro** (dato a dato, nunca toca el worker); clase **E/W en el worker** = laptop en la mínima / nube en la máxima (jala datos de Supabase, reentrena, publica el artefacto y notifica al host, que despliega por OTA). **Supabase no entrena** (es el sistema de registro; sus Edge Functions sólo disparan jobs).
 - **Disparo de reentrenamiento:** por **drift** (Mahalanobis), **schedule** (periódico) o **manual**; queda registrado en `retrain_jobs`.
@@ -128,4 +132,4 @@ numpy, scipy, **scikit-learn** (Isolation Forest, ajuste Mahalanobis), **TensorF
 ## Pendiente de definir / investigar (backlog)
 - **#11 — Validación de footprint/latencia** (requiere firmware; ver satélite Parte D): presupuestos de RAM/flash del RP2350 y latencias por etapa; confirma clase del LSTM AE (E/H/W) y el runtime `pico-tflmicro` en RP2350.
 - **#12 — Selección de features** (data-driven; requiere dataset capturado): qué se **prende** del catálogo según el análisis (LASSO/SBS/Boruta → 15-25 features).
-- **CP-05 — Esquema de `feature_vectors`** (`jsonb` vs columnas fijas): toca la persistencia (Vista 4 / maestro §11).
+- **CP-20 — Columnas generadas** sobre `features` (ADR-031): qué features se materializan depende de congelar el `feature_set_version` (#12) y del dashboard (diferido). *(CP-05 —el esquema de `feature_vectors`— quedó **resuelta** por ADR-031: `jsonb`; ver Vista 4 §1.2.)*
