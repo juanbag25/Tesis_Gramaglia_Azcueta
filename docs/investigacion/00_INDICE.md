@@ -4,6 +4,16 @@ Carpeta con notas de los papers solicitados. Cada archivo contiene: cita complet
 
 > **Nota de repositorio:** las notas detalladas de cada paper (archivos `01_…md` a `22_…md`) provienen del chat de recopilación bibliográfica del proyecto. Si no están presentes en `docs/investigacion/papers/`, pueden subirse manualmente; este índice y `resumen_investigacion.md` resumen lo esencial.
 
+## Documentos de fundamento (no bibliografía)
+
+| Archivo | Qué contiene |
+|---|---|
+| `fundamento_dft_ihr.md` | **De la DFT al Improved Harmonic Ratio.** Desarrollo matemático completo: formulación de la DFT, ortogonalidad de la base (con demostración), por qué el bin *k* es el armónico *k* de la zancada, teorema de simetría de media onda que fundamenta la separación par/impar, análisis del *spectral leakage*, y consecuencias prácticas para el firmware. Base de **ADR-040** y **SPEC-10**. |
+| `ihr_armonicos_explicacion.html` | Figura de apoyo del anterior (abrir en el navegador). |
+| `alineacion_features_algoritmos.md` | Informe de auditoría de alineación features/algoritmos contra el corpus (2026-07-21). |
+| `features_anomaly_detection_stroke.md` | Catálogo de features derivado de la bibliografía. |
+| `pinout_pico2.md` | Pinout de referencia del Pico 2 W. |
+
 ## Estado de extracción
 
 | # | Archivo | Tema central | Fuente | Acceso |
