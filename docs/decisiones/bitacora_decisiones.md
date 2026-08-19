@@ -51,6 +51,9 @@
 | 036 | Fase de captura y origen de las features en el esquema | `sessions.mode` pasa a **tres** valores (`exploratory`/`operational`/`edge`, ADR-005 rev c) y `feature_vectors` suma **`features_source`** (`device`/`offline`): en la fase operativa conviven el vector del micro y el recalculado off-device para la misma zancada, y la paridad (ADR-018) necesita distinguirlos | aceptada |
 | 037 | Fuente única del esquema de la base | **`src/db/schema.sql` manda**; el maestro §11.3 deja de duplicar el DDL y pasa a mapa de entidades + puntero. Las dos copias ya habían divergido. Aplica la regla de layering del repo (se define una vez) | aceptada |
 | 038 | Mid-stance: adopción y partición del apoyo | **Se adopta MS completo.** Detección en la plantilla por **cruce de carga retropié→antepié** (`F_ante ≥ F_post`, confirmado por pie-plano del IMU; flag `no_crossover` = anomalía). Parte el apoyo en **carga**/**propulsión**, instancia #12/#13/#14 por sub-fase y suma **#43** push-off time ratio y **#44** propulsive impulse ratio (catálogo 45→47). Activo con 2 FSR. Cierra la contradicción ADR-029 ↔ SPEC-02 | aceptada |
+| 039 | El maestro deja de duplicar las vistas | `Arquitectura_Sistema_Marcha.md` pasa a **índice + overview**: cada sección que replicaba una vista queda en 1-2 párrafos + puntero, y el **§15 "Resumen de decisiones" se reemplaza por un puntero al índice de esta bitácora**. Motivo: **9 de los 14 conflictos** de la auditoría vivían en el maestro, y dos de ellos contradecían invariantes (modelos pesados al worker; IC como fallback de sync). Mismo criterio que ADR-037. 579 → ~300 líneas | aceptada |
+| 040 | Bloque I (tronco): definido y ubicado, diferido | I1/I2/I3 → **#45/#46/#47**; el cómputo de tronco se asigna al **core 1 de la cintura** (V2), pero el bloque queda **OFF en el set activo** — se prende cambiando el `feature_set_version`. **SPEC-10** deja las recomendaciones. Principio explicitado por Juan: el catálogo es una **biblioteca de features disponibles**, no una lista de obligaciones. Incluye **apéndice conceptual** (armónicos, cómo se fija el fundamental con la ventana, por qué la asignación par/impar no depende del paciente) | aceptada |
+| 041 | Alcance de FSR: hasta 4 (CP-08) | **Máximo de diseño = 4 FSR** por plantilla; la mínima sigue con **2** (punta+talón). El 3º/4º entran en la rev del PCB y **obligan a mux analógico**: con GP29 midiendo VSYS quedan sólo 3 ADC libres, y sacrificar VSYS choca con el corte por baja tensión de ADR-035. **Formato de paquete fijado en 4 slots** (400 B/s extra, despreciable) para no versionar el protocolo con hardware sellado. Cierra CP-08 | aceptada |
 
 ---
 
@@ -1079,7 +1082,202 @@ Se elige **A' con B' como confirmación**: el cruce de carga dispara, el pie-pla
 
 **Consecuencias.** Cambian SPEC-01 y SPEC-02, la Vista 2 §3, la Vista 3 (Parte A: bloques A/C/D + nota de conteo) y el esquema (`src/db/schema.sql`, `gait_events`). El catálogo pasa a **47** entradas nominales; el vector real crece más por la instanciación del bloque C. Las features que dependen de MS declaran esa dependencia en el catálogo (ADR-021), así que un MS de baja confianza las apaga sin tocar el resto. **Cierra la contradicción ADR-029 ↔ SPEC-02.** Se suman parámetros calibrables (`h_ms`, mapeo FSR→región) al `feature_set_version`. La validación de la detección de MS en marcha hemipléjica real queda para la fase de captura, junto con la de IC/TO (advertencia ya registrada en el informe de alineación).
 
+
+---
+
+### Apéndice conceptual (en llano) — qué es mid-stance y por qué el cruce de carga
+
+*Registrado a pedido de Juan.*
+
+**1. Las dos fases del ciclo.** Cada pie alterna entre **apoyo** (está en el piso) y **balanceo** (está en el aire). El sistema ya detectaba los dos bordes del apoyo: **IC** (*initial contact*, el pie toca) y **TO** (*toe-off*, el pie despega).
+
+```
+IC ─────────────── APOYO ─────────────── TO ────── BALANCEO ────── IC
+│                                        │                          │
+el pie toca                        la punta despega            vuelve a tocar
+```
+
+**2. Qué es mid-stance.** Es el punto medio de ese apoyo: el instante en que **el peso del cuerpo pasa por encima del pie apoyado**. La otra pierna va cruzando por el aire y el sujeto está parado sobre un solo pie, con el centro de masa justo arriba. En términos de carga, es el momento en que **el peso termina de trasladarse del talón al antepié**.
+
+```
+IC ──── el talón carga ──── [MS] ──── el antepié carga ──── TO
+        ↑                    ↑                      ↑
+   apoyás el talón     el peso pasa arriba     empujás con la punta
+```
+
+**3. Por qué se detecta con los 2 FSR que ya hay.** Hay un sensor en el talón y otro en la punta. Al principio del apoyo el del talón lee alto y el de la punta bajo; al final es al revés. **En algún momento las dos curvas se cruzan** — y ese cruce es una marca limpia y robusta, sin sensores nuevos y sin depender de la IMU.
+
+**4. Para qué sirve.** Hasta ahora las features de presión (bloque C: peak force, integral presión-tiempo, loading rate) se calculaban **sobre todo el apoyo, como un solo número**. Con mid-stance se pueden calcular **por mitades**: cuánto cargó en la primera mitad (aceptación del peso) contra la segunda (propulsión).
+
+Y eso es específicamente relevante en marcha post-ACV. El problema típico del lado parético **no es que no apoye**, sino que **no logra transferir el peso al antepié**: apoya, se queda en el talón y despega sin empujar. Con un solo número por apoyo, esa firma **se promedia y se pierde**. Partida en dos, salta a la vista. Es el **déficit de push-off**, que la bibliografía del proyecto identifica como uno de los hallazgos más característicos del cuadro (Kang 2025 — paper #20; Sanghan et al. 2014; marco teórico §"déficit de propulsión").
+
+**5. La honestidad terminológica.** En la literatura clásica (Perry), *mid-stance* es un evento **cinemático**: la tibia queda vertical sobre el pie apoyado. Lo que esta spec detecta es el **cruce de carga**, que en marcha sana cae cerca de ese instante pero en marcha hemipléjica **puede divergir** —y suele hacerlo tarde, o no ocurrir—. Se eligió la definición de carga porque (a) es la que el FSR entrega de forma robusta, (b) es el instante funcionalmente relevante para la propulsión, y (c) mantiene la arquitectura de detección de SPEC-01 (FSR primario + confirmación IMU, que es más preciso en el instante: RMSE ~14 ms contra ~50-61 ms del IMU solo). La confirmación por pie-plano del IMU ancla el evento al mid-stance cinemático cuando ambos coinciden, y **la divergencia entre ambos es informativa** — queda anotada como candidata de feature.
+
+**6. El caso en que no hay cruce.** Si el paciente **nunca transfiere la carga**, las dos curvas no se cruzan nunca. En vez de tratarlo como una falla de detección, se emite MS en el máximo del cociente `F_ante/F_post` con baja confianza y **flag `no_crossover`** — *que es señal de anomalía, no error*. Es el mismo criterio que SPEC-01 ya aplicaba a IC/TO: en patología conviene no perder eventos.
+
 **Referencia.** ADR-029 (propuesta original de MS), ADR-015 (IC/TO), ADR-023 (set activo 2-FSR), ADR-021 (catálogo y dependencias), ADR-038 → SPEC-01 / SPEC-02; Kang (2025, paper #20), Sanghan et al. (2014), Ma, Zheng & Lee (2018); marco teórico (fases del ciclo, líneas ~252-253; déficit de propulsión, línea ~35).
+
+---
+
+## ADR-039 — El maestro deja de duplicar las vistas: pasa a índice + overview
+**Estado:** aceptada (2026-08-18) — **Decisión: `Arquitectura_Sistema_Marcha.md` conserva la foto completa del sistema pero deja de replicar el detalle de las cuatro vistas. Cada sección que duplicaba una vista queda en uno o dos párrafos + puntero, y el "Resumen de decisiones" (§15) se reemplaza por un puntero al índice de la bitácora.**
+
+**Contexto.** El 21/07, al consolidar las vistas, se decidió que el maestro **mantuviera la vista general completa**, aceptando la duplicación como "coherente y buscada". La **auditoría de consistencia del 2026-08-18** midió el resultado de esa decisión: de los **14 conflictos** encontrados entre documentos, **9 vivían en el maestro**.
+
+**Evidencia (lo que estaba mal, y por qué importa).**
+
+| Sección | Decía | Debía decir |
+|---|---|---|
+| §8.4 | "41 features en 8 bloques" | 47 en A–I (ADR-029/038) |
+| §8.5 | IC/TO "plantilla **o cintura** (CP-03)" | En la plantilla — CP-03 cerrada por ADR-015 |
+| §9.2, §10.1, §12 | "clase E/W" | E/**H**/W — falta la clase H de ADR-013 |
+| §10.1 | "sklearn/**PyTorch**" | TF/Keras — ADR-022 descartó PyTorch |
+| §16 | "modelos pesados en **clase W (worker)**" | Clase **H (host)**; el worker nunca infiere en tiempo real |
+| §16 | "**fallback a emparejado por IC**" ante fallo de sync | El IC no sincroniza ni compensa drift (ADR-004) |
+| §3 | "ver §12, Riesgos" | §16 (§12 era el worker) |
+| §9.1 | "profiling §16" | Backlog #11 |
+| §13 | RLS genérico, "propuesta para revisión" | ADR-032: `patient_access`, `service_role`, CP-18 |
+| §15 | Terminaba en ADR-028 | Faltaban **10 filas** (ADR-029 a 038) |
+| §17 | "CP-01 a CP-12" | CP-01 a CP-21 |
+
+Las **dos filas de §16** son el caso grave: no estaban desactualizadas, **contradecían invariantes decididos**. Un lector que confiara en ese cuadro de riesgos mandaría los modelos pesados al worker y usaría el IC como red de seguridad del reloj — las dos cosas que el proyecto decidió explícitamente **no** hacer.
+
+**Análisis.** El mecanismo es idéntico al del DDL duplicado (ADR-037): dos copias, nada que las sincronice, y la que no se usa a diario se pudre. Pero acá con un agravante de escala — el DDL eran 150 líneas en un archivo; esto eran **diez secciones** que hay que recordar tocar en cada decisión. El flujo de trabajo de `CLAUDE.md` incluso lo pedía por escrito ("reflejá el cambio en el Resumen de decisiones"), y aun así **se saltó en las últimas diez decisiones seguidas**. Cuando una regla de proceso falla diez veces consecutivas, el problema no es la disciplina: es que la estructura pide algo que no se sostiene.
+
+Y el caso de §15 es especialmente claro: **la bitácora ya tiene su propio índice** con tema, decisión y estado de cada ADR — la misma información, mantenida en el mismo archivo donde se escribe la decisión, y por lo tanto siempre al día.
+
+**Opciones evaluadas.**
+- **A — Índice + overview corto (elegida).** Cada sección duplicada queda en uno o dos párrafos que dan la foto y apuntan a la vista; se sacan tablas y detalle. §15 → puntero al índice de la bitácora. §16 (Riesgos) y §17 (Cuestiones) se conservan y se corrigen: son **transversales**, no duplican ninguna vista. *Pros:* una sola fuente por tema; el maestro sigue sirviendo para entender el sistema de punta a punta en una lectura; las decisiones futuras se escriben en un solo lugar. *Contra:* deja de ser autocontenido para el detalle — hay que abrir la vista.
+- **B — Completar y mantener las dos copias.** *Pros:* lectura autocontenida completa; era la decisión del 21/07. *Contra:* el registro empírico muestra que no se sostiene — diez decisiones seguidas sin propagar; y el costo se paga en cada ADR nuevo, para siempre.
+- **C — Arreglar sólo los nueve conflictos puntuales.** *Pros:* lo más rápido hoy. *Contra:* no toca la causa; vuelve a pasar en la próxima tanda.
+
+**Decisión.** Opción A. Estructura resultante (§0 a §16): §1–§2 alcance y resumen (transversales) · §3–§13 **overview + puntero** por dominio · §11 mapa de entidades de la base (apunta a `schema.sql`, ADR-037) · **§14 Decisiones = puntero al índice de la bitácora** · §15 Riesgos · §16 Cuestiones abiertas. El documento pasa de **579 a ~300 líneas**. Se agrega en §0 la regla de desempate: **si una sección del maestro y una vista discrepan, manda la vista**.
+
+**Justificación.** Es la misma regla que el proyecto ya aplica a las features ("se define una vez en la Vista 3, se ejecuta en la Vista 2 y el worker") y al esquema de la base (ADR-037). El maestro recupera el rol que su propio §0 le asignaba desde el principio —**índice y overview**— en vez de ser una segunda copia de todo. La duplicación no se elimina por prolijidad: se elimina porque **generó nueve incoherencias en un mes**, dos de ellas capaces de inducir a construir lo contrario de lo decidido.
+
+**Consecuencias.** El maestro pierde ~155 líneas. Se corrigen de paso los nueve conflictos (los que sobrevivían en secciones que ahora se reescriben desaparecen solos; §15/§16 —hoy Riesgos y Cuestiones— se corrigieron explícitamente). **Cambia la numeración de secciones**, así que se actualizaron las referencias cruzadas de las cuatro vistas. El paso 2 del flujo de trabajo de `CLAUDE.md` —"reflejá el cambio en el Resumen de decisiones del maestro"— **queda sin objeto**: escribir el ADR en la bitácora (con su fila de índice) es ahora suficiente. Las cuestiones abiertas se listan en §16 como **instantánea con fecha**, no como registro paralelo.
+
+**Referencia.** ADR-037 (fuente única del esquema, mismo criterio), ADR-000/§0 (rol del maestro), ADR-004, ADR-011 rev, ADR-013, ADR-015, ADR-022, ADR-029, ADR-032, ADR-038; auditoría de consistencia 2026-08-18; `CLAUDE.md` (flujo de trabajo).
+
+---
+
+## ADR-040 — Bloque I (tronco): definido y ubicado, pero diferido en el set activo
+**Estado:** aceptada (2026-08-18) — **Decisión: las tres features de tronco se renumeran a #45/#46/#47, se ubican formalmente como cómputo de la cintura en la Vista 2, y quedan definidas y disponibles pero OFF en el set activo. Se prenden cambiando el `feature_set_version`, sin tocar código. SPEC-10 deja las recomendaciones de implementación para cuando se prendan.**
+
+**Contexto.** La auditoría de consistencia del 2026-08-18 encontró que el **bloque I no existía en la Vista 2**: la Vista 3 define tres features de tronco que corren en la cintura (I1 Improved Harmonic Ratio ML, I2 RMS de aceleración de tronco, I3 LDLJ de tronco), pero la vista de firmware no las menciona ni una vez —el core 1 de la cintura tenía asignado "inferencia + fusión bilateral + IMU + decisión"— y no había SPEC para ninguna. Era una ruptura de la regla de layering: algo definido en V3 que nadie ejecuta en V2.
+
+El peso del hueco: según **ADR-030**, el bloque I es la **justificación principal de que la cintura exista como nodo**. El marco teórico daba por perdidas las features de tronco de Brasiliano porque el diseño original era solo-plantilla, y hasta planeaba *"aproximar la simetría desde el pie"*; el IMU de cintura a ~L4-L5 las mide directo. El **IHR ML es la feature top-1** del set de tres que llega a 90,2 % de accuracy en clustering no supervisado.
+
+**Principio que apareció en la discusión (aporte de Juan).** *"Quizá no todos los features los vaya a usar desde el día uno. Lo dejamos disponible para más adelante si es necesario."* Esto no es una excepción para el bloque I: es la **lectura correcta de qué es el catálogo**. El catálogo es una **biblioteca de features disponibles**, no una lista de obligaciones; el **set activo** es lo que efectivamente se calcula. Esa separación ya existía como mecanismo (**ADR-021**) y ya se había usado dos veces (bloque E y #18 apagados por hardware — ADR-023; #42 diferida — ADR-029). Lo nuevo acá es que se apaga algo **por decisión de alcance**, no por falta de hardware — y el mecanismo lo soporta igual.
+
+**Opciones evaluadas.**
+- **A — SPEC completa y feature activa desde el día uno.** *Pros:* la feature más discriminativa disponible desde la primera captura. *Contra:* obliga a fijar ahora tres decisiones metodológicas (N de armónicos, método de remuestreo, tratamiento de la velocidad) que se resuelven mucho mejor mirando espectros reales; y suma carga de firmware antes de saber si hace falta.
+- **B — Definido, ubicado y diferido, con SPEC de recomendaciones (elegida).** *Pros:* cierra la ruptura de layering **hoy** (la cintura tiene el rol asignado y las features tienen número); deja escrito todo lo aprendido para que prender la feature más adelante sea leer una spec y cambiar el `feature_set_version`, no volver a investigar; no compromete decisiones metodológicas sin datos. *Contra:* la feature top-1 de la evidencia no entra en los primeros modelos.
+- **C — Marcarlas exploratorias y no tocar la Vista 2.** *Pros:* cero trabajo. *Contra:* deja la ruptura de layering abierta y el nodo cintura sin justificación ejecutada en ninguna vista — que es exactamente el hallazgo de la auditoría.
+
+**Decisión.**
+1. **Renumeración:** `I1 → #45` (IHR ML), `I2 → #46` (RMS de tronco), `I3 → #47` (LDLJ de tronco). El catálogo queda con numeración uniforme #1–#47, condición para el archivo declarativo de ADR-021.
+2. **Ubicación (Vista 2):** el cómputo de las features de tronco se asigna explícitamente al **core 1 de la cintura**, junto con la fusión bilateral. La cintura ya tiene todo lo que hace falta: su propio IMU y los eventos IC de ambas plantillas sobre el timeline común (ADR-004).
+3. **Set activo:** el **bloque I completo queda OFF**, igual que el bloque E. Se prende con un `feature_set_version` nuevo, sin reescritura.
+4. **SPEC-10** recoge las recomendaciones de implementación —incluido lo que hay que verificar contra la fuente antes de codificar— para que prender el bloque no exija rehacer la investigación.
+
+**Justificación.** La feature es valiosa y barata de computar (una FFT por zancada, <0,5 % de duty según SPEC-07), pero **no es barata de definir bien**: depende de tres elecciones metodológicas cuyo efecto sólo se ve con datos de un paciente real, y de una dependencia dura con la calidad de la detección de IC (ver apéndice). Diferirla no pierde nada mientras quede **escrita**; activarla más tarde cuesta un cambio de config. Lo que sí se cierra ahora es el hueco estructural: que el nodo cintura tenga en la Vista 2 el rol que la Vista 3 le atribuye.
+
+**Consecuencias.** Cambian Vista 2 (§3 y §9), Vista 3 (Parte A del satélite: renumeración y set activo; §1 de la vista), y se agrega **SPEC-10**. El **catálogo sigue en 47** features nominales; el **set activo 2-FSR** ahora excluye bloque E (#22-25, #42), #18 **y bloque I (#45-47)**. Cierra el hueco B1 de la auditoría. **No agrega carga de firmware** en la primera iteración.
+
+---
+
+### Apéndice conceptual (en llano) — armónicos, IHR y por qué la separación no depende del paciente
+
+*Registrado a pedido de Juan, que preguntó cómo se separan los armónicos intrínsecos de los extrínsecos y si eso varía de paciente a paciente.*
+
+> **Desarrollo matemático completo → `docs/investigacion/fundamento_dft_ihr.md`.** Este apéndice da la intuición; ese documento da la formulación de la DFT, la demostración de la ortogonalidad, el teorema de simetría de media onda que fundamenta la separación par/impar, el análisis del leakage, y las consecuencias prácticas para el firmware. **Figura de apoyo:** `docs/investigacion/ihr_armonicos_explicacion.html`.
+
+**1. Qué es un armónico.** Cualquier señal que se repite con período **T** puede escribirse como suma de ondas cuyas frecuencias son múltiplos enteros de **f₀ = 1/T**. Esos múltiplos son los armónicos. Dicho de la forma más útil acá: **el armónico N es una onda que entra exactamente N veces en el período**. El armónico 1 hace un ciclo; el 2, dos ciclos; el 3, tres.
+
+**2. Cómo se sabe cuál es el fundamental — no se busca en el espectro, se impone con la ventana.** Esta es la pregunta clave y tiene una respuesta que simplifica todo el problema.
+
+El camino ingenuo sería hacer una FFT de un tramo largo de marcha, buscar el pico más alto y llamarlo "frecuencia de zancada". Es frágil: en marcha hemipléjica la cadencia varía mucho, el pico se ensancha, y es fácil confundir la frecuencia de **paso** (2f₀) con la de **zancada** (f₀) — que es justamente la distinción de la que depende todo el método.
+
+No hace falta, porque **el sistema ya sabe dónde empieza y termina cada zancada**: las plantillas envían los eventos **IC** y la cintura los tiene sobre el timeline común (ADR-004). Entonces:
+
+1. Se corta el segmento de aceleración de tronco entre `IC(n)` e `IC(n+1)`. Ese segmento **es** una zancada, por definición del evento.
+2. Se **remuestrea** a un número fijo de muestras (p. ej. 256), porque cada zancada dura distinto.
+3. Se le hace la FFT a ese segmento.
+
+**Por qué el bin *k* resulta ser el armónico *k*.** La FFT **no mide Hz**. Sus funciones base son `e^(−j2πkn/N)` con `n = 0…N−1`: cuando `n` recorre la ventana entera, la fase va de 0 a ≈2πk, o sea que **el bin `k` es la onda que completa exactamente `k` ciclos dentro de la ventana**. La unidad nativa de la FFT es *ciclos por ventana*, no ciclos por segundo. Los Hz aparecen después, dividiendo: `f_k = k / T_ventana`.
+
+De ahí sale todo:
+
+- Si la **ventana es una zancada**, entonces *ciclos por ventana* = *ciclos por zancada*. Y "k ciclos por zancada" es, literalmente, la definición del armónico k de la zancada. **Bin k = armónico k** es una tautología una vez que la ventana se eligió bien.
+- Y el índice del bin queda **independiente de la frecuencia absoluta**. Zancada de 1,2 s → bin 1 = 0,833 Hz. El mismo paciente más rápido, zancada de 1,0 s → bin 1 = 1,0 Hz. Distintos Hz, **mismo bin**, porque en ambos casos es "un ciclo por zancada". El remuestreo a largo fijo es, en el fondo, un **cambio de variable de tiempo a porcentaje del ciclo de marcha**.
+
+**Por qué la ventana tiene que cerrar.** La FFT asume implícitamente que la señal se repite indefinidamente con período igual a la ventana: construye la señal como suma de ondas que **cierran exactamente en los bordes**. Una onda con un número no entero de ciclos no cerraría — habría un salto en la costura. Por eso los únicos "ladrillos" disponibles son los que entran un número entero de veces.
+
+> **Consecuencia de diseño (importante).** El IHR depende **críticamente** de la detección de IC. Si un IC llega mal, la zancada se corta mal, la ventana deja de ser un período exacto y el fundamental cae **entre** bins: como no existe un bin para "1,4 ciclos por ventana", la FFT lo arma sumando muchos bins vecinos y la energía se desparrama (*spectral leakage*) — **cayendo sobre los armónicos equivocados, que es exactamente lo que el IHR interpreta como asimetría**. Se lee asimetría donde no la hay. Por eso SPEC-10 exige descartar o marcar las zancadas cuyo IC vino con baja confianza (SPEC-01). Es una dependencia dura, no cosmética. Por la misma razón se **remuestrea** en vez de rellenar con ceros: el zero-padding alarga la ventana sin alargar el período de la señal, así que rompe la propiedad "una ventana = un período".
+
+**3. Por qué pares e impares, y por qué la asignación no depende del paciente.** Una zancada contiene **dos pasos**, uno con cada pierna. La pregunta que ordena todo es: *¿qué hace cada armónico en la segunda mitad de la zancada, comparado con la primera?*
+
+- Un armónico **par** entra un número entero de veces en **media** zancada. Cuando arranca la segunda mitad, arranca igual que la primera → **repite**.
+- Un armónico **impar** deja medio ciclo colgando. Cuando arranca la segunda mitad, viene **dado vuelta** (cambiado de signo).
+
+Formalmente: el armónico *n* evaluado en `t + T/2` queda desfasado en `πn`. Si *n* es par, el desfasaje es múltiplo de 2π → mismo valor. Si es impar, es múltiplo impar de π → signo opuesto.
+
+Ahora, qué hace el tronco en una marcha **perfectamente simétrica**:
+
+| Eje | Movimiento | En la 2ª mitad de la zancada… | Armónicos que hacen eso | **Intrínsecos** | **Extrínsecos** |
+|---|---|---|---|---|---|
+| Vertical | subís y bajás **una vez por paso** | **repite** la 1ª | pares | **pares** | impares |
+| Antero-posterior | frenás y acelerás **una vez por paso** | **repite** la 1ª | pares | **pares** | impares |
+| **Medio-lateral** | te inclinás a un lado y después al otro: **una vez por zancada** | es el **espejo** de la 1ª | impares | **impares** | pares |
+
+**"Intrínseco" = el grupo que le corresponde a ese eje** si la marcha fuera perfectamente simétrica. **"Extrínseco" = el otro.** No es una propiedad de los números pares o impares en abstracto: es cuál grupo corresponde según lo que ese eje hace al caminar. Por eso en ML es al revés que en vertical y AP — y por eso hay que decir siempre *respecto de qué eje*.
+
+**La respuesta a la pregunta de Juan:** la asignación **no se detecta y no depende del paciente**. Es una consecuencia matemática de que una zancada tiene dos pasos, igual para todo el mundo — sano, hemipléjico, alto, bajo. Es como medir cuán afinado está un instrumento: no se decide cuáles son los armónicos de un La según el instrumento (son 440, 880, 1320 Hz); lo que se mide es cuánto se desvía cada instrumento de esa serie. Acá igual: la serie está fija, y lo que varía de paciente a paciente es **cuánta energía se fuga a donde no debería**. **Esa fuga es la medición.**
+
+**4. Por qué el eje ML y no el vertical.** Brasiliano encuentra el **IHR ML** como top-1, no el vertical. La razón se ve en la tabla: en ML la zancada completa —y no el paso— es el ritmo fundamental, así que una diferencia entre las dos piernas aparece de forma **directa** en vez de quedar enmascarada dentro de un patrón que ya se repite dos veces. Sumado a que el tronco a ~L4-L5 está cerca del centro de masa, el IHR ML **integra la asimetría de todo el cuerpo en un solo número, con un solo sensor**.
+
+**5. Qué sí depende de decisiones (y son las que difiere esta ADR).**
+- **Cuántos armónicos se suman (N).** La suma no llega a infinito: se corta en el armónico N (la literatura suele usar 10 o 20). Cambiar N cambia el valor. Se fija **una vez para todos los pacientes**, así que no rompe la comparabilidad interna — pero hay que documentarlo, porque un IHR con N=10 no es comparable con uno de otro trabajo que usó N=20.
+- **El método de remuestreo.** Cada zancada dura distinto (1,20 s / 1,35 s / 1,18 s → 120 / 135 / 118 muestras a 100 Hz). Hay que llevarlas a un largo fijo. Y acá está el motivo real para querer datos antes: en marcha hemipléjica la duración de zancada **varía mucho más** que en marcha sana — tanto que el **CoV de stance es una de las tres features top de Brasiliano**, o sea que la variabilidad por sí sola discrimina. Con esa variabilidad, el remuestreo puede introducir artefactos que no aparecen en sujetos sanos.
+- **La velocidad de marcha como confusor.** El HR cae con la velocidad incluso en gente sana. Si el paciente camina más lento un día, el IHR baja por un motivo que **no** es un empeoramiento del patrón. Como `stride speed` (#7) ya está en el catálogo, se puede condicionar.
+
+**6. Por qué la personalización amortigua casi todo eso.** El sistema es **one-class personalizado** (ADR-000, ADR-011): no necesita un "IHR normal" absoluto contra el cual comparar. Mide la distribución del IHR **de ese paciente** en su calibración y detecta desvíos de **su propio** baseline. Todo lo que sea constante para ese paciente —cómo le queda el cinturón, su altura, el N elegido, incluso un sesgo del método de remuestreo— se absorbe en el baseline y desaparece. Lo único que **no** se absorbe es lo que varía dentro del mismo paciente: la velocidad (punto 5).
+
+**7. Lo que hay que verificar contra la fuente antes de implementar.** La fórmula que registra el marco teórico —`IHR_n = Σ P_i^I / Σ (P_i^I + P_i^E)`— es la forma **normalizada y acotada** entre 0 y 1; el HR clásico es un cociente par/impar sin acotar, que se porta mal numéricamente (puede irse a infinito cuando el denominador tiende a cero). La lógica par/impar de este apéndice es la base estándar del harmonic ratio, pero **qué armónicos entran exactamente en cada conjunto en la variante *Improved* debe leerse de Brasiliano et al. (2026) y citarse**, no asumirse.
+
+**Referencia.** ADR-021 (catálogo declarativo y set activo — el mecanismo que permite diferir), ADR-023 (precedente: apagar features por hardware), ADR-029 (bloque I y precedente de #42 diferida), ADR-030 (el bloque I como justificación de la cintura), ADR-004 (timeline común que provee los IC), ADR-019/SPEC-07 (CMSIS-DSP y costo de la FFT), SPEC-01 (confianza del IC), SPEC-10 (recomendaciones); Brasiliano et al. (2026) *Sci Rep* 16:8908; marco teórico §5.2 y §"Symmetry features"; `docs/investigacion/ihr_armonicos_explicacion.html`.
+
+---
+
+## ADR-041 — Alcance de FSR: hasta 4 en la placa nueva (con mux); 2 en la mínima
+**Estado:** aceptada (2026-08-19) — **Decisión: el diseño contempla un máximo de 4 FSR por plantilla. La placa actual sigue con 2 (punta + talón). El 3º y 4º (medial y lateral) entran en la próxima revisión del PCB, lo que obliga a un mux analógico. El formato de paquete se fija en 4 slots desde ya.**
+
+**Contexto.** **CP-08** preguntaba cuántos FSR soportar y dónde estaba el límite. El checklist de la próxima revisión del PCB (`esquema_alimentacion.md` §7, ítem 2) lo marcaba como *"decidir ahora"*, porque cambia el ruteo de la placa. Y la **auditoría de consistencia del 2026-08-18** encontró el síntoma documental: el formato de paquete de la Vista 1 estaba fijo en `fsr1 fsr2 fsr3` mientras el texto contiguo prometía "reserva slots para **N** FSR", y los diagramas mermaid decían `IMU+3FSR` cuando el hardware real tiene 2.
+
+**El límite duro.** El Pico 2 W expone cuatro entradas ADC: **GP26 (ADC0), GP27 (ADC1), GP28 (ADC2)** y **GP29 (ADC3)**. GP29 está cableada en la placa a la medición de **VSYS**, o sea la tensión de la celda. Quedan por lo tanto **3 canales libres**.
+
+Hoy se usan dos: **punta (ADC0)** y **talón (ADC1)** — ambos sobre el eje antero-posterior. Queda uno.
+
+**Por qué 3 FSR no alcanzan para lo que se quiere medir.** El bloque E (COP_ML, SPEC-06) necesita separación en el eje **medial-lateral**, y punta y talón están los dos sobre la línea media. Con un tercer sensor lateral se obtienen dos coordenadas M/L distintas y un COP_ML **crudo pero calculable**. Con **medial y lateral** se obtiene el COP_ML que efectivamente usa la literatura, y además se habilita la **#18 (ratio medial/lateral de peak force)**, que es una feature de asimetría intra-pie ligada a la **inversión del pie parético** (Ma, Zheng & Lee 2018) — uno de los hallazgos característicos del cuadro.
+
+**Opciones evaluadas.**
+- **A — Hasta 4 FSR, con mux analógico (elegida).** *Pros:* COP_ML propio + #18 habilitada; cubre el bloque E completo. *Contra:* exige un componente nuevo en la placa (mux o ADC externo) y un tiempo de establecimiento por conmutación que la secuencia de adquisición tiene que respetar.
+- **B — 3 FSR, sin componentes nuevos.** *Pros:* entra en los ADC libres sin tocar nada; COP_ML crudo suficiente para *evaluar* si el bloque E aporta. *Contra:* deja #18 apagada de forma permanente y el COP_ML queda con una geometría pobre — se arriesga a descartar el bloque E por una medición mala, no porque la feature no sirva.
+- **C — 4 FSR sacrificando GP29/VSYS.** *Pros:* cuatro canales sin mux. *Contra:* se pierde la medición de batería — y **ADR-035 rev** justamente elevó la importancia del **corte por baja tensión en firmware** (sin gestión de energía, un equipo encendido consume hasta agotar la celda). Cambiar un problema de seguridad por uno de ruteo es mal negocio. **Descartada.**
+- **D — Formato de paquete con N variable** (campo de conteo + array). *Pros:* no compromete el máximo. *Contra:* complica el parsing en la cintura y en el worker para resolver algo que ya se puede decidir; el ahorro de banda es despreciable (ver abajo).
+
+**Decisión.**
+1. **Máximo de diseño: 4 FSR por plantilla.** Set activo actual: **2** (punta ADC0/GP26, talón ADC1/GP27) — sin cambios, **ADR-023 sigue vigente**.
+2. **Próxima revisión del PCB:** se suman **medial y lateral**. Uno va a **ADC2/GP28**; el cuarto exige **mux analógico** (o ADC externo). Deja de ser una opción a evaluar: es **requisito firme** de esa revisión.
+3. **Formato de paquete: 4 slots fijos** de FSR (`fsr1..fsr4`, uint16), con los no poblados en cero. El **set activo del catálogo** (ADR-021) dice cuáles son válidos; el protocolo no cambia al sumar hardware. **Costo:** 4 bytes extra por muestra a 100 Hz = **400 B/s por pie**, frente a un caudal total de ~5 KB/s. Despreciable, y evita versionar el protocolo a mitad de camino.
+4. **Cierra CP-08** en cuanto al **cuántos y dónde está el límite**. La validación del *timing* de la adquisición multiplexada (tiempo de establecimiento del mux dentro del presupuesto de ADR-014: sobremuestreo ~1 kHz + decimación ×10) queda para el **backlog #11**, sobre firmware y placa reales.
+
+**Justificación.** La razón de fondo para no quedarse en 3 es de método: con una geometría de sensores pobre, un resultado negativo del bloque E sería **ambiguo** —no se sabría si la feature no sirve o si la medición era mala— y ese es el peor tipo de resultado para una tesis. El costo de la decisión es un componente y algo de ruteo, en una placa que **hay que rediseñar igual** por el cargador de corriente limitada (prioridad de seguridad, CP-09) y el alojamiento de la celda. Fijar el paquete en 4 slots ahora cuesta 400 B/s y ahorra una migración de protocolo con hardware ya sellado — y conviene recordar que **al sellar la plantilla se pierde el BOOTSEL**, así que los cambios posteriores dependen del OTA.
+
+**Consecuencias.** **CP-08 → Resuelta.** Cambian: Vista 1 §1 (mermaid a 2 FSR reales) y §4 (formato de paquete a 4 slots), maestro §3 y §4 (ídem), `esquema_alimentacion.md` §7 ítem 2 (de "decidir si" a "sumar mux"), CP-01 (nota del pinout). **No cambia el set activo:** las features de fuerza medial-lateral (bloque E #22-25, #42 y #18) siguen **OFF** hasta que exista el hardware — ADR-023 y ADR-040 sin cambios. El **firmware de adquisición** tendrá que secuenciar el mux; se especifica cuando se escriba, con el ADR-014 como marco.
+
+**Referencia.** CP-08, CP-01, CP-09; ADR-023 (set activo 2-FSR), ADR-014 (adquisición determinística), ADR-035 rev (corte por baja tensión → GP29 ocupado), ADR-021 (set activo y modularidad), ADR-040 (features apagadas por alcance vs por hardware), SPEC-06 (COP_ML), ADR-029 (#42); `esquema_alimentacion.md` §7; Ma, Zheng & Lee (2018) sobre inversión del pie parético.
 
 ---
 
