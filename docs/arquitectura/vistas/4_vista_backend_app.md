@@ -20,6 +20,8 @@
 | **Series (hypertables)** | Eventos de marcha, vectores de features, scores de anomalía | **TimescaleDB** (particionado por tiempo + compresión) |
 | **Object storage** | Crudo continuo (Parquet), artefactos de modelos, imágenes de firmware | Blobs referenciados desde tablas (`storage_url` + `checksum`) |
 
+> **Qué es el crudo que llega acá (ADR-042).** Señal de FSR + IMU a 100 Hz con el **AHRS ya aplicado en el micro**: `lin_accel` (sin gravedad), giro calibrado y **orientación** — y **ningún otro procesamiento**. El worker **consume y no re-procesa IMU**. La calibración es **irreversible por diseño**: no se persisten sus parámetros.
+
 ### 1.1 Tablas
 
 **Metadata:** `patients` (con `external_code` anónimo + PII mínima), `devices` (rol `insole_left|insole_right|waist`, revisión de HW, versión de firmware), `sessions` (paciente, **fase** `exploratory`/`operational`/`edge`, `feature_set_version`, entorno, set de dispositivos, `host_type`, tiempos), `patient_access` (pertenencia user→patient→rol, base del RLS) y `feedback_config` (política de feedback per-paciente).
@@ -45,7 +47,9 @@ Una fila = **un vector de features por zancada** (con `time`, `session_id`, `pat
 ### 1.4 Retención tiered por fase [ADR-008]
 
 - **Fase de dataset:** **crudo completo** (Parquet en storage) + features + eventos + scores + modelos → máxima trazabilidad para re-extraer features y reevaluar algoritmos.
-- **Uso real (máxima):** features/eventos/scores continuos; el **crudo sólo alrededor de anomalías/drift** (snippet pedido al buffer circular de la plantilla). Evita ~4 GB/mes/paciente de crudo continuo conservando lo clínicamente interesante, y encaja con el sensor de drift de Mahalanobis.
+- **Uso real (máxima):** features/eventos/scores continuos; el **crudo sólo alrededor de anomalías/drift** (snippet pedido al buffer circular de la plantilla). Evita del orden de **6 GB/mes/paciente** de crudo continuo conservando lo clínicamente interesante, y encaja con el sensor de drift de Mahalanobis.
+
+> **Cómo sale ese número.** Con el paquete de **35 B** (ADR-042) a 100 Hz por dos plantillas son **7 KB/s**, o sea **~6 GB/mes** suponiendo **~8 h/día de uso** y **sin comprimir**; a 24 h/día serían ~18 GB, y Parquet comprime bastante por debajo de eso. El supuesto de las 8 h hay que declararlo: la cifra anterior (~4 GB) venía del paquete viejo de 29 B y tampoco lo decía.
 
 ---
 
@@ -78,7 +82,7 @@ Servicio de cómputo **separado de Supabase**. Entrena las clases **E/H/W** (la 
 
 ## 4. App host / puente + UI de control [ADR-033, resuelve CP-15]
 
-El **host** es el puente entre la cintura y la nube, **y** el lugar donde vive la UI de control del operador.
+El **host** es el puente entre la cintura y la nube, **y** el lugar donde vive la UI de control del operador. La UI no es un panel de estado: es el **orquestador de la máquina de estados del sistema** — toda interacción con el equipo (abrir y cerrar sesión, elegir modo, calibrar, provisionar el modelo, disparar OTA) pasa por ella, y el micro nunca infiere nada [ADR-043 rev, ADR-034].
 
 **Funciones:** ingesta por **BLE** (notificaciones GATT para el stream; writes con ACK para control), **buffer local** (tolera cortes de conectividad), escritura a Supabase (crudo a storage + features/eventos/scores a la DB), **puente OTA** (baja el artefacto del registry y lo empuja a la cintura) y **runtime de inferencia espejo** para los modelos de clase **H** (ADR-011 rev).
 
@@ -88,7 +92,43 @@ El **host** es el puente entre la cintura y la nube, **y** el lugar donde vive l
 
 > El **modo** de operación se manda como **comando explícito** por el canal confiable; el micro nunca lo infiere [ADR-034].
 
-### 4.1 Configuración de feedback per-paciente [ADR-027 / SPEC-09]
+### 4.1 Ciclo de vida de la sesión [ADR-043 rev — definición canónica]
+
+Una sesión no es "apretar grabar": es una **transacción de 8 fases** que la UI orquesta y que garantiza que el equipo está en condiciones antes de tomar un solo dato. **Diagrama:** `../pipeline_sesion.mermaid`.
+
+| # | Fase | Qué ocurre | Duración | Qué muestra la UI |
+|---|---|---|---|---|
+| 0 | **Encendido** | Switch físico (ADR-035); plantillas → WiFi de la cintura; cintura → advertising BLE. **Arranca el reloj térmico del IMU** | seg | — |
+| 1 | **Conexión** | La cintura reporta plantillas asociadas, baterías, firmware, **paciente + versión de modelo en flash**, temperatura de los 3 IMU y uptime | seg | Panel de estado + **barra de estabilización** |
+| 2 | **Configuración** | Paciente, modo (`exploratory`/`operational`/`edge`) y `adaptation_enabled` | operador | Formulario; la barra sigue corriendo |
+| 3 | **Provisioning** | Se baja de la DB la versión activa del modelo + `feedback_config` + set activo y **se escribe a flash** (slot A/B, checksum, estampado con `patient_id` + versión). Si el paciente cambió, se limpian los ring buffers de crudo | seg | "Preparando equipo para \<paciente\>" |
+| 4 | **Gate térmico** | Espera el remanente, ya descontado lo consumido en 1-3 | resto | Botón de calibrar **deshabilitado** con el faltante a la vista |
+| 5 | **Calibración** | Poses (postura → CP-31); bias de giro, offset de accel, alineación anatómica (SPEC-04) | decenas de seg | Instrucción de pose + **indicador en vivo de quieto/movimiento** |
+| 6 | **Verificación** | Modelo en flash = paciente · calibración OK · dos plantillas conectadas · sync dentro de presupuesto · batería. **Sin esto no arranca** | instantáneo | Checklist; si falla, dice qué |
+| 7 | **Sesión** | Fila en `sessions`; grabación/scoring según el modo; adaptación en RAM si está habilitada | la sesión | Panel en tiempo real |
+| 8 | **Cierre** | Se sella `ended_at`; si hubo adaptación el micro sube el estado final y se versiona (N+1). **El flash no se toca** | seg | Confirmación + resumen |
+
+**El warm-up corre en paralelo, no al final.** El reloj térmico arranca al **encender**, no al abrir la sesión, así que conexión, configuración y provisioning se consumen del mismo tiempo. Por eso la barra se muestra desde la fase 1: el operador tiene que entender que el reloj ya viene corriendo y que la app no lo hace esperar al final. **El gate se destraba por temperatura estable** del MPU-6050 (sensor integrado), no por temporizador — con temporizador fijo como respaldo. Entre sesiones seguidas sin apagar no vuelve a cerrarse. Cuánto tarda y con qué umbral: **CP-25**.
+
+**Autoridad del modelo: la DB manda.** Lo que se flashea es **siempre** la última versión de la base; no hay reconciliación flash↔DB. El flash es una **copia de trabajo descartable** cuya única función es que un **reset a mitad de sesión** recargue el modelo sin depender del host. *Costo aceptado:* si la subida del cierre falla, esa sesión pierde su adaptación y la siguiente arranca de la versión anterior (ADR-043 rev; cierra **CP-24**). Bordes sin resolver —caída del enlace, cierre sucio, `ended_at` huérfano— en **CP-30**.
+
+**Guardas contra el cruce de pacientes.** El artefacto en flash lleva `patient_id` + versión, y la cintura **se niega a scorear** si no coincide con la sesión abierta (fase 6). Del lado de la base, la FK compuesta `anomaly_scores (model_id, patient_id) → models (id, patient_id)` impide guardar un score de un paciente calculado con el modelo de otro.
+
+### 4.2 Canal de estado (separado del stream)
+
+El pipeline y el panel necesitan datos que no son muestras. Van por un canal propio, de baja frecuencia:
+
+| Canal | Rate | Contenido |
+|---|---|---|
+| **Stream** | 100 Hz | Las muestras (Vista 1 §4) |
+| **Estado** | cada 1-2 s | Batería, **temperatura de los 3 IMU**, **uptime**, contadores de pérdida de paquetes (derivados del `seq`), error de sincronización estimado |
+| **A demanda** | — | Paciente + versión de modelo en flash — al conectar y **después de todo reset** |
+
+Temperatura y uptime siguen viajando **con la sesión corriendo**: la temperatura se aleja del punto de calibración durante el uso (el pie calienta la plantilla), así que es una **señal de calidad del dato** que permite explicar después una sesión anómala; y una caída del uptime es cómo se detecta un reset silencioso. El paciente y la versión en flash, en cambio, no van en el stream.
+
+Este canal es lo que alimenta el panel de monitoreo y **la evidencia con la que se validan** la coexistencia WiFi-AP + BLE y la precisión de sincronización (**CP-28**): hoy el sistema produce esos números —el `seq` existe explícitamente para detectar pérdidas— y ningún componente los consume.
+
+### 4.3 Configuración de feedback per-paciente [ADR-027 / SPEC-09]
 
 La política de feedback vibrotáctil es **parametrizable por paciente y vive en la DB**: `feedback_source` (qué detector alimenta la decisión), **umbrales de las 3 bandas** (leve/marcada/riesgo), **N de la ventana** de zancadas, intensidad, refractario e histéresis, y patrones habilitados. El host los **baja a la cintura**. Los valores son **empíricos** (se fijan con la calibración y el análisis — Vista 3 §5).
 
@@ -111,19 +151,20 @@ El backend **publica y versiona**; el firmware **valida y conmuta** (mecánica e
 - El worker sube el artefacto a object storage y registra la fila en **`models`** (versión, linaje `parent_version`, métricas, `checksum`, `artifact_format`).
 - El host observa el registry, **descarga** el artefacto y lo empuja por **BLE** a la cintura.
 - El resultado del despliegue queda en **`model_deployments`** (`active` / `rolled_back`); las imágenes de firmware en **`firmware_images`**.
-- Todo modelo queda **respaldado**: si un micro se rompe o se pierde, se recupera desde la DB.
+- **Respaldo.** Los modelos de clase **E/H/W** quedan respaldados como artefacto en el registry. Los de clase **L** no viajan por OTA: su estado adaptado se sube en el **check-in** de cada sesión y se versiona en la DB (§4.1, ADR-043 rev). En los dos casos **la DB es la fuente de verdad** y el flash del micro una copia de trabajo descartable: si un micro se rompe o se pierde, se recupera desde la DB.
 
 ---
 
 ## ADRs relevantes
-ADR-006 (Supabase), ADR-007 (Postgres+Timescale+storage), ADR-008 (retención tiered), ADR-009 (worker de reentrenamiento), ADR-011 rev (ruteo model-agnostic / runtime espejo en el host), ADR-012 (OTA — lado backend), ADR-022 (cuantización int8), ADR-027 + SPEC-09 (config de feedback), ADR-031 (esquema de `feature_vectors`), ADR-032 (RLS y seguridad), ADR-033 (UI de control y dashboard), ADR-034 (`host_type` en la sesión).
+ADR-006 (Supabase), ADR-007 (Postgres+Timescale+storage), ADR-008 (retención tiered), ADR-009 (worker de reentrenamiento), ADR-011 rev (ruteo model-agnostic / runtime espejo en el host), ADR-012 (OTA — lado backend), ADR-022 (cuantización int8), ADR-027 + SPEC-09 (config de feedback), ADR-031 (esquema de `feature_vectors`), ADR-032 (RLS y seguridad), ADR-033 (UI de control y dashboard), ADR-034 (`host_type` en la sesión), **ADR-043 rev** (ciclo de vida de la sesión, canal de estado, autoridad del modelo).
 
 ## Stack (resumen; detalle en `../stack_tecnologico.md`)
 **Supabase** (Postgres + TimescaleDB + Storage + Auth) · **supabase-py** (worker y host) · **bleak** (BLE del host, mínima) · **FastAPI** (UI de control) · **TensorFlow/Keras + conversor TFLite/LiteRT** (worker) · scikit-learn, numpy/scipy/pandas · framework de dashboard **a definir** (máxima) · stack móvil **a definir** (máxima).
 
 ## Diagramas de esta vista
 - `../esquema_base_de_datos.mermaid` — modelo entidad-relación.
-- `../componentes_backend_app.mermaid` — componentes y flujos del backend/app (**nuevo**).
+- `../componentes_backend_app.mermaid` — componentes y flujos del backend/app.
+- `../pipeline_sesion.mermaid` — **pipeline de una sesión**, de encendido a cierre (**nuevo** — ADR-043 rev).
 
 ## Pendiente de definir / investigar (backlog)
 - **CP-06 — Proveedor del worker en la nube** (VPS / contenedor gestionado / instancia con GPU). Se decide al llegar a la máxima.

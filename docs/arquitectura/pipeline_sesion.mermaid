@@ -1,0 +1,97 @@
+%% Pipeline de una sesion: encendido -> provisioning -> gate termico -> calibracion -> verificacion -> sesion -> cierre
+%% Decision: ADR-043 (rev. 2026-08-22). Definicion canonica: vistas/4_vista_backend_app.md
+%% Clave: el warm-up del IMU corre EN PARALELO al setup (arranca al encender, no al abrir sesion)
+%% y el gate se destraba por TEMPERATURA ESTABLE del MPU-6050, no por temporizador (CP-25).
+%% Invariante: la DB manda. El flash es una copia de trabajo descartable.
+sequenceDiagram
+    autonumber
+    actor OP as Operador
+    participant UI as App host (UI de control)
+    participant CI as Cintura (hub)
+    participant MI as Plantillas
+    participant SB as Supabase (DB + storage)
+
+    rect rgb(245,245,245)
+    Note over MI,CI: FASE 0 - ENCENDIDO (switch fisico, ADR-035)
+    OP->>MI: encender
+    OP->>CI: encender
+    MI->>CI: asociacion WiFi (cintura = AP)
+    Note over CI,MI: ARRANCA EL RELOJ TERMICO (warm-up del IMU)
+    CI->>CI: advertising BLE
+    end
+
+    rect rgb(238,243,255)
+    Note over UI,CI: FASE 1 - CONEXION Y RECONOCIMIENTO
+    UI->>CI: conectar (BLE, bond existente - ADR-028)
+    CI-->>UI: plantillas asociadas, baterias, firmware
+    CI-->>UI: paciente + version de modelo EN FLASH
+    CI-->>UI: temperatura de los 3 IMU + uptime
+    Note over UI: la barra de estabilizacion se muestra DESDE ACA
+    end
+
+    rect rgb(238,243,255)
+    Note over OP,UI: FASE 2 - CONFIGURACION (en paralelo con el warm-up)
+    OP->>UI: paciente
+    OP->>UI: modo (exploratory / operational / edge)
+    OP->>UI: adaptation_enabled (si/no)
+    end
+
+    rect rgb(238,243,255)
+    Note over UI,SB: FASE 3 - PROVISIONING (en paralelo con el warm-up)
+    UI->>UI: comparar paciente elegido vs. el que reporta el flash
+    UI->>SB: pedir version activa del modelo del paciente
+    SB-->>UI: modelo (mu + Sigma^-1) + feedback_config + set activo
+    UI->>CI: escribir a flash (slot A/B, checksum, estampado patient_id + version)
+    alt el paciente cambio
+        CI->>MI: limpiar ring buffers de crudo (ADR-032)
+    end
+    end
+
+    rect rgb(255,247,238)
+    Note over CI,UI: FASE 4 - GATE TERMICO
+    CI-->>UI: temperatura de IMU (cada 1-2 s)
+    Note over UI: boton de CALIBRAR deshabilitado hasta que la temperatura se estabilice
+    Note over UI: ya se descontaron las fases 1-3; sesiones seguidas sin apagar no reesperan
+    end
+
+    rect rgb(238,252,243)
+    Note over OP,MI: FASE 5 - CALIBRACION DE SENSORES (ADR-017 / SPEC-04)
+    UI->>OP: instruccion de pose (postura -> CP-31)
+    MI-->>UI: indicador en vivo quieto / se movio
+    MI->>MI: bias de giro, offset de accel, alineacion anatomica
+    CI-->>UI: calibracion OK
+    end
+
+    rect rgb(238,252,243)
+    Note over UI,MI: FASE 6 - VERIFICACION (GATE DURO)
+    UI->>CI: verificar precondiciones
+    Note over UI,CI: modelo en flash = paciente de la sesion<br/>calibracion OK<br/>dos plantillas conectadas<br/>sincronizacion dentro de presupuesto (CP-28)<br/>bateria suficiente
+    alt falla alguna
+        UI-->>OP: indica cual y NO deja arrancar
+    end
+    end
+
+    rect rgb(238,252,243)
+    Note over MI,SB: FASE 7 - SESION CORRIENDO
+    UI->>SB: abrir fila en sessions (modo, adaptation_enabled, host_type)
+    MI->>CI: stream 100 Hz + eventos + features por-pie
+    CI->>CI: fusion bilateral + inferencia + decision de feedback
+    opt adaptation_enabled = true
+        CI->>CI: actualizar mu / Sigma EN RAM (clase L)
+    end
+    CI-->>MI: comando de feedback (ADR-027)
+    CI-->>UI: canal de estado (1-2 s): bateria, temperatura, uptime,<br/>perdida de paquetes, error de sync
+    UI->>SB: persistir crudo / features / scores
+    end
+
+    rect rgb(255,247,238)
+    Note over CI,SB: FASE 8 - CIERRE
+    OP->>UI: cerrar sesion
+    alt adaptation_enabled = true
+        CI->>UI: estado final (mu + Sigma adaptados)
+        UI->>SB: versionar como N+1 (parent_version = N)
+    end
+    UI->>SB: sellar ended_at
+    Note over CI: el FLASH NO se toca: queda con N
+    Note over SB: la proxima sesion flashea lo ultimo de la DB
+    end

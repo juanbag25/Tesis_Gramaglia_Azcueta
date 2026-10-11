@@ -193,7 +193,7 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 
 **Despliegue OTA A/B desde el inicio** [ADR-012], por BLE desde el host: pesos (artefacto del modelo a un slot de flash, con checksum y conmutación atómica) y **firmware completo** (bootloader A/B con reversión si la imagen nueva no reporta OK). El riesgo de brickeo se mitiga con A/B + checksum + watchdog + modo de recuperación.
 
-**Versionado y respaldo:** todo modelo queda en la DB (fila en `models` + artefacto en storage) con versión, métricas y linaje; la versión anterior se conserva como *last-known-good*.
+**Versionado y respaldo:** los modelos **E/H/W** quedan en la DB (fila en `models` + artefacto en storage) con versión, métricas y linaje, y la anterior se conserva como *last-known-good*. Los de clase **L** no viajan por OTA: su estado adaptado sube en el **check-in** de cada sesión y se versiona igual. **La DB es la fuente de verdad** y el flash del micro una copia de trabajo que se reescribe en cada provisioning [ADR-043 rev]. > **Detalle:** Vista 4 §4.1.
 
 > **Detalle:** mecánica de firmware → **Vista 2 §8**; lado backend y registry → **Vista 4 §6**; ciclo conceptual → **Vista 3 §6** y `ciclo_de_vida_modelos.mermaid`.
 
@@ -203,7 +203,7 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 
 **Supabase** como plataforma gestionada [ADR-006/007]: PostgreSQL + **TimescaleDB** para series + **object storage** para blobs + auth. Modelo en tres capas: relacional para metadata, hypertables para eventos/features/scores, object storage para crudo (Parquet), artefactos de modelos e imágenes de firmware.
 
-**Retención tiered por fase** [ADR-008]: en fase de dataset se guarda **crudo completo** (máxima trazabilidad); en uso real se guardan features/eventos/scores y el **crudo sólo alrededor de anomalías** — evita ~4 GB/mes/paciente conservando lo clínicamente interesante.
+**Retención tiered por fase** [ADR-008] *(volumen y supuestos: Vista 4 §1.4)*: en fase de dataset se guarda **crudo completo** (máxima trazabilidad); en uso real se guardan features/eventos/scores y el **crudo sólo alrededor de anomalías** — evita del orden de **6 GB/mes/paciente** (~8 h/día, sin comprimir — supuestos en Vista 4 §1.4) conservando lo clínicamente interesante.
 
 **Worker de reentrenamiento** [ADR-009]: separado de Supabase. Laptop en la mínima, nube en la máxima (proveedor concreto → **CP-06**). Entrena E/H/W, cuantiza a int8 y publica al registry; corre con `service_role`.
 

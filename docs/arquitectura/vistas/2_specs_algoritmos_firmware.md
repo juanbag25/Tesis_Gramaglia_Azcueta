@@ -78,15 +78,18 @@
 
 **Objetivo.** Estimar, por pie y por zancada, el **largo de zancada** (y de ahí la **velocidad de zancada**) integrando la aceleración del IMU, con el drift corregido por **ZUPT** disparado por el *stance* del FSR.
 
-**Entradas.** accel + gyro (100 Hz), **orientación del pie** (backlog #5), **fase stance** (SPEC-02).
+**Entradas.** **`lin_accel`** (aceleración lineal, **ya sin gravedad** — ADR-042) + gyro (100 Hz), **orientación del pie**, **fase stance** (SPEC-02).
+
+> ⚠️ **ADR-042.** El dato llega **post-AHRS**: la gravedad **ya está removida**. El paso de "restar `g`" que tenía esta spec **se eliminó**. Restarla una segunda vez deja un sesgo constante de −9,81 m/s² que se **integra dos veces**: sobre una zancada de ~1 s son **~4,9 m** de desplazamiento espurio contra un `stride_length` real de ~1 m — cinco veces la señal, y deja #6 y #7 inservibles.
 
 **Algoritmo (por zancada).**
-1. **Frame global:** con la orientación del pie, rotar la aceleración del frame sensor al frame global.
-2. **Quitar gravedad:** restar `g` en el frame global → aceleración lineal.
-3. **1ª integración:** integrar la aceleración lineal → velocidad, sobre el intervalo de la zancada (entre *stances*).
-4. **ZUPT (de-drift):** como la velocidad debe ser ~0 en *stance*, repartir la deriva acumulada linealmente en la zancada para forzar v=0 al inicio/fin del apoyo.
-5. **2ª integración:** integrar la velocidad corregida → desplazamiento; **stride length** = magnitud del desplazamiento horizontal de la zancada.
-6. **stride speed** = stride length / stride time.
+1. **Frame global:** con la orientación del pie, rotar `lin_accel` del frame sensor al frame global.
+2. **1ª integración:** integrar la aceleración lineal → velocidad, sobre el intervalo de la zancada (entre *stances*).
+3. **ZUPT (de-drift):** como la velocidad debe ser ~0 en *stance*, repartir la deriva acumulada linealmente en la zancada para forzar v=0 al inicio/fin del apoyo.
+4. **2ª integración:** integrar la velocidad corregida → desplazamiento; **stride length** = magnitud del desplazamiento horizontal de la zancada.
+5. **stride speed** = stride length / stride time.
+
+*(La numeración corrió: el viejo paso 2 se eliminó por ADR-042.)*
 
 **Robustez.** El *stance* lo da el **FSR** (ground truth) → más robusto que los detectores IMU-only; el ZUPT es ideal en **marcha lenta** (stance con v≈0 claro). Precisión esperada del orden de pocos %.
 
@@ -121,7 +124,9 @@
 
 **Consumidores.** ZUPT/stride length (SPEC-03), foot pitch en IC/TO, ROM pitch/roll, LDLJ, mean angular velocity (bloques F/G).
 
-**Paridad (condicional).** `imufusion` (Python) se usa en el worker **sólo para re-extraer features del IMU desde el crudo off-device** (fase de dataset/experimentación): ahí debe reproducir exactamente lo que hace **Fusion (C)** en el micro. En el reentrenamiento *edge* normal el worker consume **features ya computadas** por el micro y **no** necesita imufusion.
+**Frontera con el worker (ADR-042).** El crudo que se transmite y persiste es la salida de **esta** cadena completa: `lin_accel`, giro calibrado y orientación. El worker **no re-procesa IMU** — consume esos canales y calcula features. En consecuencia `imufusion` **deja de ser necesario** para re-extraer features del IMU, y la paridad de ADR-018 se acota a **las features**, no al AHRS.
+
+> **No re-aplicar la calibración.** Los parámetros de calibración **no se persisten**, justamente para que nadie los vuelva a aplicar sobre un dato que ya los tiene incorporados. La calibración es **irreversible por diseño** (ADR-042).
 
 **Parámetros calibrables.** offsets/bias por dispositivo; `β` de Madgwick; alineación anatómica por sesión.
 
@@ -381,3 +386,45 @@ Cada feature se calcula **por zancada**, sobre el segmento entre `IC(n)` e `IC(n
 
 ---
 
+## SPEC-11 — Ciclo de vida de la sesión (lado firmware)
+
+**Decisión:** ADR-043 rev. **Placement:** cintura (orquesta) + plantillas (obedecen). **Estado:** definido (a implementar). **Depende de:** canal confiable (ADR-003), OTA/slots de flash (ADR-012, SPEC-08), calibración (SPEC-04), buffer de crudo (Vista 2 §7).
+
+**Objetivo.** Especificar **qué tiene que exponer y hacer el micro** para que la UI pueda orquestar el pipeline de 8 fases. La secuencia completa y la lógica de la app viven en la **Vista 4 §4.1**; acá va sólo el contrato del firmware.
+
+**Lo que el micro expone (canal confiable, a demanda).**
+
+| Campo | Cuándo | Para qué |
+|---|---|---|
+| `patient_id` + `model_version` en flash | al conectar y **tras todo reset** | Fase 1 (comparar) y fase 6 (gate) |
+| `firmware_version`, `hw_revision` | al conectar | Trazabilidad; `devices` |
+| plantillas asociadas + estado de enlace | al conectar y ante cambio | Fase 6 (las dos conectadas) |
+
+**Lo que el micro publica (canal de estado, cada 1-2 s).** Batería · **temperatura de los 3 IMU** · **uptime** · contadores de pérdida de paquetes por plantilla (del `seq`) · error de sincronización estimado. Sigue publicándose **con la sesión corriendo**: la temperatura es señal de calidad del dato y una caída del uptime delata un reset.
+
+**Comandos que el micro acepta.**
+
+| Comando | Efecto | Fase |
+|---|---|---|
+| `wipe_raw_buffers` | Limpia el ring buffer de crudo de las dos plantillas | 3 (sólo si cambió el paciente) |
+| `provision(model, feedback_config, feature_set, adaptation_enabled)` | Escribe el artefacto al slot libre con **checksum** y **cabecera `patient_id` + versión**; conmuta atómicamente; carga config | 3 |
+| `calibrate()` | Rutina estática de SPEC-04; devuelve OK/error y un indicador en vivo de quieto/movimiento | 5 |
+| `arm(session_id, patient_id, mode)` | Verifica precondiciones y habilita el scoring | 6 |
+| `close()` | Devuelve el estado adaptado (μ, Σ) si `adaptation_enabled`; deja de scorear | 8 |
+
+**Reglas de seguridad (no negociables).**
+
+1. **Sin `arm()` no hay scoring ni feedback.** En `IDLE` el micro muestrea para el panel si se lo piden, pero **no** corre el detector ni acciona el motor.
+2. **Verificación de paciente en cada `arm()`.** Si `patient_id` de la cabecera del slot activo ≠ el de la sesión, `arm()` **falla** con código explícito. Nunca se scorea "por las dudas".
+3. **Tras un reset, el micro vuelve a `IDLE`** y re-reporta paciente y versión. Recarga el modelo de flash —por eso el flash existe— pero **no re-arma solo**: espera que el host lo re-arme.
+4. **El estado adaptado no se escribe a flash.** Vive en RAM; sube en `close()`. Si la sesión muere sin `close()`, se pierde: es el costo aceptado de que **la DB mande** (ADR-043 rev).
+
+**Gate térmico.** El micro no decide: **publica** temperatura y uptime, y el host aplica el criterio de estabilidad. Así el umbral se ajusta sin reflashear (CP-25).
+
+**Parámetros.** Período del canal de estado (1-2 s), tamaño de la cabecera de estampa, timeout de `arm()`, umbral del indicador de quietud para la calibración.
+
+**Mecánica a implementar.** Máquina de estados en la cintura (`IDLE` → `PROVISIONED` → `CALIBRATED` → `ARMED` → `RUNNING`); cabecera de estampa en el formato de slot de SPEC-08; publicación del canal de estado; propagación de `wipe_raw_buffers` a las plantillas por el canal confiable; serialización de μ/Σ para `close()`.
+
+**Referencias.** ADR-043 rev (decisión y pipeline completo), Vista 4 §4.1 y §4.2, `../pipeline_sesion.mermaid`, SPEC-04 (calibración), SPEC-08 (slots y runtime), ADR-012 (OTA A/B), ADR-032 (borrado al reasignar), CP-25 (warm-up), CP-30 (bordes: desconexión y cierre sucio), CP-31 (postura de calibración).
+
+---

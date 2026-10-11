@@ -1,6 +1,12 @@
 -- Esquema de la base — Sistema de plantillas inteligentes de marcha (post-ACV)
 -- Plataforma: Supabase (PostgreSQL + TimescaleDB + object storage)
 --
+-- ATENCION (CP-26): TimescaleDB esta DEPRECADO en Supabase sobre Postgres 17 y removido; la ruta
+-- oficial es particionado nativo + pg_partman, y `continuous aggregates` NO existe en pg_partman
+-- (afecta la optimizacion del dashboard de ADR-031). Hay que resolverlo ANTES de la primera
+-- captura, junto con la herramienta de migraciones (CP-23). Las tres create_hypertable de mas
+-- abajo quedan sujetas a esa decision.
+--
 -- FUENTE UNICA DE VERDAD DEL ESQUEMA (ADR-037).
 -- El maestro (docs/arquitectura/Arquitectura_Sistema_Marcha.md §11.3) ya no duplica el DDL:
 -- mantiene la tabla de entidades y apunta aca. La vista canonica del backend es
@@ -46,6 +52,11 @@ create table sessions (
   device_set jsonb,                     -- {left, right, waist device ids}
   host_type text check (host_type in ('laptop','mobile')),
   host_app_version text,
+  -- adaptation_enabled: la adaptacion online (clase L) se prende/apaga POR SESION desde la UI
+  -- (ADR-043 rev). false = corre congelada en la version vigente y el check-in NO produce version
+  -- nueva; true = arranca en N y produce EXACTAMENTE UNA version nueva al cerrar (parent_version=N).
+  -- Es lo que habilita la comparacion pareada con y sin adaptacion.
+  adaptation_enabled boolean not null default true,
   started_at timestamptz,
   ended_at timestamptz,
   notes text
@@ -203,6 +214,20 @@ create index on feature_vectors (session_id, features_source, time desc);
 create index on anomaly_scores (patient_id, time desc);
 create index on gait_events (session_id, time desc);
 create index on models (patient_id, algo, version desc);
+
+-- Una version por (paciente, algoritmo). Con una version nueva por sesion adaptada
+-- (ADR-043 rev) la colision deja de ser hipotetica.
+create unique index models_patient_algo_version_uq on models (patient_id, algo, version);
+
+-- Un score no puede calcularse con el modelo de OTRO paciente (ADR-043 rev, guarda del lado
+-- de la base; la del lado del firmware es la estampa de patient_id en el slot de flash).
+-- Con models.patient_id nulo (modelo global) la FK compuesta no se enforcea: es el comportamiento
+-- correcto. Requiere un unique sobre (id, patient_id), trivial porque id ya es PK.
+alter table models
+  add constraint models_id_patient_uq unique (id, patient_id);
+alter table anomaly_scores
+  add constraint anomaly_scores_model_patient_fk
+  foreign key (model_id, patient_id) references models (id, patient_id);
 
 -- ============================================================
 -- Seguridad: RLS estricto por paciente (ADR-032, resuelve CP-04 a nivel tecnico)

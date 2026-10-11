@@ -4,7 +4,7 @@
 >
 > **Estado:** consolidada — el detalle migró aquí desde el maestro (§7, §9). El maestro conserva un overview + puntero.
 >
-> **Specs de algoritmos (guías de implementación):** `2_specs_algoritmos_firmware.md` — SPEC-01 (IC/TO), SPEC-02 (segmentación), SPEC-03 (stride/ZUPT), SPEC-04 (módulo IMU), SPEC-05 (buffer de zancadas), SPEC-06 (COP_ML, **diferido** ADR-023), SPEC-07 (FFT/DSP), SPEC-08 (runtime de inferencia), SPEC-09 (feedback vibrotáctil), SPEC-10 (features de tronco — **diferida**, ADR-040).
+> **Specs de algoritmos (guías de implementación):** `2_specs_algoritmos_firmware.md` — SPEC-01 (IC/TO), SPEC-02 (segmentación), SPEC-03 (stride/ZUPT), SPEC-04 (módulo IMU), SPEC-05 (buffer de zancadas), SPEC-06 (COP_ML, **diferido** ADR-023), SPEC-07 (FFT/DSP), SPEC-08 (runtime de inferencia), SPEC-09 (feedback vibrotáctil), SPEC-10 (features de tronco — **diferida**, ADR-040), **SPEC-11** (ciclo de vida de la sesión — lado firmware).
 
 ## 1. Arquitectura de firmware (dos builds + código compartido)
 
@@ -60,7 +60,7 @@ Muestreo **exacto y periódico** pese a la actividad del radio (el jitter arruin
 
 ## 4. Sincronización (implementación) — [ADR-004]
 
-La **cintura emite el beacon** periódico; cada muestra lleva **timestamp + seq**; la **corrección de drift** (regresión lineal) corre en la **capa de aplicación** (portable WiFi↔BLE). El **backbone es el único que sincroniza**; el **emparejado de zancadas por IC usa el reloj ya sincronizado** — no sincroniza ni compensa drift (ver Vista 1 §5).
+La **cintura emite el beacon** periódico **por WiFi** a las plantillas —es el enlace que hay que alinear a nivel de muestra, y no cambia entre mínima y máxima—; cada muestra lleva **timestamp + seq**; la **corrección de drift** (regresión lineal) corre en la **capa de aplicación** (portable WiFi↔BLE). El **backbone es el único que sincroniza**; el **emparejado de zancadas por IC usa el reloj ya sincronizado** — no sincroniza ni compensa drift (ver Vista 1 §5).
 
 ## 5. Inferencia on-device — [ADR-020 / SPEC-08]
 
@@ -77,13 +77,17 @@ El detector corre en la **cintura**, pero el **motor está en la plantilla** →
 
 ## 7. Buffer circular de crudo
 
-Cada plantilla mantiene un **ring buffer** de crudo; en **edge**, ante una anomalía la cintura **pide el snippet** y se envía (§10.3). En **captura operativa** se sube el crudo **continuo** junto con las features del micro.
+Cada plantilla mantiene un **ring buffer** de crudo; en **edge**, ante una anomalía la cintura **pide el snippet** y se envía. En **captura operativa** se sube el crudo **continuo** junto con las features del micro.
+
+**Borrado al cambiar de paciente.** El buffer queda con marcha del paciente anterior, así que el **check-out** (fase 3 del pipeline) lo limpia en las dos plantillas antes de provisionar el modelo nuevo. Es lo que le da mecanismo, en la mínima, al requisito de borrado de ADR-032 — el factory-reset completo sigue diferido a la máxima (ADR-028). [ADR-043 rev; Vista 4 §4.1]
 
 ## 8. OTA A/B (pesos + firmware) — [ADR-012]
 
 **OTA completo desde el inicio**, por **BLE** desde el host, esquema **A/B**:
 
 - **Pesos (modelos):** artefacto del modelo (Mahalanobis = μ + Σ⁻¹; AE/LSTM = **flatbuffer int8** de TFLite Micro) a un **slot** de flash; **checksum** → **conmutación atómica** → el anterior queda **last-known-good** para rollback.
+- **Estampa de paciente (ADR-043 rev).** Todo artefacto en flash lleva **`patient_id` + versión** en su cabecera, y la cintura **se niega a scorear** si no coincide con el paciente de la sesión abierta. Sin esto, el par A/B —que existe para *rollback de versión*— se contamina al rotar pacientes y un rollback cargaría el baseline de otra persona.
+- **El flash es una copia de trabajo.** Se reescribe desde la DB en el **provisioning** de cada sesión: la DB manda y no hay reconciliación. Su única función propia es que un **reset a mitad de sesión** recargue el modelo sin depender del host — el estado adaptado de clase L vive en RAM y sólo sube en el check-in.
 - **Firmware:** **bootloader A/B** con dos imágenes; arranca la nueva y **revierte** si no reporta OK. Se mitiga el brickeo con A/B + checksum + **watchdog** + modo de recuperación. Flash: dos firmwares + dos slots, dentro del RP2350.
 
 ## 9. Asignación de cores y RTOS — [ADR-024 rev · ADR-025 · ADR-026]
@@ -92,6 +96,8 @@ Cada plantilla mantiene un **ring buffer** de crudo; en **edge**, ante una anoma
 
 - **Plantilla** (WiFi-STA sólo, **sin BLE/coexistencia**, **no infiere**): **core 0 = WiFi-STA + TX + motor**; **core 1 = adquisición (100 Hz duro) + eventos IC/TO + features por-pie**. Se agrupa el *pipeline de sensado* en el core 1 (data locality: el crudo a 100 Hz no cruza de core) y se aísla el WiFi —el inquilino de latencia impredecible— en el core 0. *(Las features **bilaterales** —simetría, double support— no se calculan acá: van en la cintura, ADR-005.)*
 - **Cintura** (acota el radio + la inferencia): **core 0 = radio** (WiFi-AP + BLE, **coexistencia**, donde lo pone el SDK); **core 1 = inferencia + fusión bilateral + IMU + decisión** (+ **features de tronco** cuando se prenda el bloque I — ADR-040/SPEC-10). La **coexistencia** WiFi-AP+BLE (riesgo maestro §15) es **sólo de la cintura**. El **IMU se lee por DMA** (ADR-026) para no competir con la inferencia del core 1.
+
+**Canal de estado (ADR-043 rev).** Además del stream de 100 Hz, la cintura publica cada **1-2 s**: batería, **temperatura de los tres IMU** (sensor integrado del MPU-6050 — destraba el gate térmico del pipeline y sirve como señal de calidad del dato durante la sesión), **uptime** (una caída delata un reset silencioso), contadores de **pérdida de paquetes** derivados del `seq`, y **error de sincronización** estimado. A demanda —al conectar y **tras todo reset**— reporta el **paciente y la versión de modelo que tiene en flash**. Detalle: Vista 4 §4.2.
 
 **Comunicación entre cores:** FIFO de hardware (`multicore_fifo_*`) / `queue_t` con spinlocks (Pico SDK).
 
@@ -107,7 +113,7 @@ El pairing user-facing es **cintura↔host** (plantilla↔cintura es de fábrica
 - **Dependencias:** CP-04 (nivel de seguridad + borrar bonds/datos al reasignar), CP-15 (UX de la app). Apéndice conceptual en **ADR-028**.
 
 ## ADRs relevantes
-ADR-010 (C/C++ Pico SDK), ADR-014 (adquisición), ADR-026 (muestreo/lectura del IMU), ADR-004 (sync), ADR-005 (features distribuidas — ejecución), ADR-015/016/017 (SPEC-01/03/04), ADR-019 (CMSIS-DSP), ADR-020 (TFLite Micro), ADR-012 (OTA), ADR-011 rev (ruteo), ADR-023 (set activo 2-FSR), ADR-024 rev (cores) / ADR-025 (bare-metal), ADR-027 (feedback vibrotáctil), ADR-028 (pairing BLE).
+ADR-010 (C/C++ Pico SDK), ADR-014 (adquisición), ADR-026 (muestreo/lectura del IMU), ADR-004 (sync), ADR-005 (features distribuidas — ejecución), ADR-015/016/017 (SPEC-01/03/04), ADR-019 (CMSIS-DSP), ADR-020 (TFLite Micro), ADR-012 (OTA), ADR-011 rev (ruteo), ADR-023 (set activo 2-FSR), ADR-024 rev (cores) / ADR-025 (bare-metal), ADR-027 (feedback vibrotáctil), ADR-028 (pairing BLE), **ADR-042** (crudo post-AHRS: el AHRS corre acá), **ADR-043 rev** (ciclo de vida, estampa de paciente, canal de estado).
 
 ## Stack (resumen; detalle en `../stack_tecnologico.md`)
 Pico SDK (`hardware_adc/dma/timer/pio/i2c`), **lwIP**, **BTstack**, **CMSIS-DSP** (DSP/FFT/álgebra), **TFLite Micro + CMSIS-NN** (`pico-tflmicro`, int8), **Fusion** (Madgwick), driver I²C MPU-6050 (lectura por **DMA** — ADR-026). **Bare-metal** (sin RTOS — ADR-025).

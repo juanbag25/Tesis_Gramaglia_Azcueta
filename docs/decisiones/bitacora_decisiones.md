@@ -53,7 +53,9 @@
 | 038 | Mid-stance: adopción y partición del apoyo | **Se adopta MS completo.** Detección en la plantilla por **cruce de carga retropié→antepié** (`F_ante ≥ F_post`, confirmado por pie-plano del IMU; flag `no_crossover` = anomalía). Parte el apoyo en **carga**/**propulsión**, instancia #12/#13/#14 por sub-fase y suma **#43** push-off time ratio y **#44** propulsive impulse ratio (catálogo 45→47). Activo con 2 FSR. Cierra la contradicción ADR-029 ↔ SPEC-02 | aceptada |
 | 039 | El maestro deja de duplicar las vistas | `Arquitectura_Sistema_Marcha.md` pasa a **índice + overview**: cada sección que replicaba una vista queda en 1-2 párrafos + puntero, y el **§15 "Resumen de decisiones" se reemplaza por un puntero al índice de esta bitácora**. Motivo: **9 de los 14 conflictos** de la auditoría vivían en el maestro, y dos de ellos contradecían invariantes (modelos pesados al worker; IC como fallback de sync). Mismo criterio que ADR-037. 579 → ~300 líneas | aceptada |
 | 040 | Bloque I (tronco): definido y ubicado, diferido | I1/I2/I3 → **#45/#46/#47**; el cómputo de tronco se asigna al **core 1 de la cintura** (V2), pero el bloque queda **OFF en el set activo** — se prende cambiando el `feature_set_version`. **SPEC-10** deja las recomendaciones. Principio explicitado por Juan: el catálogo es una **biblioteca de features disponibles**, no una lista de obligaciones. Incluye **apéndice conceptual** (armónicos, cómo se fija el fundamental con la ventana, por qué la asignación par/impar no depende del paciente) | aceptada |
-| 041 | Alcance de FSR: hasta 4 (CP-08) | **Máximo de diseño = 4 FSR** por plantilla; la mínima sigue con **2** (punta+talón). El 3º/4º entran en la rev del PCB y **obligan a mux analógico**: con GP29 midiendo VSYS quedan sólo 3 ADC libres, y sacrificar VSYS choca con el corte por baja tensión de ADR-035. **Formato de paquete fijado en 4 slots** (400 B/s extra, despreciable) para no versionar el protocolo con hardware sellado. Cierra CP-08 | aceptada |
+| 041 | Alcance de FSR: hasta 4 (CP-08) | **Máximo de diseño = 4 FSR** por plantilla; la mínima sigue con **2** (punta+talón). El 3º entra en ADC2/GP28 y el **4º obliga a mux analógico**: con GP29 midiendo VSYS quedan sólo 3 ADC libres, y sacrificar VSYS choca con el corte por baja tensión de ADR-035. **Formato de paquete fijado en 4 slots** (400 B/s extra, despreciable) para no versionar el protocolo con hardware sellado. Cierra CP-08 | aceptada |
+| 042 | Definición de "crudo" y frontera del IMU | **Crudo = post-AHRS**: `lin_accel` + ω calibrada + `pitch/roll/yaw` + FSR, a 100 Hz. El AHRS corre en el micro; el worker **consume y no re-procesa IMU**. Paquete 29→35 B (+orientación, ~7 KB/s). Congela Madgwick/`β` para lo ya capturado (riesgo aceptado). **Corrige SPEC-03** (elimina el "quitar gravedad", que si no metía ~4,9 m de error por zancada) | aceptada |
+| 043 | Ciclo de vida de la sesión (multi-paciente + clase L) | La sesión es una **transacción comandada por la interfaz**: check-out del estado L → provisioning → calibración → **gate READY** → running → check-in. **`adaptation_enabled` por sesión** (una versión nueva por sesión adaptada; habilita la comparación con/sin adaptación). Guardas: estampa de `patient_id` en flash + FK compuesta en la base. **Cierra la contradicción del respaldo de clase L**. **Rev:** pipeline de 8 fases, **gate térmico por temperatura del IMU** (el warm-up corre en paralelo al setup), **la DB manda** sobre el flash (copia descartable) y **canal de estado** separado del stream. Cierra CP-24; abre CP-25/CP-31 | aceptada (rev) |
 
 ---
 
@@ -240,7 +242,7 @@ O sea: "el micro calcula sus features por-pie" aplica a **operativa y edge**, no
 ## ADR-008 — Retención de datos
 **Estado:** aceptada — **Decisión: tiered por fase (desde el inicio)**
 
-**Contexto.** Estimaciones de volumen: ~5 KB/s → sesión de 30 min ≈ 9 MB crudo (comprimido 2–4 MB). El crudo **no es pesado** para una cohorte de investigación, pero en **uso diario continuo** llega a ~4 GB/mes/paciente — ese es el driver de costo.
+**Contexto.** Estimaciones de volumen: ~5 KB/s → sesión de 30 min ≈ 9 MB crudo (comprimido 2–4 MB). El crudo **no es pesado** para una cohorte de investigación, pero en **uso diario continuo** llega a ~4 GB/mes/paciente — ese es el driver de costo. *(Actualización 2026-08-22: la cifra correspondía al paquete de 29 B y no declaraba supuesto. Con el paquete de 35 B de **ADR-042** son ~**7 KB/s** → **~6 GB/mes** suponiendo ~8 h/día sin comprimir, ~18 GB a 24 h/día. El argumento de la decisión no cambia; el número vive ahora en Vista 4 §1.4 con sus supuestos escritos.)*
 
 **Opciones evaluadas.**
 - **A — Guardar todo siempre.** *Pros:* máxima trazabilidad (re-extraer features, reevaluar algoritmos). *Contra:* costo y superficie de privacidad altos en uso diario.
@@ -1278,6 +1280,155 @@ Hoy se usan dos: **punta (ADC0)** y **talón (ADC1)** — ambos sobre el eje ant
 **Consecuencias.** **CP-08 → Resuelta.** Cambian: Vista 1 §1 (mermaid a 2 FSR reales) y §4 (formato de paquete a 4 slots), maestro §3 y §4 (ídem), `esquema_alimentacion.md` §7 ítem 2 (de "decidir si" a "sumar mux"), CP-01 (nota del pinout). **No cambia el set activo:** las features de fuerza medial-lateral (bloque E #22-25, #42 y #18) siguen **OFF** hasta que exista el hardware — ADR-023 y ADR-040 sin cambios. El **firmware de adquisición** tendrá que secuenciar el mux; se especifica cuando se escriba, con el ADR-014 como marco.
 
 **Referencia.** CP-08, CP-01, CP-09; ADR-023 (set activo 2-FSR), ADR-014 (adquisición determinística), ADR-035 rev (corte por baja tensión → GP29 ocupado), ADR-021 (set activo y modularidad), ADR-040 (features apagadas por alcance vs por hardware), SPEC-06 (COP_ML), ADR-029 (#42); `esquema_alimentacion.md` §7; Ma, Zheng & Lee (2018) sobre inversión del pie parético.
+
+---
+
+## ADR-042 — Definición de "crudo" y frontera del procesamiento del IMU
+**Estado:** aceptada (2026-08-22) — **Decisión: el "crudo" que se transmite y persiste es la salida del módulo IMU *después* del AHRS — aceleración lineal sin gravedad + velocidad angular calibrada + orientación (pitch/roll/yaw) — más los FSR. El micro corre la cadena completa; el worker consume y no re-procesa IMU.**
+
+**Contexto.** La palabra **"crudo"** se usa en ADR-005 rev c (fase exploratoria = "crudo-solo"), ADR-008 (retención tiered), Vista 4 §1.4 y el diagrama `ciclo_de_vida_modelos.mermaid`, y **no está definida en ninguno de ellos**. La ambigüedad quedó expuesta en la revisión del 2026-08-22.
+
+SPEC-04 define el módulo IMU como una cadena de cuatro pasos — `driver I²C → calibración → Fusion AHRS (Madgwick) → gravity removal` — y afirma que el worker usa `imufusion` *"para re-extraer features del IMU desde el crudo off-device… ahí debe reproducir exactamente lo que hace Fusion (C) en el micro"*. Esa frase **sólo tiene sentido si el crudo almacenado es anterior al AHRS**, una frontera que nunca se declaró. El formato de paquete de la Vista 1 §4 (`ax ay az gx gy gz`) es coherente con esa lectura: transporta los 6 canales del sensor y ninguna orientación.
+
+**Dato técnico decisivo.** La gravedad **no se puede remover con un offset fijo tomado al inicio**. El acelerómetro mide la gravedad repartida entre sus tres ejes según la orientación del sensor; en la marcha el pie rota decenas de grados por paso, así que un vector restado una sola vez deja un residuo de hasta varios g — del mismo orden que las aceleraciones reales del pie, que quedan tapadas. Remover la gravedad exige conocer la orientación **en cada muestra**, que es lo que calcula Madgwick (paso 3). De ahí se sigue la simetría del problema: **una vez removida la gravedad, la orientación no se puede reconstruir desde el dato guardado**, porque integrar el giro solo derivaría sin la referencia gravitatoria que corregía ese drift. La elección de frontera determina, entonces, qué tiene que viajar en el paquete.
+
+**Opciones evaluadas.**
+- **A — Crudo pre-AHRS (salida del paso 2): accel + giro calibrados, con gravedad.** *Pros:* el AHRS y su parámetro `β` quedan **revisables sobre los datos ya capturados** — se podría comparar Madgwick contra Mahony o EKF (las tres alternativas que ADR-017 evaluó) sin recapturar; paquete más chico (29 B). *Contra:* el worker debe correr Madgwick y **coincidir con el micro sobre un filtro con estado e historia**, no sobre una fórmula cerrada — una superficie de paridad (ADR-018) mucho más frágil que la de una feature; y obliga a declarar dónde empieza el worker, o se aplica la calibración dos veces.
+- **B — Crudo post-AHRS (elegida): `lin_accel` + giro + orientación.** *Pros:* el worker **consume y calcula features**, sin re-procesar IMU ni arrastrar el estado del filtro; desaparece toda la clase de errores por doble aplicación; la paridad de ADR-018 se acota a las features, que es donde importa. *Contra:* **congela Madgwick y su `β`** para los datos ya capturados — cambiar de filtro exige recapturar; +6 B por muestra.
+- **C — Ambos (pre-AHRS + orientación).** *Pros:* reversibilidad total. *Contra:* 41 B por muestra y dato redundante, para una reversibilidad que no está en el alcance actual. **Descartada.**
+
+**Decisión.**
+1. **Definición canónica de crudo:** `[lin_accel XYZ | ω XYZ calibrada | pitch roll yaw | FSR ×4]` a **100 Hz**, con la calibración y el AHRS ya aplicados en el micro y **ningún otro procesamiento**. Ésta es la definición que rige en ADR-005 rev c, ADR-008 y Vista 4 §1.4.
+2. **El AHRS corre en el micro.** El worker consume el crudo y **no re-procesa IMU**. `imufusion` deja de ser necesario para re-extraer features del IMU; la cláusula condicional de SPEC-04 se acota en consecuencia.
+3. **Formato de paquete:** se suman `pitch roll yaw` como 3× int16. **29 → 35 B por muestra**, ~**7 KB/s** entre las dos plantillas (contra ~5,8 actuales). Mismo orden de costo que los 4 slots de FSR de ADR-041, absorbible por BLE.
+4. **SPEC-03 se corrige:** su paso 2 (*"quitar gravedad: restar `g` en el frame global"*) **se elimina**; el paso 1 (rotar al frame global con la orientación) se mantiene.
+5. **La calibración es irreversible por diseño.** No se persisten parámetros de calibración: no habría cómo re-aplicarlos y guardarlos sólo crearía la tentación de hacerlo.
+
+**Justificación.** La fase exploratoria calcula features off-device, así que el crudo tiene que alcanzar para **todo el catálogo**: el bloque F depende de la orientación (#26-29), el G de `lin_accel` y `ω` (#32-34), el H de ventanas de ambos (#35-38, #41) y SPEC-03 de las dos cosas. Con los 9 canales, todo se computa **igual en la plantilla y en el worker**, que es la propiedad que se buscaba.
+
+Entre A y B el intercambio es *reversibilidad del filtro* contra *simplicidad y robustez de la paridad*. Se elige B porque la paridad train/serve (ADR-018) es un invariante del proyecto y la clase de error que evita es silenciosa: un worker que aplica una corrección ya aplicada no falla, produce números plausibles y distintos. La contrapartida —recapturar si se cambia el filtro— es un costo acotado y visible, y ADR-017 ya eligió Madgwick con argumento.
+
+**Consecuencias.** El **riesgo aceptado** queda explícito: si el análisis de los primeros datos de marcha hemipléjica indica que `β` está mal calibrado para el caso, **los datos ya capturados no se pueden reprocesar con otro filtro**. Mitigación: fijar `β` con una captura piloto corta antes de la captura formal.
+
+Cambian: **Vista 1 §1** (canales por pie: 8 → 11) y **§4** (formato de paquete), **SPEC-03** (elimina el paso 2), **SPEC-04** (frontera del worker; `imufusion` ya no re-extrae features de IMU), **Vista 4 §1.4** y **ADR-005 rev c** (qué significa "crudo"), maestro §3-§4. **No cambia** el set activo ni el catálogo.
+
+**Nota de implementación.** SPEC-03 tal como está escrita hoy resta `g` sobre un dato al que ya se le quitó, dejando un sesgo constante de −9,81 m/s² que se **integra dos veces**: sobre una zancada de ~1 s son ~4,9 m de desplazamiento espurio contra un `stride_length` real de ~1 m. El error es cinco veces la señal e inutiliza #6 y #7 (stride length y speed), dos features del top-3 de Brasiliano. La corrección del punto 4 no es cosmética.
+
+**Referencia.** SPEC-04 (módulo IMU), SPEC-03 (ZUPT/stride length), ADR-017 (orientación y calibración), ADR-016 (stride length), ADR-005 rev c (fases de captura), ADR-008 (retención), ADR-018 (paridad), ADR-041 (precedente de costo de paquete), Vista 1 §4, Vista 3 (catálogo, bloques F/G/H).
+
+**Apéndice conceptual — por qué la gravedad no se saca una sola vez.** El acelerómetro no mide "aceleración del pie": mide **fuerza específica**, que incluye la gravedad. Quieto y plano, lee ~9,81 m/s² repartidos entre sus ejes según cómo esté montado el sensor. Si el pie rota 30°, ese mismo 9,81 se reparte distinto: restar el vector medido al inicio deja un residuo que puede llegar a varios g. Como las aceleraciones reales del pie en marcha son de ese mismo orden, el residuo no es una corrección menor — es del tamaño de la señal.
+
+Por eso el AHRS es indispensable: estima la orientación instantánea combinando el giróscopo (rápido y preciso a corto plazo, pero derivante) con el acelerómetro (ruidoso pero con una referencia absoluta de vertical, la gravedad). Con esa orientación se sabe hacia dónde apunta el abajo en cada muestra y se resta la gravedad correctamente.
+
+La consecuencia es el punto que decidió este ADR: **la operación no es invertible**. Guardado el dato sin gravedad, ya no queda la referencia de vertical que permitiría recalcular la orientación; el giróscopo solo, integrado, deriva sin nada que lo corrija. Por eso `pitch/roll/yaw` tienen que viajar en el paquete y no se pueden "recuperar después".
+
+---
+
+## ADR-043 — Ciclo de vida de la sesión: check-out/check-in del estado local, adaptación conmutable y gate de arranque
+**Estado:** aceptada (2026-08-22, **rev. 2026-08-22** — pipeline completo, gate térmico y autoridad del modelo) — **Decisión: la sesión es una transacción explícita comandada por la interfaz. Al abrirla, si el paciente cambió, el micro sube su estado de clase L y el host lo versiona antes de bajar el modelo nuevo. La adaptación online es conmutable por sesión (`adaptation_enabled`). Ninguna sesión arranca sin pasar un gate que verifica la correspondencia modelo↔paciente.**
+
+**Contexto.** Tres problemas convergentes, detectados en la revisión del 2026-08-22.
+
+**(1) La clase L no tenía respaldo posible.** Vista 3 §2 declara que los modelos L *"se auto-actualizan"* y no usan OTA, y §6 que la clase L *"nunca toca el worker"*. Pero Vista 3 §6 y Vista 4 §6 afirman las dos que **todo** modelo se respalda en la DB y *"si un micro se rompe o se pierde, se recupera desde la DB"*. Es falso exactamente para la clase L: existe un camino de bajada (Vista 2 §8 lista *"Mahalanobis = μ + Σ⁻¹"* como artefacto OTA a un slot de flash) pero **ningún camino de subida**. Lo que hay en la base es el baseline inicial; el μ/Σ adaptado vive sólo en el micro.
+
+**(2) La taxonomía tenía un eje de menos.** ADR-011 define las clases sobre *"dos ejes: dónde infiere × dónde/con qué granularidad reentrena"*. Falta un tercero: **dónde vive la copia autoritativa del estado**. Para E/H/W es invisible, porque el worker siempre tiene la copia buena y el OTA la re-empuja. **L es la única clase donde el micro es el único poseedor**, y es justo donde nadie se hizo la pregunta. La columna *"¿OTA? No"* refuerza la ilusión de lazo cerrado.
+
+**(3) En la mínima, las plantillas rotan entre pacientes.** Un solo par para N pacientes del estudio es el caso normal, no la excepción. Sobre reasignación el repositorio tenía **una sola línea** —*"al reasignar la cintura a otro paciente hay que borrar bonds + datos"* (ADR-032, ADR-028, Vista 4 §2)— que es un requisito de privacidad **sin mecanismo**, y el factory-reset que lo implementaría está diferido a la máxima. De ahí salen tres fallas concretas:
+- **El par A/B se contamina.** ADR-012 y SPEC-08 definen los dos slots para **rollback de versión**. Si el cambio de paciente usa el mismo OTA, tras cargar a B el slot *last-known-good* contiene el modelo de **A**: un rollback carga el baseline de otra persona.
+- **Nada impide abrir una sesión con el modelo anterior cargado.** `sessions` tiene `patient_id` y `device_set`; `model_deployments` tiene `(model_id, device_id)`; **nada los ata**. Y `anomaly_scores` guarda `patient_id` y `model_id` sin restricción de que concuerden — la base acepta scores de B calculados contra el baseline de A, y el feedback dispararía con los umbrales de A (`feedback_config` es per-paciente y lo baja el host).
+- **El ring buffer de crudo** de cada plantilla (Vista 2 §7) queda con marcha del paciente anterior, que es exactamente lo que "borrar datos al reasignar" pide.
+
+**Requisito adicional (Juan, 2026-08-22).** La adaptación online **tiene que existir en la mínima**, pero debe poder **apagarse desde la interfaz**: hay que poder correr el modelo sin adaptación para comparar.
+
+**Opciones evaluadas — dónde vive el estado de clase L.**
+- **A — Check-out / check-in (elegida).** Abrir sesión es una transacción: el micro sube su estado adaptado → el host lo versiona en la DB → recién entonces baja el modelo del paciente nuevo y se limpian los buffers. *Pros:* la subida se vuelve **obligatoria por construcción**, no un backup opcional que se puede olvidar; resuelve persistencia, respaldo, cambio de paciente y borrado de datos con un solo mecanismo. *Contra:* exige conectividad al abrir sesión (en la mínima la laptop está presente por diseño — ADR-033) y que el micro reporte qué paciente tiene cargado.
+- **B — Multi-slot: K modelos residentes en flash por paciente.** *Pros:* cambio instantáneo sin red, cómodo para rotar pacientes en una tarde; el estado es chico (~2,6 KB por paciente). *Contra:* choca de frente con el requisito de borrar datos al reasignar (ADR-032) y con CP-18; **no elimina la subida** —se pierde la adaptación igual al desalojar— y complica todavía más la semántica del par A/B. **Descartada.**
+- **C — Estado autoritativo en el host; el micro tiene una copia de trabajo.** *Pros:* hace explícito el tercer eje y hay precedente (el host ya aloja un runtime espejo para clase H, ADR-011 rev). *Contra:* ata la clase L a la presencia continua del host; en la máxima el celular se aleja y hay que volver a estado en RAM + resincronización, o sea A por otro camino.
+- **D — Sin adaptación online en la mínima** (L se comporta como E: congelada por sesión, reentrenada por el worker entre sesiones). *Pros:* elimina el problema entero de esta etapa. *Contra:* renuncia a la adaptación online como resultado de la mínima. **Descartada por requisito** (ver arriba), pero sobrevive como el caso `adaptation_enabled = false`.
+
+**Decisión.**
+
+**1 — La sesión es una transacción comandada por la interfaz**, con esta secuencia:
+
+| # | Estado | Qué ocurre |
+|---|---|---|
+| 1 | `IDLE` | Equipo encendido, host conectado, sin sesión. El micro no scorea ni graba. |
+| 2 | `PATIENT_SELECTED` | La app compara el paciente elegido contra el que la cintura **reporta** tener cargado. |
+| 3 | `CHECK_OUT` *(condicional)* | Sólo si difieren: el micro sube su estado de clase L → el host lo versiona en la DB → se limpian los ring buffers de las dos plantillas. |
+| 4 | `PROVISIONING` | El host baja: modelo del paciente nuevo (estampado), `feedback_config`, `feature_set_version` / set activo y `adaptation_enabled`. |
+| 5 | `SENSOR_CALIBRATION` | Calibración estática del IMU (ADR-017 / SPEC-04). |
+| 6 | `READY` **(gate)** | Verifica: el modelo cargado corresponde al paciente de la sesión, la calibración cerró, la sincronización está establecida y las dos plantillas están conectadas. **Sin este paso no se arranca.** |
+| 7 | `RUNNING` | En el modo de ADR-005 rev c: `exploratory` / `operational` / `edge`. |
+| 8 | `CHECK_IN` | Al cerrar: si hubo adaptación, el micro sube el estado final y el host lo versiona; se sella `ended_at`. |
+
+Los pasos 3, 4, 6 y 8 no existían. El 5 existía como decisión (ADR-017) pero no como paso del flujo.
+
+**2 — `adaptation_enabled` es un atributo de la sesión**, comandado por la interfaz como el modo (ADR-034: comando explícito, nunca inferido).
+- `false` → la sesión corre **congelada** en la versión N; el check-in no produce versión nueva.
+- `true` → arranca en N y produce **exactamente una** versión nueva al check-in, con `parent_version = N`.
+
+El versionado por sesión da dos cosas: la **comparación pareada** con y sin adaptación —que es la evidencia de que la adaptación online aporta algo, una afirmación central del proyecto— y la **trayectoria del baseline** del paciente a lo largo del tratamiento, que es un resultado clínico, no un log.
+
+**3 — Dos guardas contra el cruce de pacientes.**
+- **Firmware:** todo artefacto de modelo en flash lleva `patient_id` + versión en su cabecera, y la cintura **se niega a scorear** si el paciente del modelo cargado no coincide con el de la sesión abierta. Resuelve la contaminación del par A/B y el arranque con modelo ajeno.
+- **Base:** FK compuesta `anomaly_scores (model_id, patient_id) → models (id, patient_id)` — con `patient_id` nulo (modelos globales) el enforcement no aplica, que es el comportamiento correcto. Y `unique (patient_id, algo, version)` en `models`, hoy ausente y cada vez más necesario con una versión nueva por sesión.
+
+**4 — El check-out es también el borrado.** La limpieza de los ring buffers de crudo en el paso 3 le da mecanismo, en la mínima, al requisito de ADR-032 que hasta ahora sólo estaba enunciado.
+
+**Justificación.** La opción A convierte el paso frágil —"acordate de subir el estado antes de cambiar de paciente"— en un paso **obligatorio de una transacción**: si no se ejecuta, la sesión no abre. Es la única de las cuatro que resuelve los tres problemas con un solo mecanismo, y lo hace apoyándose en algo que ya estaba decidido (ADR-033: la UI abre y cierra sesión; ADR-034: el modo es un comando explícito) en vez de inventar infraestructura.
+
+El gate del paso 6 merece énfasis aparte: es lo que impide **grabar los datos de un paciente contra el baseline de otro** y disparar feedback con umbrales ajenos. En un dispositivo que va sobre pacientes, ése es el modo de falla más caro del sistema, y hoy nada lo impide.
+
+**Consecuencias.** **Queda cerrada la contradicción del respaldo de clase L** — resuelta de fondo, no acotada: Vista 3 §6 y Vista 4 §6 dejan de mentir porque ahora existe el camino de subida.
+
+Cambian: **Vista 4** (sección nueva con la definición canónica del ciclo de vida — es la vista dueña de la app y la UI; §4 pasa de párrafo a orquestador; §6 corrige el respaldo), **Vista 3 §6** (respaldo de clase L; y de paso la clase **H** que falta en *"clase E/W en el worker"*, incoherente con §2, §3 y Vista 4 §3), **Vista 1 §6** (la tabla de operaciones suma la adaptación), **Vista 2 §7 y §8** (limpieza de buffers en check-out; estampa de `patient_id` en el slot). **`src/db/schema.sql`:** `sessions.adaptation_enabled boolean`, la FK compuesta y el índice único. **SPEC-11** especifica la parte del firmware: qué expone el micro, cómo rechaza el scoring y cómo sube el estado.
+
+**Lo que este ADR NO resuelve.** El check-in cubre el cambio de paciente, **no el apagado diario**. ADR-035 estableció que el switch físico es el encendido/apagado; si el estado adaptado vive sólo en RAM, se pierde en cada apagado y la adaptación de la clase L nunca acumula nada. Ninguna vista, ADR ni spec dice hoy dónde vive ese estado entre encendidos → **CP-24**. Tampoco resuelve el choque entre el warm-up de 2-3 min que pide ADR-017 y el flujo de inicio de sesión → **CP-25**.
+
+**Referencia.** ADR-011 rev (taxonomía L/E/H/W), ADR-012 (OTA A/B), ADR-013 (ubicación de la inferencia), ADR-032 (RLS y borrado al reasignar), ADR-028 (pairing y factory-reset diferido), ADR-033 (UI de control), ADR-034 (el modo es comando explícito), ADR-035 (encendido/apagado), ADR-017 (calibración), ADR-005 rev c (fases de captura), SPEC-08 (runtime de inferencia), Vista 2 §7-§8, Vista 3 §2/§3/§6, Vista 4 §2/§3/§4/§6, `src/db/schema.sql`. Cuestiones abiertas derivadas: CP-24, CP-25.
+
+
+### Revisión 2026-08-22 — pipeline de arranque, gate térmico y autoridad del modelo
+
+La secuencia de 8 estados de arriba se detalla acá; el diagrama vive en `../arquitectura/pipeline_sesion.mermaid` y la definición canónica en la **Vista 4**.
+
+**El warm-up del IMU corre en paralelo, no al final.** ADR-017 pide calibración estática "post warm-up"; la literatura de MEMS es más exigente que los 2-3 min de SPEC-04 (5-10 min en guías de calibración de fábrica, 10-15 min para que el offset del giro pase de frío a régimen, 1-30 min según modelo — CP-25). Ese reloj arranca **al encender el equipo**, no al abrir la sesión, así que conexión, selección de paciente y provisioning **se consumen del mismo tiempo**. La UI muestra la barra de estabilización desde que se conecta, y **sólo el botón de calibrar** queda bloqueado hasta que cierra.
+
+**El gate es por temperatura, no por reloj.** El MPU-6050 tiene sensor de temperatura integrado: la cintura reporta la de los tres IMU y el gate se abre cuando **se estabilizó** (derivada por debajo de umbral), con temporizador fijo como respaldo. Sustituye un número heredado de la literatura por una medición del equipo real. Entre sesiones seguidas sin apagar, el gate no vuelve a cerrarse: la condición es "estable desde el último encendido", que trackea el micro.
+
+**Fases del pipeline.**
+
+| # | Fase | Qué ocurre | Duración |
+|---|---|---|---|
+| 0 | Encendido | Switch físico; plantillas → WiFi de la cintura; cintura → advertising BLE. **Arranca el reloj térmico.** | seg |
+| 1 | Conexión | La cintura reporta plantillas asociadas, baterías, firmware, **paciente + versión de modelo en flash**, temperatura de los 3 IMU y uptime | seg |
+| 2 | Configuración | Paciente, modo (`exploratory`/`operational`/`edge`) y `adaptation_enabled` | operador |
+| 3 | Provisioning | Se baja de la DB la versión activa del modelo + `feedback_config` + set activo, y **se escribe a flash** (slot A/B, checksum, estampado con `patient_id` + versión). Si el paciente cambió, además se limpian los ring buffers de crudo de las dos plantillas | seg |
+| 4 | Gate térmico | Espera el remanente, ya descontado lo consumido en 1-3 | resto |
+| 5 | Calibración | Poses (postura → CP-31); bias de giro, offset de accel, alineación anatómica | decenas de seg |
+| 6 | Verificación | Modelo en flash = paciente de la sesión · calibración OK · dos plantillas conectadas · sincronización dentro de presupuesto · batería suficiente. **Sin esto no arranca** | instantáneo |
+| 7 | Sesión | Fila en `sessions`; grabación/scoring según el modo; adaptación en RAM si está habilitada | la sesión |
+| 8 | Cierre | Se sella `ended_at`; si hubo adaptación el micro sube el estado final y el host lo versiona (N+1). **El flash no se toca** | seg |
+
+**Autoridad del modelo: la DB manda.** Lo que se flashea es **siempre** la última versión de la base; no hay reconciliación. El flash es una **copia de trabajo descartable** y la DB es la única fuente de verdad del modelo — mismo criterio que ADR-037 para el esquema y ADR-039 para las decisiones.
+
+*Costo aceptado:* si la subida del cierre falla, **esa sesión pierde su adaptación**; la siguiente flashea la versión anterior y sigue desde ahí. La pérdida está acotada a una sesión y no queda ambigüedad sobre cuál versión es la buena. El caso es angosto —la subida ocurre al cerrar, cuando el host está conectado por definición— y los escenarios reales (batería agotada, cuelgue) pierden la sesión de todos modos.
+
+*Por qué se flashea igual, si siempre se vuelve a bajar:* para que **un reset a mitad de sesión** (watchdog, brownout) recargue el modelo sin depender del host y la sesión continúe. Es su única justificación, y conviene que esté escrita.
+
+**Canal de estado, separado del stream.** El pipeline necesita datos que no son muestras:
+
+| Canal | Rate | Contenido |
+|---|---|---|
+| **Stream** | 100 Hz | Las muestras (Vista 1 §4) |
+| **Estado** | 1-2 s | Batería, **temperatura de los 3 IMU**, **uptime**, contadores de pérdida de paquetes (derivados del `seq`), error de sincronización estimado |
+| **A demanda** | — | Paciente + versión de modelo en flash (al conectar, y **después de todo reset**) |
+
+Temperatura y uptime siguen viajando **con la sesión corriendo**, por dos motivos: la temperatura se aleja del punto de calibración durante el uso (el pie calienta la plantilla) y es una **señal de calidad del dato** que permite explicar después una sesión anómala; y el uptime es cómo se detecta un reset silencioso. El paciente y la versión en flash, en cambio, **no** van en el stream: se piden al conectar y tras un reset.
+
+Este canal es además el que alimenta el panel de monitoreo y el que provee la evidencia para validar la coexistencia WiFi-AP + BLE y la precisión de sincronización (CP-28) — hoy el sistema genera esos números y nadie los consume.
+
+**Consecuencias adicionales de esta revisión.** **CP-24 → Resuelta.** El estado de clase L vive en RAM durante la sesión, se sube a la DB en el check-in y se re-flashea desde la DB en la siguiente: el apagado diario deja de perder aprendizaje sin necesidad de escrituras periódicas a flash. Se agregan: `pipeline_sesion.mermaid`, la sección de ciclo de vida y el canal de estado en la **Vista 4**, y el reporte de temperatura/uptime/versión en la **Vista 2**. **CP-25** queda actualizada con los valores de la literatura y el gate por temperatura; **CP-31** (postura de calibración) alimenta la fase 5.
 
 ---
 

@@ -12,7 +12,7 @@
 | **Plantilla derecha** | Ídem | Ídem | Motor vibrador (PWM) | Sensado del pie der + feedback |
 | **Unidad de cintura** | Raspberry Pi Pico 2 W | MPU-6050 | — | **Hub**: AP WiFi, maestro de sync, fusión bilateral, detección, uplink BLE |
 
-**Muestreo:** 100 Hz. **Canales por pie:** **8 hoy** (accel XYZ, gyro XYZ, 2× FSR); el formato de paquete reserva **4 slots** — el máximo de diseño (ADR-041). La cintura suma su IMU (6 canales) como referencia de tronco/pelvis (~L4-L5), que habilita las features del bloque I.
+**Muestreo:** 100 Hz. **Canales por pie:** **11 hoy** — `lin_accel` XYZ (sin gravedad), giro XYZ y **orientación** pitch/roll/yaw, más **2× FSR** (ADR-042); el formato de paquete reserva **4 slots** de FSR — el máximo de diseño (ADR-041). La cintura suma su IMU (6 canales) como referencia de tronco/pelvis (~L4-L5), que habilita las features del bloque I.
 
 **Pinout de referencia (plantilla).** Hoy hay **2 FSR conectados**: **ADC0/GP26 (punta)** y **ADC1/GP27 (talón)** — eje antero-posterior. El 3º/4º FSR (**medial/lateral**, para COP_ML) van a **ADC2/GP28** (+ otro) en una **etapa posterior** de la placa (**ADR-023**; CP-01/CP-08). Hasta entonces, las features de fuerza medio-lateral (bloque E + #18) quedan **definidas pero desactivadas** en el set activo.
 
@@ -87,13 +87,19 @@ Principio: **dos canales por enlace**, uno optimizado para latencia y otro para 
 
 **Justificación.** A 100 Hz, perder una muestra ocasional es irrelevante (la próxima llega en 10 ms), mientras que la retransmisión de TCP mete *head-of-line blocking* — picos de latencia en el peor momento del stream. UDP con seq+timestamp detecta y tolera huecos sin frenar el flujo. TCP para control porque pesos/firmware exigen **todos los bytes en orden**. Sobre BLE el mismo principio: **notificaciones** (≈UDP) + **writes con ACK/indicaciones** (≈TCP).
 
-**Formato de paquete de muestra (stream):** `[device_id | seq (uint32) | t_device (uint32, µs) | ax ay az gx gy gz (int16) | fsr1 fsr2 fsr3 fsr4 (uint16)]`. **Cuatro slots fijos de FSR** — el máximo de diseño (**ADR-041**) — con los no poblados en cero; hoy sólo `fsr1` (punta) y `fsr2` (talón) llevan dato. El **set activo del catálogo** (ADR-021) declara cuáles son válidos, así que **el protocolo no cambia al sumar hardware**. Cuesta 4 bytes por muestra (400 B/s por pie sobre ~5 KB/s totales) y evita versionar el protocolo con plantillas ya selladas. El `seq` y `t_device` son la base de la sincronización (§5) y de la detección de pérdidas.
+**Formato de paquete de muestra (stream):** `[device_id | seq (uint32) | t_device (uint64, µs) | ax ay az (int16, lin_accel) | gx gy gz (int16) | pitch roll yaw (int16) | fsr1 fsr2 fsr3 fsr4 (uint16)]`.
+
+**Qué viaja (ADR-042).** El IMU va **post-AHRS**: aceleración lineal **sin gravedad**, giro calibrado y **orientación**. La orientación tiene que viajar porque, una vez removida la gravedad, **no se puede reconstruir** desde el dato guardado (integrar el giro solo deriva sin la referencia de vertical) — y el bloque F (#26-29) y SPEC-03 la necesitan para el cálculo off-device de la fase exploratoria. Cuesta 6 B/muestra.
+
+**`t_device` es `uint64` (CP-27).** En `uint32` de µs el contador da la vuelta a los **71,6 min**, y ADR-035 deja el equipo despierto ~10 h de corrido (~8 vueltas): eso desordena el emparejado entre pies y rompe la regresión de drift de ADR-004. Con 8 B el problema desaparece por 584.000 años, a costa de 4 B/muestra. El `seq` en `uint32` está bien: a 100 Hz tarda **497 días**.
+
+**Costo total:** 29 → **35 B/muestra** ≈ **7 KB/s** entre las dos plantillas (contra ~5,8 antes). Mismo orden que los slots de FSR de ADR-041; BLE lo absorbe. **Cuatro slots fijos de FSR** — el máximo de diseño (**ADR-041**) — con los no poblados en cero; hoy sólo `fsr1` (punta) y `fsr2` (talón) llevan dato. El **set activo del catálogo** (ADR-021) declara cuáles son válidos, así que **el protocolo no cambia al sumar hardware**. Cuesta 4 bytes por muestra (400 B/s por pie sobre ~5 KB/s totales) y evita versionar el protocolo con plantillas ya selladas. El `seq` y `t_device` son la base de la sincronización (§5) y de la detección de pérdidas.
 
 ## 5. Sincronización (alto nivel)
 
 La sincronización es crítica: la **simetría inter-miembro** exige relacionar ambos pies sobre una **misma línea de tiempo a nivel de muestra**. Muchas features se calculan sobre **ventanas de la señal bilateral** o requieren **simultaneidad** (double support; velocidad/cruces por cero del COP-ML; LDLJ; entropías; PSD). El emparejado por evento por sí solo **no** alcanza. [ADR-004]
 
-- **Backbone de reloj — único mecanismo de sincronización:** timestamp + nº de secuencia por muestra (alinea por instante de generación, no de llegada) + **beacon** periódico de la cintura (estilo *Reference Broadcast* / sync app-layer BLE, ~decenas de µs) + **corrección de drift** por regresión lineal (offset + skew). Va en la **capa de aplicación** → portable WiFi↔BLE. Es lo que ordena las muestras de ambos pies (ventanas, simultaneidad) y lo que **corrige el drift** de cristal.
+- **Backbone de reloj — único mecanismo de sincronización:** timestamp + nº de secuencia por muestra (alinea por instante de generación, no de llegada) + **beacon** periódico que la cintura emite **por WiFi** a las plantillas (estilo *Reference Broadcast*) + **corrección de drift** por regresión lineal (offset + skew). Va en la **capa de aplicación**, así que el mecanismo es portable a otro transporte, pero **el enlace que hay que sincronizar a nivel de muestra es plantillas↔cintura, que es WiFi y no cambia entre mínima y máxima**. La precisión alcanzable no está fijada como requisito: el presupuesto de error es **CP-28**. Es lo que ordena las muestras de ambos pies (ventanas, simultaneidad) y lo que **corrige el drift** de cristal.
 - **Emparejado de zancadas — usa el reloj ya sincronizado, no es sync:** el **contacto inicial (IC)** (umbral FSR + pico IMU) se detecta igual para las features espacio-temporales; sobre el **timeline común** del backbone, los tiempos de IC de cada pie **asocian la zancada izquierda con la derecha** para la simetría **por zancada** (Symmetry Index). O sea: **con los relojes sincronizados (beacon) se emparejan las zancadas** — el IC no sincroniza nada.
 
 **Que quede claro (ADR-004):** el IC **no** sincroniza relojes ni es una "red de seguridad" ante el drift — de eso se encarga el **backbone** (corrección de drift). El IC es sólo el **marcador biomecánico de zancada**, y el emparejado izq↔der es una **consecuencia de tener el reloj sincronizado**. Un IC anómalo es **señal de anomalía** (se mide como feature); usarlo como marca temporal de zancada no entra en conflicto con medir su morfología.
@@ -110,6 +116,7 @@ La sincronización es crítica: la **simetría inter-miembro** exige relacionar 
 | Fusión bilateral (simetría, double support) | **Cintura** | **Cintura** |
 | Inferencia en tiempo real (feedback) | Opcional, en host, sólo para evaluar | **Cintura (hub)** o **host** — clases L/E/H; nunca en el worker |
 | Inferencia batch/offline (análisis, re-scoring) | Worker | Worker — clase W |
+| Adaptación online (clase L) | Según `adaptation_enabled` de la sesión; estado en RAM, se versiona en el check-in [ADR-043 rev] | Ídem |
 | Reentrenamiento | L: cintura · E/H/W: worker (laptop) | L: cintura · E/H/W: worker (nube) |
 | Almacenamiento de crudo | Continuo → host → object storage | Snippet por anomalía → host → storage |
 | Almacenamiento features/scores | Operativa: features del micro → DB (junto al crudo) | Continuo → host → DB |
@@ -122,7 +129,7 @@ En una línea: **tiempo real y feedback = cintura (o host si el modelo no entra)
 | Componente | Mínima | Máxima | ¿Cambia? |
 |---|---|---|---|
 | Plantillas ↔ cintura | WiFi (AP), UDP+TCP | Ídem | **No** |
-| Sincronización | Backbone reloj (capa app) + IC | Ídem (portable a BLE) | **No** |
+| Sincronización | Backbone reloj (capa app, beacon por WiFi) + IC | Ídem | **No** |
 | Cintura ↔ host | **BLE** (GATT) | **BLE** (GATT) | **No** (sólo cambia el central) |
 | Host | Laptop (ingesta + worker) | Celular (ingesta + puente) | Sí (app) |
 | Worker de reentrenamiento | Laptop | **Nube** | Sí (ubicación) |
@@ -135,7 +142,7 @@ Los únicos puntos de variación (app del host y ubicación del worker) están *
 **El switch mínima↔máxima no existe en el micro (CP-16 / ADR-034).** El micro es **agnóstico al tipo de central**: no detecta si habla con una computadora o un celular, y su firmware es idéntico en ambos horizontes. **El flujo lo determina el host** (laptop → worker local; celular → worker en la nube). El **modo** de operación (captura exploratoria / operativa / edge) es un **comando explícito** por el canal de control (UI, ADR-033), nunca una inferencia sobre el tipo de host. El host **declara su tipo** (`sessions.host_type`) al abrir la sesión, sólo para **trazabilidad del dataset**.
 
 ## ADRs relevantes
-ADR-001 (topología WiFi/AP), ADR-002 (uplink BLE), ADR-003 (transporte), ADR-004 (sincronización), ADR-013 (ubicación de inferencia), ADR-011 rev (ruteo micro→host).
+ADR-001 (topología WiFi/AP), ADR-002 (uplink BLE), ADR-003 (transporte), ADR-004 (sincronización), ADR-013 (ubicación de inferencia), ADR-011 rev (ruteo micro→host), **ADR-042** (crudo post-AHRS y formato de paquete), **ADR-043 rev** (ciclo de vida de la sesión).
 
 ## Stack (resumen; detalle en `../stack_tecnologico.md`)
 WiFi (lwIP), BLE (BTstack), sincronización de capa de aplicación (código propio).

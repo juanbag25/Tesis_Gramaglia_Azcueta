@@ -7,13 +7,13 @@ Sistema wearable que detecta desviaciones **personalizadas** en la marcha de pac
 - ✅ Objetivos y alcance definidos; **anteproyecto** y **marco teórico** incorporados.
 - ✅ Investigación previa consolidada (bibliografía, catálogo de features, algoritmos).
 - ✅ **Arquitectura cerrada**, en **4 vistas consolidadas** (`docs/arquitectura/vistas/`). El maestro es **índice + overview**, no duplica el detalle de las vistas (ADR-039).
-- ✅ **Diseño detallado terminado** — **ADR-000 a 041** en la bitácora, **SPEC-01 a SPEC-10** de algoritmos de firmware. El backlog de investigación **#1 a #10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) esperan firmware y dataset.
+- ✅ **Diseño detallado terminado** — **ADR-000 a 043** en la bitácora, **SPEC-01 a SPEC-11** de algoritmos de firmware. El backlog de investigación **#1 a #10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) esperan firmware y dataset.
 - ✅ **Esquema de la base escrito** — `src/db/schema.sql` es la **fuente única** (ADR-037): tablas, hypertables, índices, RLS y políticas.
 - 🔄 **Hardware en banco** — 2 FSR conectados (punta + talón); la próxima revisión del PCB suma medial y lateral con mux (ADR-041) y el cargador de corriente limitada. Checklist en `docs/arquitectura/esquema_alimentacion.md` §7.
 - ⏳ **Roadmap de implementación por fases** — próximo paso.
 - ⏳ **Firmware y worker** — aún no iniciados (`src/firmware/`, `src/host/`, `src/worker/`).
 
-**Cuestiones abiertas (8):** CP-01, CP-06, CP-09, CP-18, CP-20, CP-21, CP-22, CP-23 — ver `docs/cuestiones_pendientes.md`, que es la única fuente de verdad. Ninguna bloquea el diseño: dependen de hardware, del comité de ética, de llegar a la máxima, o de tener datos.
+**Cuestiones abiertas (15):** ver `docs/cuestiones_pendientes.md`, que es la **única fuente de verdad** — este archivo no duplica la lista. Ninguna bloquea el diseño, pero tres tienen urgencia: **CP-21** (`pico-tflmicro` en RP2350) es la única que puede voltear una decisión ya tomada, y **CP-23** (migraciones) y **CP-26** (TimescaleDB deprecado en Supabase) hay que resolverlas **antes de la primera captura**.
 
 ## Cómo empezar
 
@@ -30,7 +30,7 @@ Este repo está pensado para trabajar con **agentes de IA**: `CLAUDE.md` les da 
 | `docs/objetivos.md` | Propósito, alcance (mínima/máxima), filosofía de diseño. |
 | `docs/Anteproyecto_Tesis.pdf` | Anteproyecto oficial de la tesis (problema, objetivos, metodología). |
 | `docs/arquitectura/` | Maestro (**índice + overview**) + **4 vistas** (`vistas/`: sistema, firmware, datos-ml, backend) + `stack_tecnologico.md` + `esquema_alimentacion.md` + diagramas Mermaid. |
-| `docs/arquitectura/vistas/2_specs_algoritmos_firmware.md` | **SPEC-01 a SPEC-10**: guías de implementación de cada algoritmo de firmware. |
+| `docs/arquitectura/vistas/2_specs_algoritmos_firmware.md` | **SPEC-01 a SPEC-11**: guías de implementación de cada algoritmo de firmware. |
 | `docs/decisiones/bitacora_decisiones.md` | **Bitácora de ADRs con su índice** — cada elección con opciones, pros/cons y justificación. Es la **única lista de decisiones** del proyecto. |
 | `docs/cuestiones_pendientes.md` | Registro vivo de cuestiones abiertas (única fuente de verdad). |
 | `docs/investigacion/` | Bibliografía (22 papers), catálogo de features, pinout, informe de alineación y **documentos de fundamento** (ver `00_INDICE.md`). |
@@ -45,7 +45,7 @@ Este repo está pensado para trabajar con **agentes de IA**: `CLAUDE.md` les da 
 
 Tres micros **Raspberry Pi Pico 2 W** a 100 Hz. Las **plantillas** (IMU MPU-6050 + FSR + motor vibrador) detectan sus eventos **IC/TO/MS** y calculan sus **features por-pie**; la **cintura** es el hub: AP WiFi, maestro de sincronización, **fusión bilateral**, inferencia y decisión de feedback.
 
-Plantillas → **WiFi (cintura = AP; UDP stream + TCP control)** → **Cintura** → **BLE (GATT)** → Host (laptop en mínima, celular en máxima) → **Supabase** (Postgres + TimescaleDB + storage, con RLS por paciente). El reentrenamiento corre en un **worker** (laptop / nube). Los modelos declaran su clase **L/E/H/W** en el registry; la **inferencia en tiempo real va en el hub o en el host, nunca en la nube**, y el despliegue al micro es por **OTA A/B**.
+Plantillas → **WiFi (cintura = AP; UDP stream + TCP control)** → **Cintura** → **BLE (GATT)** → Host (laptop en mínima, celular en máxima) → **Supabase** (PostgresDB + storage, con RLS por paciente). El reentrenamiento corre en un **worker** (laptop / nube). Los modelos declaran su clase **L/E/H/W** en el registry; la **inferencia en tiempo real va en el hub o en el host, nunca en la nube**, y el despliegue al micro es por **OTA A/B**.
 
 **Detección:** one-class **personalizada por paciente** (baseline propio, no modelo poblacional). Catálogo de **47 features** en bloques A–I; el **set activo** actual es el perfil 2-FSR. **Feedback:** monitoreo y alerta por ventana de zancadas, no corrección.
 
@@ -70,7 +70,7 @@ Toda decisión de arquitectura se registra como **ADR** en `docs/decisiones/bita
 - **Firmware:** Raspberry Pi Pico SDK (C/C++), toolchain ARM, **CMSIS-DSP**, **TFLite Micro + CMSIS-NN** (`pico-tflmicro` — ver CP-21), **Fusion** (AHRS), **BTstack**, **lwIP**. *(instrucciones en `src/firmware/README.md`)*
 - **Worker:** Python — numpy, scipy, pandas, **scikit-learn**, **TensorFlow/Keras** + conversor TFLite/LiteRT (PTQ int8), `imufusion`. *(en `src/worker/README.md`)*
 - **Host:** Python — `bleak` (BLE) + **FastAPI** (UI de control).
-- **Base de datos:** Supabase (PostgreSQL + TimescaleDB).
+- **Base de datos:** Supabase (PostgreSQL). ⚠️ TimescaleDB está **deprecado** en Supabase sobre PG17 — ver **CP-26**.
 
 Las versiones exactas no se fijan de memoria: se anclan al implementar (regla de `stack_tecnologico.md`).
 

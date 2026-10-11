@@ -73,6 +73,7 @@ La calibración es, a la vez, el **entrenamiento inicial personalizado** y una *
 - **Construcción del baseline:** ajuste inicial de **μ y Σ** (Mahalanobis) + baseline de los demás modelos; **umbral** = percentil (chi-cuadrado) de la calibración.
 - **Calibraciones físicas (por hardware / por paciente):** curva **fuerza-resistencia por-FSR**; **alineación del frame del IMU** (estática "dejar quieto" + re-zero de giro en stance por FSR + alineación anatómica pie-plano — SPEC-04).
 - **Recalibración:** disparada por **drift** (Mahalanobis) → reentrenamiento E/H/W en el worker.
+- **Adaptación conmutable:** `sessions.adaptation_enabled` decide si la sesión adapta μ/Σ o corre **congelada** en la versión vigente. Congelada no produce versión nueva; adaptada produce **exactamente una**. Es lo que habilita la comparación pareada con y sin adaptación, y deja la trayectoria del baseline del paciente como serie consultable [ADR-043 rev].
 
 **Diagrama:** `../calibracion_baseline.mermaid`.
 
@@ -82,9 +83,9 @@ La calibración es, a la vez, el **entrenamiento inicial personalizado** y una *
 
 Nivel conceptual (dónde entrena, disparo, versionado). La **mecánica de despliegue** vive en otras vistas: **OTA A/B de pesos y firmware → Vista 2 §8**; **worker y persistencia → Vista 4 (maestro §10)**.
 
-- **Dónde entrena:** clase **L en el micro** (dato a dato, nunca toca el worker); clase **E/W en el worker** = laptop en la mínima / nube en la máxima (jala datos de Supabase, reentrena, publica el artefacto y notifica al host, que despliega por OTA). **Supabase no entrena** (es el sistema de registro; sus Edge Functions sólo disparan jobs).
+- **Dónde entrena:** clase **L en el micro** (dato a dato, nunca toca el worker); clases **E/H/W en el worker** = laptop en la mínima / nube en la máxima (jala datos de Supabase, reentrena, publica el artefacto y notifica al host, que despliega por OTA). **Supabase no entrena** (es el sistema de registro; sus Edge Functions sólo disparan jobs).
 - **Disparo de reentrenamiento:** por **drift** (Mahalanobis), **schedule** (periódico) o **manual**; queda registrado en `retrain_jobs`.
-- **Versionado / respaldo / rollback:** todo modelo se respalda en la DB (fila en `models` + artefacto en object storage) con versión, métricas y linaje (`parent_version`); la versión anterior se conserva como **last-known-good** para rollback.
+- **Versionado / respaldo / rollback:** los modelos **E/H/W** se respaldan en la DB (fila en `models` + artefacto en object storage) con versión, métricas y linaje (`parent_version`), y la versión anterior queda como **last-known-good** para rollback. Los de clase **L** no viajan por OTA: su estado adaptado (μ, Σ) vive en **RAM durante la sesión**, se sube en el **check-in** y se versiona igual en `models` — una versión nueva por sesión adaptada, con `parent_version` = la de arranque. **La DB es la fuente de verdad en los dos casos**; el flash del micro es una copia de trabajo que se reescribe desde la DB al abrir cada sesión [ADR-043 rev; Vista 4 §4.1].
 
 **Diagrama:** `../ciclo_de_vida_modelos.mermaid`.
 
@@ -120,7 +121,7 @@ Los algoritmos se evalúan **de a poco, escalando sólo si el anterior no alcanz
 ---
 
 ## ADRs relevantes
-ADR-005 (features distribuidas + fases de captura), ADR-018 (paridad / anti skew), ADR-021 (catálogo declarativo + set activo), ADR-023 (set activo 2-FSR), ADR-011 rev (taxonomía/ruteo model-agnostic), ADR-013 (inferencia RT en hub/host), ADR-009 (backend de reentrenamiento), ADR-022 (framework de entrenamiento + cuantización int8), ADR-017 (módulo IMU / calibración).
+ADR-005 (features distribuidas + fases de captura), ADR-018 (paridad / anti skew), ADR-021 (catálogo declarativo + set activo), ADR-023 (set activo 2-FSR), ADR-011 rev (taxonomía/ruteo model-agnostic), ADR-013 (inferencia RT en hub/host), ADR-009 (backend de reentrenamiento), ADR-022 (framework de entrenamiento + cuantización int8), ADR-017 (módulo IMU / calibración), **ADR-042** (crudo post-AHRS: qué recibe el worker), **ADR-043 rev** (ciclo de vida, adaptación conmutable, autoridad del modelo).
 
 ## Stack (resumen; detalle en `../stack_tecnologico.md`)
 numpy, scipy, **scikit-learn** (Isolation Forest, ajuste Mahalanobis), **TensorFlow/Keras** (autoencoders) + conversor **TFLite/LiteRT** (PTQ int8, representative dataset — ADR-022), pandas; `imufusion` (re-extracción desde crudo, condicional). El runtime on-device es de la Vista 2 (TFLite Micro + CMSIS-NN / CMSIS-DSP).

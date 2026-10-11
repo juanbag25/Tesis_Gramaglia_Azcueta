@@ -2,11 +2,13 @@
 
 > Este archivo es el punto de entrada para **cualquier agente de IA** (o persona) que trabaje en este repositorio. Léelo completo antes de tocar nada. Su objetivo es dar **entendimiento total del proyecto** para que cualquiera pueda clonar el repo y ponerse a trabajar de inmediato.
 
+> **Antes de editar cualquier archivo**, hacé el arranque de [Git y sincronización entre computadoras](#git-y-sincronización-entre-computadoras): la tesis se trabaja desde dos computadoras y editar sobre una copia vieja genera conflictos.
+
 ## Qué es este proyecto (en una línea)
 
 Sistema de **plantillas inteligentes bilaterales** para **detección personalizada de anomalías de marcha en pacientes post-ACV**, con **feedback vibrotáctil en tiempo real** e **inferencia en el borde (edge)**. Tesis de maestría (ITBA).
 
-**Estado actual:** arquitectura **cerrada** en 4 vistas consolidadas; **diseño detallado terminado**. Decisiones en **ADR-000 a 041**; specs de firmware **SPEC-01 a SPEC-10**. El backlog de investigación **#1–#10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) requieren firmware y dataset. El **esquema de la base está escrito** (`src/db/schema.sql`). **Firmware y worker todavía no existen.** Próximo paso: **roadmap de implementación por fases** e iniciar `src/`.
+**Estado actual:** arquitectura **cerrada** en 4 vistas consolidadas; **diseño detallado terminado**. Decisiones en **ADR-000 a 043**; specs de firmware **SPEC-01 a SPEC-11**. El backlog de investigación **#1–#10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) requieren firmware y dataset. El **esquema de la base está escrito** (`src/db/schema.sql`). **Firmware y worker todavía no existen.** Próximo paso: **roadmap de implementación por fases** e iniciar `src/`.
 
 ## Orden de lectura recomendado (onboarding)
 
@@ -37,15 +39,16 @@ Tres reglas de fuente única, todas producto de la auditoría de consistencia de
 
 - **Hardware:** 2 plantillas (Raspberry Pi Pico 2 W + MPU-6050 + FSR + motor vibrador PWM) + 1 unidad de cintura (Pico 2 W + MPU-6050 a ~L4-L5). Muestreo **100 Hz**. **FSR: 2 hoy** (punta ADC0/GP26, talón ADC1/GP27); **máximo de diseño 4**, con medial y lateral en la próxima revisión del PCB — lo que **exige mux analógico**, porque GP29 mide VSYS y quedan sólo 3 ADC libres (**ADR-041**).
 - **Topología:** plantillas ↔ cintura por **WiFi** (cintura = **Access Point**); cintura ↔ host por **BLE** (desde la mínima). La cintura es el **hub de fusión y decisión**. Los micros **nunca se conectan a WiFi de internet** (modelo tipo auriculares BLE).
-- **Transporte:** canal rápido-tolerante (**UDP** / notificaciones GATT) para el stream + canal confiable (**TCP** / writes con ACK) para control y modelos. Paquete de muestra con **4 slots fijos de FSR** (ADR-041).
+- **Transporte:** canal rápido-tolerante (**UDP** / notificaciones GATT) para el stream + canal confiable (**TCP** / writes con ACK) para control y modelos. Paquete de muestra (35 B) con **4 slots fijos de FSR** (ADR-041) y el IMU **post-AHRS** — `lin_accel` sin gravedad + giro + **orientación** (pitch/roll/yaw) — más `t_device` en **uint64** (ADR-042; en uint32 daba la vuelta a los 71,6 min).
 - **Sincronización:** backbone de reloj (**timestamp + secuencia por muestra + beacon periódico + corrección de drift**) en capa de aplicación. **Es el único mecanismo de sincronización:** el emparejado de zancadas por IC **usa** el reloj ya sincronizado, no lo sincroniza ni es un fallback.
 - **Eventos de marcha: IC / TO / MS.** Mid-stance se detecta como el **cruce de carga retropié→antepié** (`F_ante ≥ F_post`), confirmado por pie-plano del IMU; si el paciente nunca transfiere carga se emite con flag `no_crossover`, **que es señal de anomalía, no error** (ADR-038 / SPEC-01).
 - **Features: catálogo de 47** en bloques A–I, definición **única y compartida** plantilla↔cintura↔worker, versionada por `feature_set_version`. El **catálogo es una biblioteca de features disponibles, no una lista de obligaciones**; el **set activo** es lo que se calcula (ADR-040). Hoy están **OFF**: *por hardware*, el bloque E (#22-25, #42) y #18; *por alcance*, el bloque I de tronco (#45-47).
-- **Cómputo distribuido:** cada plantilla calcula sus features **por-pie**; la cintura hace la **fusión bilateral** (simetría, double support) y las de tronco. **Captura por fases (ADR-005 rev c):** *exploratoria* = crudo-solo (features off-device); *operativa* = features del micro + crudo (entrena skew-free y valida paridad); *edge* = features/eventos/scores en vivo + crudo por snippet ante anomalía.
+- **Cómputo distribuido:** cada plantilla calcula sus features **por-pie**; la cintura hace la **fusión bilateral** (simetría, double support) y las de tronco. **Qué es "crudo" (ADR-042):** señal de FSR + IMU a 100 Hz con el **AHRS ya aplicado en el micro** (aceleración lineal sin gravedad + orientación) y **ningún otro procesamiento**; el worker consume y **no re-procesa IMU**. La calibración es **irreversible por diseño**. **Captura por fases (ADR-005 rev c):** *exploratoria* = crudo-solo (features off-device); *operativa* = features del micro + crudo (entrena skew-free y valida paridad); *edge* = features/eventos/scores en vivo + crudo por snippet ante anomalía.
 - **Muestreo determinístico (100 Hz):** ADC disparado por hardware + DMA con **sobremuestreo ~1 kHz y decimación ×10** (mejora el SNR del FSR); IMU leído en el **tick maestro por DMA**; timestamp + secuencia por muestra; core dedicado.
 - **Persistencia:** **Supabase** (PostgreSQL + TimescaleDB + object storage + auth), con **RLS estricto por paciente** vía `patient_access`. Supabase **no entrena**; el entrenamiento corre en un worker (laptop en mínima, nube en máxima).
-- **Modelos (taxonomía L/E/H/W):** cada modelo declara su clase en el registry (`inference_target ∈ {hub, host, worker}`). **L** infiere y reentrena en la cintura; **E** infiere en la cintura y reentrena en el worker; **H** infiere en el host; **W** es batch/offline. **La inferencia en tiempo real va en `hub` o `host`, nunca en el worker/nube** — cambiar `hub`→`host` es un switch de config, sin reescritura. Mahalanobis es además **sensor de drift**.
+- **Modelos (taxonomía L/E/H/W):** cada modelo declara su clase en el registry (`inference_target ∈ {hub, host, worker}`). **L** infiere y reentrena en la cintura, con el estado adaptado en **RAM** durante la sesión: sube a la base en el **check-in** y se re-flashea desde la base al abrir la siguiente — **la DB manda**, el flash es copia de trabajo (ADR-043 rev); **E** infiere en la cintura y reentrena en el worker; **H** infiere en el host; **W** es batch/offline. **La inferencia en tiempo real va en `hub` o `host`, nunca en el worker/nube** — cambiar `hub`→`host` es un switch de config, sin reescritura. Mahalanobis es además **sensor de drift**.
 - **Feedback vibrotáctil:** **monitoreo y alerta, no corrección** (ADR-027). Score designado sobre una **ventana de zancadas** → anomalía sostenida → 3 bandas per-paciente → alerta escasa.
+- **La sesión es una transacción orquestada por la interfaz (ADR-043 rev):** encendido → conexión → configuración → *provisioning* (baja el modelo de la DB y lo flashea, estampado con `patient_id`) → **gate térmico** (el warm-up del IMU corre en paralelo al setup; se destraba por **temperatura estable**, no por reloj) → calibración → **verificación** (sin ella no arranca) → sesión → **check-in**. La adaptación online se **prende y apaga por sesión** (`adaptation_enabled`). Diagrama: `docs/arquitectura/pipeline_sesion.mermaid`.
 - **Firmware:** **C/C++ con el Pico SDK** (no Arduino IDE), **bare-metal**. Reparto uniforme: **core 0 = radio, core 1 = procesamiento** en los tres micros.
 - **OTA:** pesos + firmware completo, esquema **A/B** con checksum y rollback. **Al sellar una plantilla se pierde el BOOTSEL → el OTA tiene que estar probado antes.**
 
@@ -107,25 +110,80 @@ Al completar una tarea significativa:
 4. **Actualizá `memoria/memory.md`** si cambió el estado del proyecto o aprendiste algo que otro agente debería saber.
 5. **Mantené la coherencia** entre el código y los diagramas/specs. Si el código diverge de la arquitectura, actualizá la arquitectura o registrá una cuestión.
 6. **No inventes hechos del mundo real** (precios, APIs, versiones): verificá antes de afirmar. Si una fórmula o un método viene de un paper, **decí explícitamente qué falta verificar contra la fuente**.
+7. **Cerrá con el paquete de commit** (sección *Git*, §3): el commit y el push los hace el autor, no vos.
 
 > **Aviso operativo.** El mount de Windows ha devuelto **contenido desactualizado** en la primera lectura de archivos grandes (verificado el 2026-08-18 con `memory.md`, `changelog.md` y la Vista 4), y en 2026-07-16 **truncó escrituras**. Antes de trabajar sobre un archivo grande, verificá tamaño (`wc -c`) o hash; escribí y verificá por bash.
 
+## Git y sincronización entre computadoras
+
+La tesis se trabaja desde **dos computadoras** —la de Juan y la de Tobías—, cada una con sus agentes. La prioridad es que **`origin/master` tenga siempre la última versión**: un cambio sin pushear es un cambio que el otro autor no ve, y su agente va a trabajar sobre una copia vieja. Hay una sola rama, `master`; no se abren ramas.
+
+**Quién hace qué.** Los commits y los push los hacen **los autores**, con la cuenta de git configurada en su computadora. El agente edita archivos, lee el estado del repo y deja el commit **listo para ejecutar**.
+
+- **El agente puede** (sólo lectura): `git --no-optional-locks status -sb`, `git diff`, `git log`, `git show`, `git grep`, `git config user.name`. El `--no-optional-locks` evita que `status` escriba el índice.
+- **El agente nunca:** hace `push`; corre comandos que escriben en `.git/` (`add`, `commit`, `pull`, `fetch`, `stash`, `checkout`, `switch`, `merge`, `rebase`, `reset`, `tag`); cambia `user.name`/`user.email`, credenciales o remotos; borra nada dentro de `.git/`.
+
+**Por qué ni siquiera `commit`:** desde la VM que ve el repo a través del mount de Windows (ver *Aviso operativo* arriba), git puede crear archivos pero no borrarlos, así que cada `commit`, `pull` o `stash` deja un `.lock` huérfano en `.git/` y el próximo comando del autor falla con `File exists`. Pasó el 2026-08-18/19: quedaron `index.lock`, `HEAD.lock.*` y `master.lock.*` sueltos. *Única excepción:* si el autor **pide** el commit en esa sesión **y** el agente corre git nativo en la computadora (no a través de un mount), puede hacer `git add <archivos>` + `git commit` con la identidad ya configurada. El push sigue siendo del autor.
+
+### 1. Arranque — antes de editar
+
+1. Mirá el estado con `git --no-optional-locks status -sb`, y de quién es la computadora con `git config user.name`.
+2. Si quedaron **cambios sin commitear o commits sin pushear** de una sesión anterior, se suben primero: armá el paquete de cierre (§3) para esos cambios antes de empezar lo nuevo.
+3. Pedile al autor que traiga lo último con `git pull --rebase`, y **esperá a que lo confirme**. Leer podés antes; editar, no.
+4. **Verificación:** `git --no-optional-locks status -sb` arranca con `## master...origin/master` **sin** `[ahead N]` ni `[behind N]`, y no lista archivos modificados. Si no da eso, no se empieza.
+
+### 2. Durante — que los cambios de dos computadoras se puedan juntar
+
+- **Tocá sólo las líneas que cambian.** Nada de reformatear, re-envolver párrafos, reordenar secciones ni cambiar finales de línea: un diff gigante choca con cualquier cambio del otro lado y esconde el cambio real.
+- **IDs nuevos (`ADR-NNN`, `CP-NN`, `SPEC-NN`):** el siguiente libre del archivo **después del pull del arranque**. Si igual chocan con uno del otro autor, se arregla al integrar (§4).
+- **Nada de archivos temporales en el repo** (pruebas de escritura, `.bak`, copias): trabajá en un directorio fuera del repo. Si se te escapó uno, borralo o avisá.
+- **Archivos calientes** —los que tocan casi todas las sesiones—: `memoria/changelog.md`, `memoria/memory.md`, `docs/decisiones/bitacora_decisiones.md`, `docs/cuestiones_pendientes.md` y el *Estado actual* de `CLAUDE.md` y `README.md`. Ahí van a aparecer los conflictos.
+
+### 3. Cierre — el paquete de commit
+
+Al terminar la tarea (o antes de que el autor se vaya, aunque quede a medias), entregale:
+
+1. **La lista de archivos que tocaste**, uno por uno. Nunca `git add -A` ni `git add .`: suben archivos ajenos o temporales.
+2. **El mensaje**, con la convención del repo: `tipo(alcance): resumen` en español (`docs:`, `docs(arquitectura):`, `feat(firmware):`, `fix(worker):`…) y un cuerpo con el porqué.
+3. **Los comandos, completos y listos para copiar.** Los `<…>` de abajo los reemplazás vos con lo de los puntos 1 y 2; al autor le llegan sin huecos:
+   ```
+   git add <archivo_1> <archivo_2> …
+   git commit -m "<tipo(alcance): resumen>" -m "<cuerpo: qué cambió y por qué>"
+   git pull --rebase
+   git push
+   ```
+4. **Que pushee hoy.** Un commit sin push no le sirve al otro autor.
+5. **Verificación**, después del push: `git --no-optional-locks status -sb` muestra `## master...origin/master` sin `[ahead N]`, y `git log -1 --format="%an — %s"` muestra el nombre del autor y el mensaje.
+
+### 4. Si el `pull --rebase` da conflicto
+
+El autor ve `CONFLICT (content): Merge conflict in <archivo>`. Vos resolvés **editando el archivo** (sacando los `<<<<<<<` / `=======` / `>>>>>>>`); el autor cierra con `git add <archivo>` y `git rebase --continue`. **Nunca se descarta un lado entero** (`--ours` / `--theirs`): cada lado es trabajo de un autor.
+
+| Archivo | Cómo se resuelve |
+|---|---|
+| `memoria/changelog.md` | Quedan **las dos entradas**, la más reciente arriba. |
+| Bitácora, cuestiones o specs con **el mismo número en los dos lados** | **Lo que ya está en `origin` conserva su número**; el cambio local pasa al siguiente libre y se actualizan **todas** sus referencias en el repo (buscalas con `git grep -n` y el ID duplicado). |
+| `memoria/memory.md`, *Estado actual* de `CLAUDE.md`/`README.md` | Se combinan los dos hechos. Si se contradicen, **decide el autor**, no vos. |
+| Cualquier otro | Se combina a mano; ante la duda, preguntá. |
+
+**Verificación:** `git grep -n -e "^<<<<<<< " -e "^>>>>>>> "` no devuelve nada y, si renumeraste, cada mención del número duplicado apunta al ADR/CP que ya estaba en `origin`. Después se sigue con el cierre (§3) desde `git push`.
+
+### 5. Locks huérfanos en `.git/`
+
+**Síntoma:** `fatal: Unable to create '…/.git/index.lock': File exists`, o `warning: ignoring broken ref refs/heads/master.lock…`. El agente no los borra (regla de arriba): le avisa al autor. Con **ningún programa usando git abierto** (VS Code, GitHub Desktop, otra terminal), desde la raíz del repo:
+
+- Windows (PowerShell): `Get-ChildItem .git -Recurse -Force -Filter "*.lock*" | Remove-Item -Force`
+- macOS / Linux: `find .git -name "*.lock*" -delete`
+
+**Verificación:** `git status` ya no muestra `ignoring broken ref`, y el comando que fallaba pasa.
+
 ## Cuestiones pendientes
 
-El registro vivo está en **`docs/cuestiones_pendientes.md`** (única fuente de verdad). **Abiertas al 2026-08-19 (8):**
+El registro vivo está en **`docs/cuestiones_pendientes.md`** — **única fuente de verdad, y este archivo no la duplica**. Al 2026-08-22 hay **15 abiertas** y **16 resueltas**. Copiar la lista acá fue justamente lo que la desactualizó antes: vale la misma regla que ADR-037 (esquema) y ADR-039 (decisiones) — *una sola fuente, varios consumidores*.
 
-| CP | Tema | Depende de |
-|---|---|---|
-| CP-01 | FSR y traza INT contra el PCB | la revisión de la placa |
-| CP-06 | Proveedor concreto del worker en la nube | llegar a la máxima |
-| CP-09 | Presupuesto de energía / batería | medición en banco |
-| CP-18 | Ratificación de seguridad/ética | comité de ética de ITBA |
-| CP-20 | Columnas generadas sobre `features` | congelar el feature set + dashboard |
-| CP-21 | Port de `pico-tflmicro` a RP2350 | **prueba de banco — validar temprano** |
-| CP-22 | Dónde se computan las salidas clínicas | tener dataset |
-| CP-23 | Herramienta de migraciones de la base | **antes de la primera captura** |
+**La única que amerita alerta en el onboarding:** **CP-21** (port de `pico-tflmicro` a RP2350) es la **única cuestión abierta que puede voltear una decisión ya tomada** (ADR-020/SPEC-08): el port oficial no está mergeado para RP2350. Se descarta con una prueba de banco aislada, sin necesidad del firmware del proyecto, y conviene hacerla **antes** de escribir firmware que dependa de SPEC-08.
 
-**CP-21 es la única que puede voltear una decisión ya tomada** (ADR-020/SPEC-08): el port oficial no está mergeado para RP2350. Se descarta con una prueba de banco aislada, sin necesidad del firmware del proyecto.
+**Con fecha límite propia:** **CP-23** (herramienta de migraciones) y **CP-26** (TimescaleDB deprecado en Supabase) hay que resolverlas **antes de la primera captura**, porque después los cambios de esquema dejan de ser gratis.
 
 ## Glosario rápido
 
