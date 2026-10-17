@@ -181,7 +181,7 @@ El autor ve `CONFLICT (content): Merge conflict in <archivo>`. Vos resolvés **e
 
 ## Cuestiones pendientes
 
-El registro vivo está en **`docs/cuestiones_pendientes.md`** — **única fuente de verdad, y este archivo no la duplica**. Al 2026-10-17 hay **12 abiertas** y **20 resueltas**. Copiar la lista acá fue justamente lo que la desactualizó antes: vale la misma regla que ADR-037 (esquema) y ADR-039 (decisiones) — *una sola fuente, varios consumidores*.
+El registro vivo está en **`docs/cuestiones_pendientes.md`** — **única fuente de verdad, y este archivo no la duplica**. Al 2026-10-17 hay **14 abiertas** y **20 resueltas**. Copiar la lista acá fue justamente lo que la desactualizó antes: vale la misma regla que ADR-037 (esquema) y ADR-039 (decisiones) — *una sola fuente, varios consumidores*.
 
 **La única que amerita alerta en el onboarding:** **CP-21** (port de `pico-tflmicro` a RP2350) es la **única cuestión abierta que puede voltear una decisión ya tomada** (ADR-020/SPEC-08): el port oficial no está mergeado para RP2350. Se descarta con una prueba de banco aislada, sin necesidad del firmware del proyecto, y conviene hacerla **antes** de escribir firmware que dependa de SPEC-08.
 

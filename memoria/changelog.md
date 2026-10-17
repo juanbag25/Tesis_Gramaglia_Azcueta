@@ -2,6 +2,17 @@
 
 > Registro cronológico de cambios en el proyecto (arquitectura, docs, código, decisiones). Entrada más reciente arriba. Formato: fecha — qué cambió — por qué / referencia.
 
+## 2026-10-17 — Relevamiento de lo pendiente antes de implementar: CP-33 y CP-34
+
+A pedido de Juan: verificar qué cuestiones o decisiones quedan antes de empezar a implementar código, base y arquitectura. Se recorrieron las cuestiones abiertas, los "pendiente" de las cuatro vistas, el stack, los README de `src/`, el marco teórico y los documentos fuera del orden de lectura.
+
+- **CP-33 (nueva) — protocolo de captura y validación.** La arquitectura dice *cómo* se captura pero no *con quién, cuántos, qué tareas y contra qué referencia*. El marco teórico §10.5 propone tres niveles (sanos contra *gold standard*; anomalías inducidas en sanos; piloto clínico) y nunca se ratificó. Define el primer hito del roadmap y el alcance del trámite de ética. Suma dos preguntas que no estaban: si se graba el crudo del IMU de la cintura (sin él no se puede explorar el bloque I después) y la captura piloto que ADR-042 pide para fijar `β`.
+- **CP-34 (nueva) — contratos de interfaz.** Está definido *qué* viaja entre firmware, host, worker y base, pero no *cómo*: serialización y versionado de los mensajes, GATT, protocolo del OTA, formato de los artefactos, formato del catálogo (ADR-021 dejó "JSON/TOML"), esquema del Parquet y **la base de tiempo `t_device` → UTC**, que nadie definió. Hace falta antes de que dos personas codifiquen en paralelo.
+- **CP-18 ampliada:** además de la gobernanza de datos, es la compuerta de toda captura con personas, incluidos los voluntarios sanos; conviene iniciar el trámite en paralelo.
+- **Sin decisiones tomadas:** sólo se registran. Abiertas: **12 → 14**.
+- **Detectado, sin corregir todavía** (espera el OK de Juan): `src/firmware/README.md` y `src/worker/README.md` describen un sistema anterior (3 FSR, sólo IC, clases `L/E/W`, PyTorch, Isolation Forest como W); `docs/descripcion_proyecto.md` es una descripción previa a la arquitectura, fuera del orden de lectura, que la contradice en varios puntos (todo on-device, FSR medial/lateral, eventos por IMU, "latencia < 50 ms"); quedan restos menores en la Vista 3 (`imufusion`), en `objetivos.md` (`L/E/W`) y en el encabezado de la bitácora (menciona el "Resumen de decisiones" que ADR-039 eliminó).
+- **Archivos:** `cuestiones_pendientes.md` · `CLAUDE.md` · `README.md` · `memory.md` · `changelog.md`.
+
 ## 2026-10-17 — Rediseño de la base: particionado nativo, migraciones, identidad de las series y exposición por la API (ADR-044 a 047; cierra CP-23, CP-26 y CP-29)
 
 Decisiones confirmadas por Juan el 2026-10-17, tras la explicación del 2026-10-11 (problema, opciones y lo que hace la industria). Se resolvieron juntas porque tocan las mismas tablas y vencen antes de la primera captura.
