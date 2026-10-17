@@ -13,7 +13,7 @@ Sistema wearable que detecta desviaciones **personalizadas** en la marcha de pac
 - ⏳ **Roadmap de implementación por fases** — próximo paso.
 - ⏳ **Firmware y worker** — aún no iniciados (`src/firmware/`, `src/host/`, `src/worker/`).
 
-**Cuestiones abiertas (15):** ver `docs/cuestiones_pendientes.md`, que es la **única fuente de verdad** — este archivo no duplica la lista. Ninguna bloquea el diseño, pero tres tienen urgencia: **CP-21** (`pico-tflmicro` en RP2350) es la única que puede voltear una decisión ya tomada, y **CP-23** (migraciones) y **CP-26** (TimescaleDB deprecado en Supabase) hay que resolverlas **antes de la primera captura**.
+**Cuestiones abiertas (14):** ver `docs/cuestiones_pendientes.md`, que es la **única fuente de verdad** — este archivo no duplica la lista. Ninguna bloquea el diseño, pero tres tienen urgencia: **CP-21** (`pico-tflmicro` en RP2350) es la única que puede voltear una decisión ya tomada, y **CP-23** (migraciones) y **CP-26** (TimescaleDB deprecado en Supabase) hay que resolverlas **antes de la primera captura**.
 
 ## Cómo empezar
 

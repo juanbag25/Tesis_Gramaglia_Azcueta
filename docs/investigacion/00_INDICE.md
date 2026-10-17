@@ -2,7 +2,7 @@
 
 Carpeta con notas de los papers solicitados. Cada archivo contiene: cita completa, abstract resumido, resultados clave y relevancia para la tesis. Los links directos al PDF de cada paper están incluidos al inicio de cada archivo cuando son de acceso abierto.
 
-> **Nota de repositorio:** las notas detalladas de cada paper (archivos `01_…md` a `22_…md`) provienen del chat de recopilación bibliográfica del proyecto. Si no están presentes en `docs/investigacion/papers/`, pueden subirse manualmente; este índice y `resumen_investigacion.md` resumen lo esencial.
+> **Nota de repositorio:** las notas detalladas de cada paper (archivos `01_…md` a `22_…md`) provienen del chat de recopilación bibliográfica del proyecto y **están en `docs/investigacion/papers/`** desde el 2026-07-16, junto con su índice original (`papers/00_INDICE.md`). No hace falta volver a subirlas. Este índice y `resumen_investigacion.md` resumen lo esencial.
 
 ## Documentos de fundamento (no bibliografía)
 

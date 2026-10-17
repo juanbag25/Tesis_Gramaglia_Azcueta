@@ -2,6 +2,15 @@
 
 > Registro cronológico de cambios en el proyecto (arquitectura, docs, código, decisiones). Entrada más reciente arriba. Formato: fecha — qué cambió — por qué / referencia.
 
+## 2026-10-11 — Cabos sueltos: `filesClaude/` duplicada, CP-27 cerrada y el paquete es de 39 B, no de 35
+
+- **`filesClaude/` es una copia exacta** de `docs/investigacion/papers/`: los 23 archivos (22 notas + índice) son **idénticos byte a byte** (SHA-256) a los que están en el repo desde el 2026-07-16. Entró en el commit `2c4c121` ("changes"). Se borra; no se pierde nada. Para que no se repita, la nota de `docs/investigacion/00_INDICE.md` —que decía *"si no están presentes en `papers/`, pueden subirse manualmente"*— ahora dice que **están ahí**.
+- **CP-27 pasa a Resueltas.** `t_device` en `uint64` estaba decidido desde la revisión del 2026-08-22 (Vista 1 §4, changelog, `CLAUDE.md`), pero la fila seguía en Abiertas, describiendo el problema como si no tuviera solución. Abiertas: **15 → 14**; Resueltas: **16 → 17**.
+- **ADR-042 no registraba esa decisión.** `CLAUDE.md`, el changelog y el mensaje del commit `d727425` la atribuían a ADR-042, pero el texto del ADR no mencionaba `t_device`. Se agrega como **punto 6**, con la fecha de agregado.
+- **El paquete es de 39 B, no de 35.** Los 35 B incluían la orientación (+6) pero **no** el `uint64` (+4): `device_id` 1 + `seq` 4 + `t_device` 8 + `lin_accel` 6 + giro 6 + orientación 6 + FSR 8 = **39 B** → **~7,8 KB/s** las dos plantillas y **~6,7 GB/mes** a 8 h/día (~20 GB a 24 h). La entrada del 2026-08-22 de este changelog decía *"29 → 35 B (+6 orientación, +4 reloj)"*: la suma de esa frase da 39. Se corrigió en Vista 1 §4, Vista 4 §1.4, maestro §9 y `CLAUDE.md`. En la bitácora, como es un registro, se **anotó** la corrección (fila del índice de ADR-042 y nota de ADR-008) sin reescribir el texto original. BLE lo sigue absorbiendo; no cambia ninguna decisión.
+- **`memory.md`:** decía en dos lugares que el maestro *"mantiene la vista general completa (duplicación buscada)"*, lo contrario de ADR-039; y rotulaba SPEC-11 como *"#11"*, que en el backlog es footprint/latencia. Corregido. Se registra además el **orden acordado con Juan**: primero **CP-23 + CP-26 + CP-29** (base de datos); CP-21 y CP-25 (banco) después.
+- **Archivos:** `cuestiones_pendientes.md` · `bitacora_decisiones.md` (ADR-042 punto 6, fila del índice, nota de ADR-008) · `vistas/1_vista_sistema.md` · `vistas/4_vista_backend_app.md` · `Arquitectura_Sistema_Marcha.md` · `investigacion/00_INDICE.md` · `CLAUDE.md` · `README.md` · `memory.md` · `changelog.md` · **borrado** `filesClaude/` (23 archivos).
+
 ## 2026-10-11 — `CLAUDE.md`: reglas de git para trabajar desde dos computadoras
 
 - **Sección nueva "Git y sincronización entre computadoras"** en `CLAUDE.md`, a pedido de Juan. La tesis se trabaja desde la computadora de Juan y la de Tobías, cada una con sus agentes, y la prioridad es que `origin/master` esté siempre al día.

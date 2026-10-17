@@ -203,7 +203,7 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 
 **Supabase** como plataforma gestionada [ADR-006/007]: PostgreSQL + **TimescaleDB** para series + **object storage** para blobs + auth. Modelo en tres capas: relacional para metadata, hypertables para eventos/features/scores, object storage para crudo (Parquet), artefactos de modelos e imágenes de firmware.
 
-**Retención tiered por fase** [ADR-008] *(volumen y supuestos: Vista 4 §1.4)*: en fase de dataset se guarda **crudo completo** (máxima trazabilidad); en uso real se guardan features/eventos/scores y el **crudo sólo alrededor de anomalías** — evita del orden de **6 GB/mes/paciente** (~8 h/día, sin comprimir — supuestos en Vista 4 §1.4) conservando lo clínicamente interesante.
+**Retención tiered por fase** [ADR-008] *(volumen y supuestos: Vista 4 §1.4)*: en fase de dataset se guarda **crudo completo** (máxima trazabilidad); en uso real se guardan features/eventos/scores y el **crudo sólo alrededor de anomalías** — evita del orden de **6,7 GB/mes/paciente** (~8 h/día, sin comprimir — supuestos en Vista 4 §1.4) conservando lo clínicamente interesante.
 
 **Worker de reentrenamiento** [ADR-009]: separado de Supabase. Laptop en la mínima, nube en la máxima (proveedor concreto → **CP-06**). Entrena E/H/W, cuantiza a int8 y publica al registry; corre con `service_role`.
 

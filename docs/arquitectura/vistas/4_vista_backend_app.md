@@ -47,9 +47,9 @@ Una fila = **un vector de features por zancada** (con `time`, `session_id`, `pat
 ### 1.4 Retención tiered por fase [ADR-008]
 
 - **Fase de dataset:** **crudo completo** (Parquet en storage) + features + eventos + scores + modelos → máxima trazabilidad para re-extraer features y reevaluar algoritmos.
-- **Uso real (máxima):** features/eventos/scores continuos; el **crudo sólo alrededor de anomalías/drift** (snippet pedido al buffer circular de la plantilla). Evita del orden de **6 GB/mes/paciente** de crudo continuo conservando lo clínicamente interesante, y encaja con el sensor de drift de Mahalanobis.
+- **Uso real (máxima):** features/eventos/scores continuos; el **crudo sólo alrededor de anomalías/drift** (snippet pedido al buffer circular de la plantilla). Evita del orden de **6,7 GB/mes/paciente** de crudo continuo conservando lo clínicamente interesante, y encaja con el sensor de drift de Mahalanobis.
 
-> **Cómo sale ese número.** Con el paquete de **35 B** (ADR-042) a 100 Hz por dos plantillas son **7 KB/s**, o sea **~6 GB/mes** suponiendo **~8 h/día de uso** y **sin comprimir**; a 24 h/día serían ~18 GB, y Parquet comprime bastante por debajo de eso. El supuesto de las 8 h hay que declararlo: la cifra anterior (~4 GB) venía del paquete viejo de 29 B y tampoco lo decía.
+> **Cómo sale ese número.** Con el paquete de **39 B** (ADR-042: orientación + `t_device` en `uint64`) a 100 Hz por dos plantillas son **7,8 KB/s**, o sea **~6,7 GB/mes** suponiendo **~8 h/día de uso** y **sin comprimir**; a 24 h/día serían ~20 GB, y Parquet comprime bastante por debajo de eso. El supuesto de las 8 h hay que declararlo: la cifra anterior (~4 GB) venía del paquete viejo de 29 B y tampoco lo decía, y la de ~6 GB (35 B) se había olvidado de los 4 B del `uint64`.
 
 ---
 
