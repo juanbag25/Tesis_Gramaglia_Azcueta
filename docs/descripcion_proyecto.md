@@ -1,5 +1,13 @@
 # Descripción del proyecto
 
+> **Documento histórico.** Descripción del proyecto **previa a la arquitectura** (julio 2026). Se conserva como registro, con el mismo criterio que el anteproyecto (ADR-030), y **no se actualiza**. Ante cualquier discrepancia **manda la arquitectura**: `docs/arquitectura/Arquitectura_Sistema_Marcha.md`, las cuatro vistas y la bitácora. Las diferencias principales:
+> - No es una plantilla aislada con todo on-device: son **dos plantillas + una unidad de cintura** que fusiona y decide (ADR-005), con un host y un worker (ADR-009, ADR-013).
+> - Los FSR van en **punta y talón**, no en el antepié medial y lateral (ADR-023; hasta 4 en la próxima revisión del PCB — ADR-041).
+> - Los eventos se detectan con el **FSR como señal primaria** y confirmación del IMU (ADR-015, ADR-038), no sólo con el IMU; el largo de zancada usa **ZUPT** y MSDI queda como mejora futura (ADR-016).
+> - No hay objetivo de **"latencia < 50 ms"**: el feedback es una alerta terminal por ventana de zancadas (ADR-027).
+> - El warm-up del IMU no es de 3 s: lo destraba un **gate térmico** (ADR-043 rev, CP-25).
+> - La **estrategia de validación** del final es una propuesta, todavía no ratificada (**CP-33**).
+
 ## Objetivo
 
 Diseño e implementación de una plantilla instrumentada inalámbrica para la **detección personalizada de anomalías de marcha en tiempo real**, con feedback vibrotáctil inmediato y procesamiento íntegramente on-device. El sistema apunta a aplicaciones de rehabilitación post-stroke, prevención de caídas en adultos mayores y monitoreo domiciliario de marcha sin necesidad de visitas a un laboratorio especializado.

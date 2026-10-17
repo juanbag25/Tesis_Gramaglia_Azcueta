@@ -1,26 +1,29 @@
 # firmware/ — Firmware on-device (C/C++, Pico SDK)
 
-Firmware para los tres micros (Raspberry Pi Pico 2 W, RP2350). **C/C++ con el Pico SDK** (no Arduino IDE) — ver ADR-010.
+Firmware para los tres micros (Raspberry Pi Pico 2 W, RP2350). **C/C++ con el Pico SDK**, bare-metal (ADR-010, ADR-025). Reparto de cores uniforme en los tres: **core 0 = radio, core 1 = procesamiento** (ADR-024 rev).
 
 ## Subcarpetas
 
-- `insole/` — firmware de las **plantillas**: muestreo de IMU (I²C) + 3 FSR (ADC) a 100 Hz, detección de contacto inicial (IC) propio, timestamp+secuencia por muestra, WiFi STA hacia la cintura, control del motor vibrador (PWM), recepción de comandos de feedback.
-- `waist/` — firmware de la **cintura (hub)**: WiFi AP para las plantillas, maestro de sincronización (beacon + drift), fusión bilateral, cálculo de features (modo edge), inferencia de modelos clase L/E (int8), sensor de drift, uplink BLE al host, gestión de OTA.
-- `shared/` — código **compartido**: definición canónica de features (debe coincidir con `worker/`), formato de paquetes (stream/control), protocolo de sincronización, protocolo y bootloader OTA A/B.
+- `insole/` — **plantillas**: adquisición determinística a 100 Hz (FSR por ADC + DMA con sobremuestreo y decimación; IMU MPU-6050 leído en el tick maestro por DMA — ADR-014/026), AHRS en el micro (el crudo sale post-AHRS — ADR-042), detección de eventos **IC/TO/MS** y numeración de zancadas (`stride_seq` — SPEC-01/02, ADR-046), features **por-pie** en captura operativa y edge (ADR-005 rev c), ring buffer de crudo y motor PWM.
+- `waist/` — **cintura (hub)**: WiFi AP para las plantillas, maestro de sincronización (beacon + drift — ADR-004), fusión bilateral y numeración de ciclos (`cycle_seq`), inferencia de clases L/E (SPEC-08), decisión de feedback (SPEC-09), uplink BLE al host (GATT; pairing ADR-028), ciclo de vida de la sesión (SPEC-11) y OTA A/B.
+- `shared/` — **código compartido**: catálogo de features (ADR-021), formatos de mensajes y paquetes, sincronización y protocolo OTA.
 
-## Responsabilidades por clase de modelo
+**Guías de implementación:** `docs/arquitectura/vistas/2_specs_algoritmos_firmware.md` (SPEC-01 a SPEC-11). Overview: Vista 2.
 
-- **Clase L:** inferencia + reentrenamiento **en el micro** (dato a dato). Ej.: Mahalanobis (media + inversa de covarianza actualizadas por EMA).
-- **Clase E:** inferencia **en el micro** (TFLite Micro, int8); los pesos se reciben por OTA desde el worker.
-- **Clase W:** no corre en el micro (inferencia/reentrenamiento en el worker).
+## Clases de modelo que corren acá (ADR-011 rev)
 
-## Bibliotecas / dependencias previstas
+- **L:** infiere y se adapta en la cintura (Mahalanobis); el estado adaptado vive en RAM y sube en el check-in de la sesión (ADR-043 rev).
+- **E:** infiere en la cintura —AE denso int8 con TFLite Micro + CMSIS-NN; Isolation Forest recorriendo árboles en C—, reentrena el worker y llega por OTA.
+- **H / W:** no corren en el micro (host en tiempo real / worker offline).
 
-- Pico SDK (lwIP para WiFi, BTstack para BLE), TFLite Micro (inferencia int8), driver I²C para MPU-6050, ADC para FSR, PWM para el motor.
+## Dependencias previstas
+
+Pico SDK (lwIP, BTstack), **CMSIS-DSP**, **TFLite Micro + CMSIS-NN** (`pico-tflmicro`: validar en RP2350 — CP-21), **Fusion** (AHRS). Las versiones se anclan al implementar (`docs/arquitectura/stack_tecnologico.md`).
 
 ## Notas de hardware
 
-- Pinout en `docs/investigacion/pinout_pico2.md` (3er FSR en ADC2/GP28, a confirmar contra el PCB).
-- Coexistencia WiFi-AP + BLE en el CYW43439 (un solo radio): validar temprano (riesgo conocido).
+- **2 FSR hoy** (punta ADC0/GP26, talón ADC1/GP27); máximo de diseño 4, con mux en la próxima revisión del PCB (ADR-041). Pinout: `docs/investigacion/pinout_pico2.md`.
+- Coexistencia WiFi-AP + BLE en el CYW43439 (un solo radio): validar temprano.
+- Antes de sellar una plantilla el OTA tiene que estar probado: al cerrarla se pierde el acceso al BOOTSEL.
 
-> **Pendiente:** inicializar el proyecto CMake del Pico SDK y los esqueletos de `insole/`, `waist/`, `shared/`.
+> **Pendiente:** contratos de interfaz —formatos de mensajes, GATT, OTA, artefactos— (**CP-34**) e inicializar el proyecto CMake del Pico SDK con los esqueletos de `insole/`, `waist/` y `shared/`.

@@ -4,7 +4,7 @@
 >
 > **Formato:** cada entrada es un ADR (*Architecture Decision Record*). Estados posibles: `propuesta`, `aceptada`, `revisada`, `reemplazada`.
 >
-> **Cómo mantenerlo (para agentes y humanos):** al tomar una decisión nueva o cambiar una existente, agregar/editar un ADR aquí, actualizar el `Resumen de decisiones` del documento de arquitectura y registrar el cambio en `memoria/changelog.md`.
+> **Cómo mantenerlo (para agentes y humanos):** al tomar una decisión nueva o cambiar una existente, agregar/editar un ADR aquí **y su fila en el índice**, y registrar el cambio en `memoria/changelog.md`. *(El "Resumen de decisiones" del documento de arquitectura ya no existe: lo eliminó ADR-039.)*
 
 ---
 

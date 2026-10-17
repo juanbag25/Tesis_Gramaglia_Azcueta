@@ -2,6 +2,15 @@
 
 > Registro cronológico de cambios en el proyecto (arquitectura, docs, código, decisiones). Entrada más reciente arriba. Formato: fecha — qué cambió — por qué / referencia.
 
+## 2026-10-17 — Documentación vieja corregida antes de implementar
+
+Con el OK de Juan, se corrigió lo que el relevamiento detectó y que van a leer los agentes que implementen.
+
+- **`src/firmware/README.md` y `src/worker/README.md` reescritos** con la arquitectura vigente. Decían 3 FSR, detección sólo de IC, features por-pie calculadas en la cintura, clases `L/E/W` sin la H, PyTorch, Isolation Forest como clase W y un worker que reentrena "E y W". Ahora remiten a las SPECs, a ADR-042/043/046 y a **CP-34** (contratos de interfaz) como pendiente.
+- **`docs/descripcion_proyecto.md` marcado como histórico** con el criterio de ADR-030 (como el anteproyecto): no se actualiza y, ante discrepancia, manda la arquitectura. El encabezado lista las diferencias principales (una sola plantilla con todo on-device, FSR medial/lateral, eventos por IMU, "< 50 ms", warm-up de 3 s, validación no ratificada → CP-33). No se borró: ADR-011 lo cita. Ahora figura en la estructura del repo de `CLAUDE.md`.
+- **Restos menores:** la Vista 3 todavía presentaba `imufusion` como "re-extracción desde crudo, condicional" (ADR-042 lo dejó sin ese uso); `objetivos.md` decía "taxonomía L/E/W"; el encabezado de la bitácora pedía mantener el "Resumen de decisiones" del maestro, que ADR-039 eliminó.
+- **Archivos:** `src/firmware/README.md` · `src/worker/README.md` · `docs/descripcion_proyecto.md` · `vistas/3_vista_datos_ml.md` · `objetivos.md` · `bitacora_decisiones.md` (encabezado) · `CLAUDE.md` · `changelog.md`.
+
 ## 2026-10-17 — Relevamiento de lo pendiente antes de implementar: CP-33 y CP-34
 
 A pedido de Juan: verificar qué cuestiones o decisiones quedan antes de empezar a implementar código, base y arquitectura. Se recorrieron las cuestiones abiertas, los "pendiente" de las cuatro vistas, el stack, los README de `src/`, el marco teórico y los documentos fuera del orden de lectura.

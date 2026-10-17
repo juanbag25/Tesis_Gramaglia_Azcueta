@@ -63,6 +63,7 @@ tesis/
 │   ├── objetivos.md
 │   ├── cuestiones_pendientes.md  # registro vivo de cuestiones abiertas (única fuente de verdad)
 │   ├── Anteproyecto_Tesis.pdf    # anteproyecto oficial (define la tesis)
+│   ├── descripcion_proyecto.md   # HISTÓRICO, previo a la arquitectura: no se actualiza (ante discrepancia, manda la arquitectura)
 │   ├── arquitectura/          # maestro (índice+overview) + vistas/ + stack_tecnologico.md
 │   │   ├── vistas/            # 1 sistema · 2 firmware (+ specs) · 3 datos-ml (+ análisis) · 4 backend
 │   │   ├── esquema_alimentacion.md   # hardware, cableado y checklist del PCB

@@ -124,7 +124,7 @@ Los algoritmos se evalúan **de a poco, escalando sólo si el anterior no alcanz
 ADR-005 (features distribuidas + fases de captura), ADR-018 (paridad / anti skew), ADR-021 (catálogo declarativo + set activo), ADR-023 (set activo 2-FSR), ADR-011 rev (taxonomía/ruteo model-agnostic), ADR-013 (inferencia RT en hub/host), ADR-009 (backend de reentrenamiento), ADR-022 (framework de entrenamiento + cuantización int8), ADR-017 (módulo IMU / calibración), **ADR-042** (crudo post-AHRS: qué recibe el worker), **ADR-043 rev** (ciclo de vida, adaptación conmutable, autoridad del modelo).
 
 ## Stack (resumen; detalle en `../stack_tecnologico.md`)
-numpy, scipy, **scikit-learn** (Isolation Forest, ajuste Mahalanobis), **TensorFlow/Keras** (autoencoders) + conversor **TFLite/LiteRT** (PTQ int8, representative dataset — ADR-022), pandas; `imufusion` (re-extracción desde crudo, condicional). El runtime on-device es de la Vista 2 (TFLite Micro + CMSIS-NN / CMSIS-DSP).
+numpy, scipy, **scikit-learn** (Isolation Forest, ajuste Mahalanobis), **TensorFlow/Keras** (autoencoders) + conversor **TFLite/LiteRT** (PTQ int8, representative dataset — ADR-022), pandas. *(`imufusion` ya no hace falta: el crudo llega post-AHRS y el worker no re-procesa IMU — ADR-042.)* El runtime on-device es de la Vista 2 (TFLite Micro + CMSIS-NN / CMSIS-DSP).
 
 ## Diagramas de esta vista
 - `../ciclo_de_vida_modelos.mermaid` — entrenamiento → registro → OTA → inferencia → drift.

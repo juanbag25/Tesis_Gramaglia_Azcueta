@@ -17,7 +17,7 @@ Desarrollar un **sistema de plantillas inteligentes bilaterales** para la **dete
 - Calcular **descriptores biomecánicos (features)** validados por la literatura, aprovechando la configuración **bilateral** para medir **simetría inter-miembro**.
 - Detectar desviaciones respecto de la **marcha normal personalizada** del propio paciente (enfoque one-class / personalización primero).
 - Entregar **feedback vibrotáctil** en tiempo real ante anomalías.
-- Soportar **adaptación/reentrenamiento online** de los modelos, con distintos niveles de costo computacional (ver taxonomía L/E/W).
+- Soportar **adaptación/reentrenamiento online** de los modelos, con distintos niveles de costo computacional (ver taxonomía L/E/H/W).
 - Almacenar datos y modelos por paciente en una **base de datos remota**, con trazabilidad para reevaluar algoritmos.
 
 ## 4. Alcance: mínima y máxima
