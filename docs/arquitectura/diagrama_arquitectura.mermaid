@@ -12,12 +12,12 @@ flowchart TB
     subgraph HOST["PLANO HOST + COMPUTO"]
         direction TB
         LT["HOST<br/>Laptop (minima) / Celular (maxima)<br/>ingesta + buffer local + puente OTA"]
-        WK["WORKER DE REENTRENAMIENTO<br/>Laptop (minima) / Nube (maxima)<br/>entrena clases E/W - cuantiza int8"]
+        WK["WORKER DE REENTRENAMIENTO<br/>Laptop (minima) / Nube (maxima)<br/>entrena clases E/H/W - cuantiza int8"]
     end
 
     subgraph CLOUD["PERSISTENCIA - SUPABASE"]
         direction TB
-        DB[("PostgreSQL + TimescaleDB<br/>metadata - features - scores - eventos - registry")]
+        DB[("PostgreSQL 17 - series particionadas<br/>metadata - zancadas - features - scores - eventos - registry")]
         OBJ[("Object Storage<br/>crudo Parquet - artefactos de modelos - firmware")]
         AUTH["Auth + RLS por paciente"]
     end

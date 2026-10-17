@@ -31,19 +31,22 @@
 | Clásicos | **scikit-learn** | Isolation Forest, ajuste Mahalanobis | candidato |
 | Deep learning | **TensorFlow/Keras** | autoencoders (denso/LSTM) | decidido (ADR-022) |
 | Cuantización | **conversor TFLite/LiteRT** (PTQ int8, representative dataset) | export int8 al micro; QAT como fallback | decidido (ADR-022) |
-| Orientación (paridad, condicional) | **`imufusion`** (Python) | re-extraer features del IMU desde el **crudo** off-device (paridad con Fusion); **no** se usa en el camino edge | candidato (ADR-017) |
+| Orientación (paridad, condicional) | **`imufusion`** (Python) | **ya no hace falta para re-extraer features**: el crudo llega post-AHRS y el worker no re-procesa IMU (ADR-042) | no requerido (ADR-042) |
 
 ## Vista 4 — Backend y aplicación
 
 | Componente | Librería / módulo | Propósito | Estado |
 |---|---|---|---|
-| DB / plataforma | **Supabase** (Postgres + TimescaleDB + Storage + Auth) | persistencia, storage de modelos, auth/RLS | decidido (ADR-006/007) |
+| DB / plataforma | **Supabase** (Postgres 17 + Storage + Auth) | persistencia, storage de modelos, auth/RLS | decidido (ADR-006/007/044) |
+| Series particionadas | **`pg_partman`** + **`pg_cron`** (extensiones de Postgres en Supabase) | particiones mensuales creadas por adelantado; mantenimiento diario y cierre de particiones | decidido (ADR-044/047) |
 | Worker ↔ DB | **supabase-py** | pull datos / push modelos | candidato |
 | App host (mínima) | **bleak** (Python) | central BLE, ingesta | decidido (ADR-033) |
 | UI de control (mínima) | **FastAPI** + página web servida por el mismo proceso de ingesta | elegir paciente, abrir/cerrar sesión, cambiar el modo, ver estado, disparar OTA | decidido (ADR-033) |
 | App móvil (máxima) | *(a definir)* | ingesta + puente + OTA | a definir |
 | Dashboard | *(a definir: React+Supabase / Streamlit / Plotly Dash)* | visualización clínica | a definir |
-| Migraciones DB | Supabase migrations o similar | versionado del esquema (el DDL vive en `src/db/schema.sql` — ADR-037) | a definir |
+| Migraciones DB | **CLI de Supabase** (proyecto en `src/db/supabase/`, `--workdir src/db`) + **Docker** (base local) | migraciones versionadas, base local reproducible, snapshot `schema.sql`, `db push` desde CI | decidido (ADR-045) |
+| Tests de base | **pgTAP** (`supabase test db`) | aislamiento entre pacientes, grants, RLS en tablas y particiones, integridad, idempotencia | decidido (ADR-045/047) |
+| CI de la base | **GitHub Actions** | base efímera → migraciones → pgTAP → chequeo del snapshot → `db push` desde `master` | decidido (ADR-045) |
 
 ## Vista 1 — Sistema (transversal)
 El transporte (lwIP/BTstack) y la sincronización (código propio de capa de aplicación) se implementan en el firmware (Vista 2). No hay librerías propias de esta vista.

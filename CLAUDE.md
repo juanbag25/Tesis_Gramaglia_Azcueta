@@ -8,7 +8,7 @@
 
 Sistema de **plantillas inteligentes bilaterales** para **detección personalizada de anomalías de marcha en pacientes post-ACV**, con **feedback vibrotáctil en tiempo real** e **inferencia en el borde (edge)**. Tesis de maestría (ITBA).
 
-**Estado actual:** arquitectura **cerrada** en 4 vistas consolidadas; **diseño detallado terminado**. Decisiones en **ADR-000 a 043**; specs de firmware **SPEC-01 a SPEC-11**. El backlog de investigación **#1–#10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) requieren firmware y dataset. El **esquema de la base está escrito** (`src/db/schema.sql`). **Firmware y worker todavía no existen.** Próximo paso: **roadmap de implementación por fases** e iniciar `src/`.
+**Estado actual:** arquitectura **cerrada** en 4 vistas consolidadas; **diseño detallado terminado**. Decisiones en **ADR-000 a 047**; specs de firmware **SPEC-01 a SPEC-11**. El backlog de investigación **#1–#10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) requieren firmware y dataset. El **esquema de la base está diseñado** (`src/db/schema.sql`: Postgres 17 con series particionadas, zancada como entidad, grants explícitos — ADR-044 a 047) y se crea como **migraciones** al implementar la base (ADR-045). **Firmware, worker y base todavía no existen.** Próximo paso: **roadmap de implementación por fases** e iniciar `src/`.
 
 ## Orden de lectura recomendado (onboarding)
 
@@ -32,7 +32,7 @@ Tres reglas de fuente única, todas producto de la auditoría de consistencia de
 |---|---|---|
 | **Detalle de cada dominio** | Las **4 vistas** | Si el maestro y una vista discrepan, **manda la vista** (ADR-039). El maestro es overview + puntero, no una segunda copia. |
 | **Decisiones** | `bitacora_decisiones.md` **y su índice** | El maestro **ya no** mantiene un "Resumen de decisiones" (ADR-039). |
-| **Esquema de la base** | `src/db/schema.sql` | El maestro §11 tiene sólo el mapa de entidades (ADR-037). |
+| **Esquema de la base** | La cadena de **migraciones** (`src/db/supabase/migrations/`) | Se cambia **sólo** con una migración nueva; `src/db/schema.sql` es el snapshot para leerlo, **generado**, no se edita a mano (ADR-045, revisa ADR-037). Mientras la base no exista, `schema.sql` es el diseño. El maestro §11 tiene sólo el mapa de entidades. |
 | **Cuestiones abiertas** | `docs/cuestiones_pendientes.md` | Todo lo demás apunta ahí; nadie duplica el estado. |
 
 ## Resumen de la arquitectura (lo mínimo que un agente debe saber)
@@ -45,7 +45,8 @@ Tres reglas de fuente única, todas producto de la auditoría de consistencia de
 - **Features: catálogo de 47** en bloques A–I, definición **única y compartida** plantilla↔cintura↔worker, versionada por `feature_set_version`. El **catálogo es una biblioteca de features disponibles, no una lista de obligaciones**; el **set activo** es lo que se calcula (ADR-040). Hoy están **OFF**: *por hardware*, el bloque E (#22-25, #42) y #18; *por alcance*, el bloque I de tronco (#45-47).
 - **Cómputo distribuido:** cada plantilla calcula sus features **por-pie**; la cintura hace la **fusión bilateral** (simetría, double support) y las de tronco. **Qué es "crudo" (ADR-042):** señal de FSR + IMU a 100 Hz con el **AHRS ya aplicado en el micro** (aceleración lineal sin gravedad + orientación) y **ningún otro procesamiento**; el worker consume y **no re-procesa IMU**. La calibración es **irreversible por diseño**. **Captura por fases (ADR-005 rev c):** *exploratoria* = crudo-solo (features off-device); *operativa* = features del micro + crudo (entrena skew-free y valida paridad); *edge* = features/eventos/scores en vivo + crudo por snippet ante anomalía.
 - **Muestreo determinístico (100 Hz):** ADC disparado por hardware + DMA con **sobremuestreo ~1 kHz y decimación ×10** (mejora el SNR del FSR); IMU leído en el **tick maestro por DMA**; timestamp + secuencia por muestra; core dedicado.
-- **Persistencia:** **Supabase** (PostgreSQL + TimescaleDB + object storage + auth), con **RLS estricto por paciente** vía `patient_access`. Supabase **no entrena**; el entrenamiento corre en un worker (laptop en mínima, nube en máxima).
+- **Persistencia:** **Supabase** (Postgres 17 + object storage + auth), con las series **particionadas por mes de inicio de sesión** (particionado nativo + `pg_partman`/`pg_cron` — ADR-044; TimescaleDB quedó descartado), **RLS estricto por paciente** vía `patient_access` y **grants explícitos**: nada se expone por la Data API por defecto (ADR-047). El esquema cambia sólo por **migraciones** que aplica CI (ADR-045). Supabase **no entrena**; el entrenamiento corre en un worker (laptop en mínima, nube en máxima).
+- **Identidad de las series (ADR-046):** la **zancada es una entidad** (`strides`). La plantilla numera sus zancadas (`stride_seq`, por pie) y la cintura los ciclos bilaterales (`cycle_seq`), desde `arm()`; eventos, vectores y scores se identifican con esos números, con **FK reales** e **ingesta idempotente** (upsert).
 - **Modelos (taxonomía L/E/H/W):** cada modelo declara su clase en el registry (`inference_target ∈ {hub, host, worker}`). **L** infiere y reentrena en la cintura, con el estado adaptado en **RAM** durante la sesión: sube a la base en el **check-in** y se re-flashea desde la base al abrir la siguiente — **la DB manda**, el flash es copia de trabajo (ADR-043 rev); **E** infiere en la cintura y reentrena en el worker; **H** infiere en el host; **W** es batch/offline. **La inferencia en tiempo real va en `hub` o `host`, nunca en el worker/nube** — cambiar `hub`→`host` es un switch de config, sin reescritura. Mahalanobis es además **sensor de drift**.
 - **Feedback vibrotáctil:** **monitoreo y alerta, no corrección** (ADR-027). Score designado sobre una **ventana de zancadas** → anomalía sostenida → 3 bandas per-paciente → alerta escasa.
 - **La sesión es una transacción orquestada por la interfaz (ADR-043 rev):** encendido → conexión → configuración → *provisioning* (baja el modelo de la DB y lo flashea, estampado con `patient_id`) → **gate térmico** (el warm-up del IMU corre en paralelo al setup; se destraba por **temperatura estable**, no por reloj) → calibración → **verificación** (sin ella no arranca) → sesión → **check-in**. La adaptación online se **prende y apaga por sesión** (`adaptation_enabled`). Diagrama: `docs/arquitectura/pipeline_sesion.mermaid`.
@@ -70,7 +71,7 @@ tesis/
 │   ├── investigacion/         # bibliografía (22 papers), features, pinout, fundamentos
 │   └── marco_teorico/         # marco teórico (documento de trabajo)
 ├── src/
-│   ├── db/schema.sql          # ESQUEMA — fuente única (ADR-037)
+│   ├── db/                    # supabase/ (migraciones + tests pgTAP) + schema.sql (snapshot) — ADR-045
 │   ├── firmware/              # C/C++ Pico SDK: insole/ · waist/ · shared/
 │   ├── host/                  # app de ingesta/puente + UI de control (bleak + FastAPI)
 │   └── worker/                # reentrenamiento (Python)
@@ -84,7 +85,7 @@ tesis/
 - **Firmware (C/C++ Pico SDK):** `src/firmware/`. `insole/` y `waist/` comparten código en `shared/` (definición de features, formato de paquetes, sync, protocolo OTA). La definición de features en `shared/` **debe coincidir** con la del worker (misma semántica, versionada).
 - **App host / puente:** `src/host/`. Ingesta por BLE, buffer local, puente OTA, UI de control (FastAPI), escritura a Supabase, runtime espejo para modelos de clase H.
 - **Worker de reentrenamiento (Python):** `src/worker/`. Entrena clases E/H/W, cuantiza a int8 (TF/Keras + PTQ), publica modelos al registry.
-- **Base de datos:** `src/db/schema.sql` — **acá y sólo acá** se modifica el esquema.
+- **Base de datos:** `src/db/`. El esquema se modifica **sólo con una migración nueva** en `src/db/supabase/migrations/` (CLI de Supabase con `--workdir src/db`); una migración aplicada no se edita y la base remota no se toca a mano. `schema.sql` es un **snapshot generado**: no se edita a mano (ADR-045). *Mientras la base no exista, `schema.sql` es el diseño y es lo que se edita.*
 
 ## Convenciones e invariantes (no romper sin un ADR nuevo)
 
@@ -164,6 +165,7 @@ El autor ve `CONFLICT (content): Merge conflict in <archivo>`. Vos resolvés **e
 | `memoria/changelog.md` | Quedan **las dos entradas**, la más reciente arriba. |
 | Bitácora, cuestiones o specs con **el mismo número en los dos lados** | **Lo que ya está en `origin` conserva su número**; el cambio local pasa al siguiente libre y se actualizan **todas** sus referencias en el repo (buscalas con `git grep -n` y el ID duplicado). |
 | `memoria/memory.md`, *Estado actual* de `CLAUDE.md`/`README.md` | Se combinan los dos hechos. Si se contradicen, **decide el autor**, no vos. |
+| `src/db/supabase/migrations/` | Quedan **las dos** migraciones. Se aplican en el orden de sus nombres, así que si la local tiene un timestamp **anterior** a una que ya se aplicó en la base remota, se renombra con un timestamp nuevo antes de pushear. `schema.sql` no se resuelve a mano: se regenera (ADR-045). |
 | Cualquier otro | Se combina a mano; ante la duda, preguntá. |
 
 **Verificación:** `git grep -n -e "^<<<<<<< " -e "^>>>>>>> "` no devuelve nada y, si renumeraste, cada mención del número duplicado apunta al ADR/CP que ya estaba en `origin`. Después se sigue con el cierre (§3) desde `git push`.
@@ -179,11 +181,11 @@ El autor ve `CONFLICT (content): Merge conflict in <archivo>`. Vos resolvés **e
 
 ## Cuestiones pendientes
 
-El registro vivo está en **`docs/cuestiones_pendientes.md`** — **única fuente de verdad, y este archivo no la duplica**. Al 2026-10-11 hay **14 abiertas** y **17 resueltas**. Copiar la lista acá fue justamente lo que la desactualizó antes: vale la misma regla que ADR-037 (esquema) y ADR-039 (decisiones) — *una sola fuente, varios consumidores*.
+El registro vivo está en **`docs/cuestiones_pendientes.md`** — **única fuente de verdad, y este archivo no la duplica**. Al 2026-10-17 hay **12 abiertas** y **20 resueltas**. Copiar la lista acá fue justamente lo que la desactualizó antes: vale la misma regla que ADR-037 (esquema) y ADR-039 (decisiones) — *una sola fuente, varios consumidores*.
 
 **La única que amerita alerta en el onboarding:** **CP-21** (port de `pico-tflmicro` a RP2350) es la **única cuestión abierta que puede voltear una decisión ya tomada** (ADR-020/SPEC-08): el port oficial no está mergeado para RP2350. Se descarta con una prueba de banco aislada, sin necesidad del firmware del proyecto, y conviene hacerla **antes** de escribir firmware que dependa de SPEC-08.
 
-**Con fecha límite propia:** **CP-23** (herramienta de migraciones) y **CP-26** (TimescaleDB deprecado en Supabase) hay que resolverlas **antes de la primera captura**, porque después los cambios de esquema dejan de ser gratis.
+**Con fecha límite propia:** la base tiene que **existir como migraciones antes de la primera captura** (ADR-045), porque después los cambios de esquema dejan de ser gratis. Está diseñada (ADR-044 a 047; CP-23, CP-26 y CP-29 se resolvieron el 2026-10-17) pero todavía no creada.
 
 ## Glosario rápido
 

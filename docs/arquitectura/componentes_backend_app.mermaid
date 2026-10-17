@@ -18,9 +18,9 @@ flowchart TB
 
     subgraph SB["Supabase - sistema de registro"]
         direction TB
-        DB[("PostgreSQL + TimescaleDB<br/>metadata - gait_events<br/>feature_vectors (jsonb) - anomaly_scores")]
+        DB[("PostgreSQL 17 - series particionadas<br/>metadata - strides - gait_events<br/>feature_vectors (jsonb) - anomaly_scores")]
         OBJ[("Object Storage<br/>crudo Parquet - modelos - firmware")]
-        AUTH["Auth + RLS por paciente<br/>tabla patient_access"]
+        AUTH["Auth + RLS por paciente<br/>tabla patient_access<br/>grants explicitos"]
         REG["Registry de modelos<br/>models - deployments - retrain_jobs"]
     end
 

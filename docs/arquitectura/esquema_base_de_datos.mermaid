@@ -1,21 +1,23 @@
-%% Esquema de base de datos - Supabase (PostgreSQL + TimescaleDB + object storage)
+%% Esquema de base de datos - Supabase (Postgres 17 + object storage)
+%% Series particionadas por mes de inicio de sesion (ADR-044); identidad de borde (ADR-046).
+%% Fuente del esquema: migraciones (ADR-045); snapshot para leer en src/db/schema.sql.
 erDiagram
     PATIENTS ||--o{ SESSIONS : "tiene"
+    PATIENTS ||--o{ PATIENT_ACCESS : "acceso"
     PATIENTS ||--o{ MODELS : "personaliza"
-    PATIENTS ||--o{ FEATURE_VECTORS : "genera"
-    PATIENTS ||--o{ ANOMALY_SCORES : "genera"
+    PATIENTS ||--o{ FEEDBACK_CONFIG : "configura"
     SESSIONS ||--o{ RAW_BLOBS : "produce"
-    SESSIONS ||--o{ GAIT_EVENTS : "produce"
-    SESSIONS ||--o{ FEATURE_VECTORS : "produce"
+    SESSIONS ||--o{ STRIDES : "contiene"
     SESSIONS ||--o{ ANOMALY_SCORES : "produce"
-    SESSIONS ||--o{ ANOMALY_RAW_SNIPPETS : "retiene"
+    STRIDES ||--o{ GAIT_EVENTS : "IC MS TO"
+    STRIDES ||--o{ FEATURE_VECTORS : "por pie o par bilateral"
+    MODELS ||--o{ ANOMALY_SCORES : "produce"
+    ANOMALY_SCORES ||--o{ ANOMALY_RAW_SNIPPETS : "dispara"
+    DEVICES ||--o{ STRIDES : "detecta"
     DEVICES ||--o{ RAW_BLOBS : "captura"
-    DEVICES ||--o{ GAIT_EVENTS : "detecta"
     DEVICES ||--o{ MODEL_DEPLOYMENTS : "aloja"
     MODELS ||--o{ MODEL_DEPLOYMENTS : "se_despliega"
-    MODELS ||--o{ ANOMALY_SCORES : "produce"
     MODELS ||--o{ RETRAIN_JOBS : "entra_sale"
-    ANOMALY_SCORES ||--o{ ANOMALY_RAW_SNIPPETS : "dispara"
 
     PATIENTS {
         uuid id PK
@@ -23,6 +25,11 @@ erDiagram
         int birth_year
         text affected_side
         jsonb clinical_notes
+    }
+    PATIENT_ACCESS {
+        uuid user_id PK
+        uuid patient_id PK, FK
+        text role "owner|clinician|patient"
     }
     DEVICES {
         uuid id PK
@@ -33,10 +40,10 @@ erDiagram
     SESSIONS {
         uuid id PK
         uuid patient_id FK
-        text mode "capture|edge"
+        text mode "exploratory|operational|edge"
         text feature_set_version
-        text environment "lab|clinic|home"
-        timestamptz started_at
+        boolean adaptation_enabled
+        timestamptz started_at "se copia como session_started_at"
         timestamptz ended_at
     }
     RAW_BLOBS {
@@ -47,43 +54,71 @@ erDiagram
         bigint n_samples
         text checksum
     }
-    ANOMALY_RAW_SNIPPETS {
-        uuid id PK
-        uuid session_id FK
-        uuid score_id FK
-        text storage_url
-        timestamptz start_time
-        timestamptz end_time
+    STRIDES {
+        uuid session_id PK, FK
+        text foot PK "left|right"
+        int stride_seq PK "lo numera la plantilla"
+        timestamptz session_started_at PK "particion mensual"
+        uuid patient_id FK
+        uuid device_id FK
+        timestamptz started_at "IC que la abre"
+        timestamptz ended_at "IC siguiente"
+        text[] flags
     }
     GAIT_EVENTS {
-        timestamptz time "hypertable"
-        uuid session_id FK
-        text foot
-        text type "IC|TO"
+        uuid session_id PK, FK
+        text foot PK, FK
+        int stride_seq PK, FK
+        text type PK "IC|MS|TO"
+        timestamptz session_started_at PK
+        uuid patient_id FK
+        timestamptz time
         real confidence
+        text[] flags "no_crossover"
     }
     FEATURE_VECTORS {
-        timestamptz time "hypertable"
-        uuid session_id FK
-        text scope "left|right|bilateral"
-        text feature_set_version
+        uuid session_id PK, FK
+        text scope PK "left|right|bilateral"
+        int unit_seq PK "stride_seq o cycle_seq"
+        text features_source PK "device|offline"
+        text feature_set_version PK
+        timestamptz session_started_at PK
+        uuid patient_id FK
+        int left_stride_seq FK
+        int right_stride_seq FK
+        timestamptz time
         jsonb features
-        bigint stride_id
+        text[] flags
     }
     ANOMALY_SCORES {
-        timestamptz time "hypertable"
-        uuid session_id FK
-        uuid model_id FK
+        uuid session_id PK, FK
+        uuid model_id PK, FK
+        text scope PK
+        int unit_seq PK "la unidad del vector que lo disparo"
+        timestamptz session_started_at PK
+        uuid patient_id FK
+        timestamptz time
         double score
         boolean is_anomaly
         double drift_metric
     }
+    ANOMALY_RAW_SNIPPETS {
+        uuid id PK
+        uuid session_id FK
+        uuid model_id FK
+        text scope FK
+        int unit_seq FK
+        uuid device_id FK
+        text storage_url
+        timestamptz start_time
+        timestamptz end_time
+    }
     MODELS {
         uuid id PK
-        uuid patient_id FK "null=global"
+        uuid patient_id FK "null = global, sin scores"
         text algo
-        text class "L|E|W"
-        text inference_target "micro|worker"
+        text class "L|E|H|W"
+        text inference_target "hub|host|worker"
         text retrain_target "micro|worker"
         text granularity "online|periodic|async"
         int version
@@ -114,4 +149,13 @@ erDiagram
         uuid model_out FK
         text status
         text worker
+    }
+    FEEDBACK_CONFIG {
+        uuid id PK
+        uuid patient_id FK
+        uuid feedback_source FK
+        int window_strides
+        double threshold_mild
+        double threshold_marked
+        double threshold_risk
     }

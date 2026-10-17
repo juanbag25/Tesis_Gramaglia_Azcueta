@@ -7,13 +7,13 @@ Sistema wearable que detecta desviaciones **personalizadas** en la marcha de pac
 - ✅ Objetivos y alcance definidos; **anteproyecto** y **marco teórico** incorporados.
 - ✅ Investigación previa consolidada (bibliografía, catálogo de features, algoritmos).
 - ✅ **Arquitectura cerrada**, en **4 vistas consolidadas** (`docs/arquitectura/vistas/`). El maestro es **índice + overview**, no duplica el detalle de las vistas (ADR-039).
-- ✅ **Diseño detallado terminado** — **ADR-000 a 043** en la bitácora, **SPEC-01 a SPEC-11** de algoritmos de firmware. El backlog de investigación **#1 a #10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) esperan firmware y dataset.
-- ✅ **Esquema de la base escrito** — `src/db/schema.sql` es la **fuente única** (ADR-037): tablas, hypertables, índices, RLS y políticas.
+- ✅ **Diseño detallado terminado** — **ADR-000 a 047** en la bitácora, **SPEC-01 a SPEC-11** de algoritmos de firmware. El backlog de investigación **#1 a #10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) esperan firmware y dataset.
+- ✅ **Esquema de la base diseñado** — Postgres 17 con **series particionadas** + `pg_partman` (ADR-044), **migraciones versionadas** con la CLI de Supabase y CI (ADR-045), **la zancada como entidad** con FK reales e ingesta idempotente (ADR-046) y **grants explícitos + RLS en todas las tablas** (ADR-047). El diseño está en `src/db/schema.sql`; se crea como migraciones al implementar la base.
 - 🔄 **Hardware en banco** — 2 FSR conectados (punta + talón); la próxima revisión del PCB suma medial y lateral con mux (ADR-041) y el cargador de corriente limitada. Checklist en `docs/arquitectura/esquema_alimentacion.md` §7.
 - ⏳ **Roadmap de implementación por fases** — próximo paso.
 - ⏳ **Firmware y worker** — aún no iniciados (`src/firmware/`, `src/host/`, `src/worker/`).
 
-**Cuestiones abiertas (14):** ver `docs/cuestiones_pendientes.md`, que es la **única fuente de verdad** — este archivo no duplica la lista. Ninguna bloquea el diseño, pero tres tienen urgencia: **CP-21** (`pico-tflmicro` en RP2350) es la única que puede voltear una decisión ya tomada, y **CP-23** (migraciones) y **CP-26** (TimescaleDB deprecado en Supabase) hay que resolverlas **antes de la primera captura**.
+**Cuestiones abiertas (12):** ver `docs/cuestiones_pendientes.md`, que es la **única fuente de verdad** — este archivo no duplica la lista. Ninguna bloquea el diseño. **CP-21** (`pico-tflmicro` en RP2350) es la única que puede voltear una decisión ya tomada. Y hay una fecha límite: la base tiene que **existir como migraciones antes de la primera captura** (ADR-045).
 
 ## Cómo empezar
 
@@ -35,7 +35,7 @@ Este repo está pensado para trabajar con **agentes de IA**: `CLAUDE.md` les da 
 | `docs/cuestiones_pendientes.md` | Registro vivo de cuestiones abiertas (única fuente de verdad). |
 | `docs/investigacion/` | Bibliografía (22 papers), catálogo de features, pinout, informe de alineación y **documentos de fundamento** (ver `00_INDICE.md`). |
 | `docs/marco_teorico/` | Marco teórico (documento de trabajo). |
-| `src/db/schema.sql` | **Esquema de la base — fuente única** (ADR-037). |
+| `src/db/` | **Base de datos:** `supabase/` (migraciones y tests, cuando exista la base) + `schema.sql`, el esquema para leer (ADR-045). |
 | `src/firmware/` | Firmware C/C++ (Pico SDK): `insole/`, `waist/`, `shared/`. |
 | `src/host/` | App de ingesta/puente + UI de control (laptop → celular). |
 | `src/worker/` | Reentrenamiento de modelos (Python). |
@@ -61,16 +61,16 @@ Toda decisión de arquitectura se registra como **ADR** en `docs/decisiones/bita
 |---|---|
 | Qué se decidió y por qué | El índice de la bitácora, y el ADR correspondiente |
 | Cómo funciona un dominio en detalle | La **vista** que le corresponde — **ante discrepancia con el maestro, manda la vista** |
-| El esquema exacto de la base | `src/db/schema.sql` |
+| El esquema exacto de la base | `src/db/schema.sql` (para leer; se cambia sólo por migraciones — ADR-045) |
 | Qué falta resolver | `docs/cuestiones_pendientes.md` |
 | Qué pasó y cuándo | `memoria/changelog.md` |
 
 ## Requisitos (a completar cuando exista código)
 
 - **Firmware:** Raspberry Pi Pico SDK (C/C++), toolchain ARM, **CMSIS-DSP**, **TFLite Micro + CMSIS-NN** (`pico-tflmicro` — ver CP-21), **Fusion** (AHRS), **BTstack**, **lwIP**. *(instrucciones en `src/firmware/README.md`)*
-- **Worker:** Python — numpy, scipy, pandas, **scikit-learn**, **TensorFlow/Keras** + conversor TFLite/LiteRT (PTQ int8), `imufusion`. *(en `src/worker/README.md`)*
+- **Worker:** Python — numpy, scipy, pandas, **scikit-learn**, **TensorFlow/Keras** + conversor TFLite/LiteRT (PTQ int8). *(en `src/worker/README.md`)*
 - **Host:** Python — `bleak` (BLE) + **FastAPI** (UI de control).
-- **Base de datos:** Supabase (PostgreSQL). ⚠️ TimescaleDB está **deprecado** en Supabase sobre PG17 — ver **CP-26**.
+- **Base de datos:** Supabase sobre **Postgres 17**, con `pg_partman` + `pg_cron` (ADR-044). Para trabajar: **Docker** + la **CLI de Supabase** (migraciones, base local y tests pgTAP — ADR-045). *(en `src/db/README.md`)*
 
 Las versiones exactas no se fijan de memoria: se anclan al implementar (regla de `stack_tecnologico.md`).
 

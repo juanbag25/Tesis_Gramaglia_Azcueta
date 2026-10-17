@@ -19,7 +19,7 @@
 | 004 | Sincronización temporal | Backbone de reloj (timestamp+seq+beacon+drift) + emparejado por evento | aceptada |
 | 005 | Cálculo de features | Distribuido: por-pie en plantillas, fusión bilateral en cintura; captura por fases | aceptada (rev. 2026-07-19) |
 | 006 | Hosting / base de datos | Supabase | aceptada |
-| 007 | Modelo de datos | Postgres + TimescaleDB + object storage | aceptada |
+| 007 | Modelo de datos | Postgres + TimescaleDB + object storage — **capa de series revisada por ADR-044** (particionado nativo + `pg_partman`) | revisada (ADR-044) |
 | 008 | Retención de datos | Tiered por fase | aceptada |
 | 009 | Backend de reentrenamiento (máxima) | Worker en la nube | aceptada |
 | 010 | Firmware on-device | C/C++ con Pico SDK | aceptada |
@@ -43,19 +43,23 @@
 | 028 | Emparejamiento BLE del wearable (sin botón) | Cintura↔host BLE; auto-advertise sin bond + gesto (sacudir la cintura ~5 s con plantillas quietas); passkey fijo impreso (v1); bond list multi-host N≈4 (LRU/forget); reconexión iniciada por el host, una a la vez. Clear-all y pantalla → máxima. Deps CP-04/CP-15 | aceptada |
 | 029 | Ajustes de catálogo y algoritmos (auditoría de alineación) | +4 features (single support, symmetry angle, avg zero-crossings, sway density diferida) + evento mid-stance; candidatos OC-SVM (E/W, benchmark), GMM, VAE; sustitución OC-SVM→Mahalanobis documentada; estrategia progresiva de evaluación | aceptada |
 | 030 | Reconciliación anteproyecto/marco con la arquitectura (CP-11) | Registra el delta documental: solo-plantilla→cintura-hub, BMI270→MPU-6050+IMU de cintura, bloque I, algoritmos §4.3 (no §6). El anteproyecto no se modifica (histórico); cierra CP-11. Motivo del MPU-6050: disponibilidad + presupuesto (posible upgrade de IMU a futuro); energía → CP-09 | aceptada |
-| 031 | Esquema de `feature_vectors` (CP-05) | **jsonb** (una fila = un vector + `feature_set_version`) + **columnas generadas/índices** para las features calientes del dashboard; puerta de salida a *wide* al congelar el set. Flexible mientras el set cambia; volumen bajo. Cierra CP-05 | aceptada |
+| 031 | Esquema de `feature_vectors` (CP-05) | **jsonb** (una fila = un vector + `feature_set_version`) + **columnas generadas/índices** para las features calientes del dashboard; puerta de salida a *wide* al congelar el set. Flexible mientras el set cambia; volumen bajo. Cierra CP-05. **Punto 3 (continuous aggregates) reemplazado por ADR-044** | aceptada (pto. 3 reemplazado) |
 | 032 | Seguridad y aislamiento de datos (CP-04) | **RLS estricto por paciente** en todas las tablas con `patient_id` + tabla de pertenencia `patient_access` (user→patient→rol); worker con service-role; cifrado tránsito/reposo; `external_code` anónimo + PII mínima; borrado al reasignar. Cierra CP-04 a nivel técnico; nivel formal → comité (CP-18) | aceptada |
 | 033 | Interfaces: UI de control + dashboard (CP-15) | **(a) UI de control** = app local Python + UI web (FastAPI sobre el host `bleak`): paciente, sesión, modo de las zapatillas, estado, OTA; máxima → app móvil. **(b) Dashboard clínico** = web solo-lectura sobre Supabase (RLS), **diferido a la máxima** (exploración = notebooks). Cierra CP-15 | aceptada |
 | 034 | Switch mínima↔máxima: el micro no detecta el host (CP-16) | **Micro agnóstico al tipo de central** (confirma §2.3): el **flujo lo determina el host** (laptop→worker local / celu→worker nube). El **modo** (exploratoria/operativa/edge) es un **comando explícito**, nunca inferido. El host **declara su tipo** en la metadata de la sesión (trazabilidad, no comportamiento). Cierra CP-16 | aceptada |
 | 035 | Encendido/apagado sin botón (CP-19) | **Rev 2026-07-21 — sin gestión de energía en la mínima:** el **switch físico es el encendido/apagado** y todo queda despierto mientras esté encendido (~10 h > objetivo de 8 h, así que dormir no hace falta). **Wake-on-motion y WiFi power-save quedan documentados como opciones para la máxima**, no para la placa nueva: los umbrales de movimiento son poco confiables en marcha hemipléjica y el auto-sleep **hace perder los primeros pasos** tras estar sentado (dato clínicamente valioso). Traza INT del IMU: se mantiene por el DATA_READY de ADR-026, ya **no crítica**. Cierra CP-19 | aceptada (rev) |
 | 036 | Fase de captura y origen de las features en el esquema | `sessions.mode` pasa a **tres** valores (`exploratory`/`operational`/`edge`, ADR-005 rev c) y `feature_vectors` suma **`features_source`** (`device`/`offline`): en la fase operativa conviven el vector del micro y el recalculado off-device para la misma zancada, y la paridad (ADR-018) necesita distinguirlos | aceptada |
-| 037 | Fuente única del esquema de la base | **`src/db/schema.sql` manda**; el maestro §11.3 deja de duplicar el DDL y pasa a mapa de entidades + puntero. Las dos copias ya habían divergido. Aplica la regla de layering del repo (se define una vez) | aceptada |
+| 037 | Fuente única del esquema de la base | **`src/db/schema.sql` manda**; el maestro §11.3 deja de duplicar el DDL y pasa a mapa de entidades + puntero. Las dos copias ya habían divergido. Aplica la regla de layering del repo (se define una vez). **Revisada por ADR-045:** la fuente pasa a ser la cadena de migraciones y `schema.sql` un snapshot generado | revisada (ADR-045) |
 | 038 | Mid-stance: adopción y partición del apoyo | **Se adopta MS completo.** Detección en la plantilla por **cruce de carga retropié→antepié** (`F_ante ≥ F_post`, confirmado por pie-plano del IMU; flag `no_crossover` = anomalía). Parte el apoyo en **carga**/**propulsión**, instancia #12/#13/#14 por sub-fase y suma **#43** push-off time ratio y **#44** propulsive impulse ratio (catálogo 45→47). Activo con 2 FSR. Cierra la contradicción ADR-029 ↔ SPEC-02 | aceptada |
 | 039 | El maestro deja de duplicar las vistas | `Arquitectura_Sistema_Marcha.md` pasa a **índice + overview**: cada sección que replicaba una vista queda en 1-2 párrafos + puntero, y el **§15 "Resumen de decisiones" se reemplaza por un puntero al índice de esta bitácora**. Motivo: **9 de los 14 conflictos** de la auditoría vivían en el maestro, y dos de ellos contradecían invariantes (modelos pesados al worker; IC como fallback de sync). Mismo criterio que ADR-037. 579 → ~300 líneas | aceptada |
 | 040 | Bloque I (tronco): definido y ubicado, diferido | I1/I2/I3 → **#45/#46/#47**; el cómputo de tronco se asigna al **core 1 de la cintura** (V2), pero el bloque queda **OFF en el set activo** — se prende cambiando el `feature_set_version`. **SPEC-10** deja las recomendaciones. Principio explicitado por Juan: el catálogo es una **biblioteca de features disponibles**, no una lista de obligaciones. Incluye **apéndice conceptual** (armónicos, cómo se fija el fundamental con la ventana, por qué la asignación par/impar no depende del paciente) | aceptada |
 | 041 | Alcance de FSR: hasta 4 (CP-08) | **Máximo de diseño = 4 FSR** por plantilla; la mínima sigue con **2** (punta+talón). El 3º entra en ADC2/GP28 y el **4º obliga a mux analógico**: con GP29 midiendo VSYS quedan sólo 3 ADC libres, y sacrificar VSYS choca con el corte por baja tensión de ADR-035. **Formato de paquete fijado en 4 slots** (400 B/s extra, despreciable) para no versionar el protocolo con hardware sellado. Cierra CP-08 | aceptada |
 | 042 | Definición de "crudo" y frontera del IMU | **Crudo = post-AHRS**: `lin_accel` + ω calibrada + `pitch/roll/yaw` + FSR, a 100 Hz. El AHRS corre en el micro; el worker **consume y no re-procesa IMU**. Paquete 29→35 B (+orientación, ~7 KB/s); **39 B / ~7,8 KB/s** sumando `t_device` en `uint64` (punto 6, cierra CP-27). Congela Madgwick/`β` para lo ya capturado (riesgo aceptado). **Corrige SPEC-03** (elimina el "quitar gravedad", que si no metía ~4,9 m de error por zancada) | aceptada |
 | 043 | Ciclo de vida de la sesión (multi-paciente + clase L) | La sesión es una **transacción comandada por la interfaz**: check-out del estado L → provisioning → calibración → **gate READY** → running → check-in. **`adaptation_enabled` por sesión** (una versión nueva por sesión adaptada; habilita la comparación con/sin adaptación). Guardas: estampa de `patient_id` en flash + FK compuesta en la base. **Cierra la contradicción del respaldo de clase L**. **Rev:** pipeline de 8 fases, **gate térmico por temperatura del IMU** (el warm-up corre en paralelo al setup), **la DB manda** sobre el flash (copia descartable) y **canal de estado** separado del stream. Cierra CP-24; abre CP-25/CP-31 | aceptada (rev) |
+| 044 | Series temporales sin TimescaleDB (CP-26) | **Particionado nativo** de Postgres 17 + `pg_partman` (particiones mensuales creadas por adelantado) + `pg_cron` (mantenimiento diario). Clave de partición = **inicio de la sesión** (la sesión queda entera en una partición, el reenvío no duplica, las FK entre series comparten el valor). Timescale estaba deprecado en Supabase y su edición Apache no tenía continuous aggregates ni compresión. Revisa ADR-007 (capa de series) y reemplaza el punto 3 de ADR-031. Cierra CP-26; abre CP-32 | aceptada |
+| 045 | Migraciones versionadas (CP-23) | **CLI de Supabase** en `src/db/supabase/`; cada cambio es una migración nueva que **aplica CI desde `master`**, después de probarla en una base efímera (pgTAP). `schema.sql` pasa a ser un **snapshot generado** (sin las particiones hijas). Una migración aplicada no se edita; la base remota no se toca a mano. Revisa ADR-037. Cierra CP-23 | aceptada |
+| 046 | Identidad de las series (CP-29) | **La zancada es una entidad** (`strides`) numerada en el borde: `stride_seq` (plantilla, por pie) y `cycle_seq` (cintura, ciclo bilateral), desde `arm()`. Eventos, vectores y scores se identifican con esos números y se vinculan con **FK reales**; toda fila lleva `patient_id` e inicio de sesión garantizados por una FK a `sessions`. **Ingesta idempotente** (upsert). Suma `flags`. Cierra CP-29 | aceptada |
+| 047 | Exposición por la Data API | **Grants explícitos** por rol (`anon`: nada; `authenticated`: no borra; `service_role`: todo), **RLS en todas las tablas expuestas**, particiones sin grants y con RLS, funciones de las políticas en `private` y **suite pgTAP en CI**. Supabase dejó de exponer tablas nuevas por defecto (30/05/2026 y 30/10/2026). Extiende ADR-032 | aceptada |
 
 ---
 
@@ -225,6 +229,8 @@ O sea: "el micro calcula sus features por-pie" aplica a **operativa y edge**, no
 
 ## ADR-007 — Modelo de datos
 **Estado:** aceptada — **Decisión: PostgreSQL + TimescaleDB + object storage**
+
+> **Revisada por ADR-044 (2026-10-17).** La capa de series deja TimescaleDB —deprecado en Supabase sobre Postgres 17, y en su edición Apache sin compresión ni continuous aggregates— y pasa a particionado nativo + `pg_partman`. Las tres capas (relacional, series, object storage) se mantienen.
 
 **Contexto.** Datos heterogéneos: metadata (relacional, poco volumen), crudo 100 Hz (series, mucho volumen), features (medio), modelos (binarios).
 
@@ -850,6 +856,8 @@ El **verdadero** inquilino de latencia impredecible es el **WiFi** (driver CYW43
 ## ADR-031 — Esquema de `feature_vectors`: jsonb + columnas generadas (resuelve CP-05)
 **Estado:** aceptada — **Decisión: el vector de features por zancada se guarda como `jsonb` (una fila = un vector, con su `feature_set_version`); las pocas features "calientes" del dashboard se exponen con columnas generadas / índices de expresión; se deja la puerta de salida a un esquema *wide* (columnas fijas) para cuando el `feature_set_version` operativo se congele, si el perfilado lo justifica.**
 
+> **Punto 3 reemplazado por ADR-044 (2026-10-17).** Los continuous aggregates nunca estuvieron disponibles en Supabase (edición Apache de Timescale). Las series agregadas del dashboard se resuelven con vistas materializadas o tablas de resumen refrescadas por `pg_cron`, cuando exista el dashboard.
+
 **Contexto.** La tabla `feature_vectors` (hypertable de TimescaleDB, maestro §11.3) guarda un vector de ~15-25 features por zancada/scope. **CP-05** pedía definir cómo se guarda ese vector: `jsonb` flexible vs. columnas fijas. Dos hechos del proyecto mandan la decisión: (1) el **feature set aún cambia y está versionado** (`feature_set_version`, ADR-021; fase exploratoria; ADR-029 acaba de sumar 4 features), (2) el **volumen es bajo** (~1 vector/s por pie). Y hay **dos consumidores con patrones opuestos**: el worker de ML (quiere el vector completo por fila) y el dashboard clínico (quiere una feature a lo largo del tiempo).
 
 **Opciones evaluadas.**
@@ -1027,6 +1035,8 @@ create policy "acceso por paciente" on feature_vectors for select
 
 ## ADR-037 — El esquema de la base tiene una sola fuente: `src/db/schema.sql`
 **Estado:** aceptada (2026-08-18) — **Decisión: `src/db/schema.sql` es la fuente única de verdad del esquema. El maestro §11.3 deja de duplicar el DDL y pasa a mantener sólo el mapa de entidades con un puntero al archivo.**
+
+> **Revisada por ADR-045 (2026-10-17).** La fuente única pasa a ser la **cadena de migraciones** (`src/db/supabase/migrations/`); `schema.sql` queda como snapshot generado para leer el esquema. Se conserva el principio: una fuente, varios consumidores.
 
 **Contexto.** El DDL estaba escrito **dos veces**: en el maestro §11.3 ("DDL de referencia", 145 líneas) y en `src/db/schema.sql` (163 líneas). La **auditoría de consistencia del 2026-08-18** encontró que las dos copias **ya habían divergido** por su cuenta — distinto orden de tablas, comentarios distintos, acentos removidos en una — sin que nadie lo notara, y que ambas arrastraban los mismos huecos (RLS, `host_type`, config de feedback, fases de captura).
 
@@ -1373,6 +1383,7 @@ El versionado por sesión da dos cosas: la **comparación pareada** con y sin ad
 **3 — Dos guardas contra el cruce de pacientes.**
 - **Firmware:** todo artefacto de modelo en flash lleva `patient_id` + versión en su cabecera, y la cintura **se niega a scorear** si el paciente del modelo cargado no coincide con el de la sesión abierta. Resuelve la contaminación del par A/B y el arranque con modelo ajeno.
 - **Base:** FK compuesta `anomaly_scores (model_id, patient_id) → models (id, patient_id)` — con `patient_id` nulo (modelos globales) el enforcement no aplica, que es el comportamiento correcto. Y `unique (patient_id, algo, version)` en `models`, hoy ausente y cada vez más necesario con una versión nueva por sesión.
+  > **Precisión de ADR-046 (2026-10-17):** con `anomaly_scores.patient_id` obligatorio, esta FK se aplica siempre: un score persistido es siempre de un modelo **del mismo paciente**, y un modelo global no puede producirlos. Coherente con ADR-000 (personalización primero).
 
 **4 — El check-out es también el borrado.** La limpieza de los ring buffers de crudo en el paso 3 le da mecanismo, en la mínima, al requisito de ADR-032 que hasta ahora sólo estaba enunciado.
 
@@ -1430,6 +1441,171 @@ Temperatura y uptime siguen viajando **con la sesión corriendo**, por dos motiv
 Este canal es además el que alimenta el panel de monitoreo y el que provee la evidencia para validar la coexistencia WiFi-AP + BLE y la precisión de sincronización (CP-28) — hoy el sistema genera esos números y nadie los consume.
 
 **Consecuencias adicionales de esta revisión.** **CP-24 → Resuelta.** El estado de clase L vive en RAM durante la sesión, se sube a la DB en el check-in y se re-flashea desde la DB en la siguiente: el apagado diario deja de perder aprendizaje sin necesidad de escrituras periódicas a flash. Se agregan: `pipeline_sesion.mermaid`, la sección de ciclo de vida y el canal de estado en la **Vista 4**, y el reporte de temperatura/uptime/versión en la **Vista 2**. **CP-25** queda actualizada con los valores de la literatura y el gate por temperatura; **CP-31** (postura de calibración) alimenta la fase 5.
+
+---
+
+## ADR-044 — Series temporales sin TimescaleDB: particionado nativo de Postgres + `pg_partman` (resuelve CP-26)
+**Estado:** aceptada (2026-10-17) — **Decisión: las tablas de series dejan TimescaleDB y pasan a particionado declarativo nativo de Postgres —rango mensual sobre la fecha de inicio de la sesión—, con `pg_partman` creando las particiones por adelantado y `pg_cron` corriendo el mantenimiento diario. El proyecto de Supabase se crea en Postgres 17. Revisa la capa de series de ADR-007 y reemplaza el punto 3 de ADR-031.**
+
+**Contexto.** ADR-007 eligió *Postgres + TimescaleDB + object storage*, y `schema.sql` creaba tres *hypertables* (`gait_events`, `feature_vectors`, `anomaly_scores`). Tres hechos, verificados el 2026-10-11 contra la documentación de Supabase y de Tiger Data (la empresa de Timescale), dejaron esa elección sin piso:
+
+1. **Supabase deprecó la extensión.** En Postgres 17 no está; en Postgres 15 sigue andando, pero hay que borrarla antes de subir a 17. La ruta oficial que documenta Supabase es **particionado nativo administrado por `pg_partman`**, con una guía de migración: renombrar la hypertable, crear la tabla particionada, copiar los datos por tandas en una ventana de mantenimiento y recién ahí borrar la vieja.
+2. **Supabase sólo trae la edición Apache 2 de Timescale**, y lo que es exclusivo de la edición Community no está disponible. Según la tabla de ediciones de Tiger Data, eso incluye **continuous aggregates, compresión (columnstore), políticas de retención y jobs programados**. O sea: la compresión que ADR-007 contaba como ventaja y los continuous aggregates del punto 3 de ADR-031 **nunca estuvieron disponibles** en esta plataforma. Lo único que Timescale nos daba era el **particionado por tiempo**, que Postgres hace de forma nativa desde la versión 10.
+3. **Fecha límite.** Hoy cambiar el esquema es gratis porque no hay datos; con datos, es la migración del punto 1.
+
+**Volumen a soportar.** El crudo a 100 Hz **no** entra a la base (Parquet en storage — ADR-008, ADR-042). Lo que entra son filas por zancada. Con el supuesto de la Vista 4 §1.4 (~8 h/día) y zancadas de ~1,1 s, un paciente produce del orden de **300.000 filas por día** entre zancadas, eventos, vectores y scores. Es una **cota superior** (nadie camina 8 h seguidas), pero con 20 pacientes en uso diario serían ~190 millones de filas por mes. Para la tesis alcanza cualquier opción; para la máxima, particionar deja de ser opcional.
+
+**Opciones evaluadas.**
+- **A — Particionado nativo + `pg_partman` + `pg_cron` (elegida).** *Pros:* es la ruta oficial de Supabase; el particionado es Postgres estándar —`pg_partman` sólo automatiza la creación de particiones: si un día faltara, las existentes siguen funcionando—; una consulta por rango de fechas abre sólo las particiones que toca; archivar o borrar es soltar particiones enteras; y habilita **FK reales hacia tablas particionadas** (Postgres ≥ 12), que es lo que necesita ADR-046. *Contras:* se pierde `time_bucket()` (se reemplaza por `date_bin()`/`date_trunc()`) y los continuous aggregates (que no teníamos); el mantenimiento de las particiones pasa a ser responsabilidad nuestra; toda PK o clave única tiene que incluir la columna de partición.
+- **B — Quedarse en Postgres 15 con Timescale.** *Pros:* anda hoy, sin rediseño. *Contras:* es un callejón sin salida —antes de subir a 17 hay que migrar igual, pero con datos— y en Supabase es la edición Apache: se paga el costo de la extensión sin sus extras.
+- **C — Una base de series aparte (Tiger Cloud, Timescale completo).** *Pros:* continuous aggregates y compresión columnar. *Contras:* dos bases —auth y RLS duplicadas, sin joins entre series y sesiones/pacientes, dos backups—; se justifica con volúmenes muy por encima de los nuestros. Queda como puerta de salida: nuestras tablas son Postgres estándar.
+- **D — Tablas comunes, sin particionar.** *Pros:* lo más simple; alcanza para la tesis. *Contras:* particionar después una tabla grande es la migración con datos del punto 1; el requisito de escalar a la máxima la descarta.
+
+**Decisión.**
+1. **Proyecto de Supabase en Postgres 17**, sin `timescaledb`.
+2. **Tablas de series particionadas:** `strides` (nueva — ADR-046), `gait_events`, `feature_vectors` y `anomaly_scores`. El resto del esquema (metadata, registry, blobs) sigue en tablas comunes: su volumen es bajo.
+3. **Clave de partición: `session_started_at`**, una copia de `sessions.started_at` que llevan todas las filas de la sesión, con **rango mensual**. Se eligió el inicio de la sesión, y no la hora de cada dato, por tres motivos:
+   - una sesión **nunca queda partida** entre dos particiones: se archiva o se borra entera;
+   - **reenviar datos no duplica**: la clave no depende de la hora corregida por la sincronización, que cambia si se recalcula el drift (ADR-004);
+   - las **FK entre tablas de series** usan el mismo valor en las dos puntas (ADR-046).
+
+   La hora de cada dato sigue guardada como columna (`time`, `started_at`).
+4. **`pg_partman`** (en el esquema `partman`) crea las particiones mensuales por adelantado (`p_interval := '1 month'`, `p_premake := 4`) más una partición *default*. **`pg_cron`** corre cada día `partman.run_maintenance_proc()` y, a continuación, la rutina que cierra las particiones nuevas (ADR-047).
+5. **Sin retención automática por ahora.** Las series se conservan; el crudo sigue la retención *tiered* de ADR-008, que vive en storage. El archivo en frío de particiones viejas queda para la máxima → **CP-32**.
+6. **Series agregadas del dashboard:** vistas materializadas o tablas de resumen refrescadas por `pg_cron`. Se decide cuando exista el dashboard (máxima — ADR-033), junto con CP-20 y CP-22. **Reemplaza el punto 3 de ADR-031.**
+
+**Justificación.** En Supabase, Timescale sólo aportaba el particionado, y el particionado ya es Postgres. La opción estándar saca del camino crítico una extensión deprecada justo antes de la primera captura, y de paso destraba la integridad referencial que pedía CP-29: con particionado nativo, una FK hacia la serie es una FK común de Postgres.
+
+**Consecuencias.** **Cierra CP-26** y abre **CP-32**. **ADR-007** queda revisada en su capa de series (las tres capas se mantienen) y el **punto 3 de ADR-031** queda reemplazado. Cambian: `src/db/schema.sql`, la Vista 4 (§1, §1.1, §1.2 y la nueva §1.5), la Vista 1 §2, el maestro (§3, §10, §11), `stack_tecnologico.md` y los diagramas que decían TimescaleDB. **Al crear la base:** confirmar que `pg_partman` y `pg_cron` están disponibles en el proyecto (la documentación de Supabase los publica; se verifica con una consulta a `pg_available_extensions`).
+
+**Apéndice conceptual (en llano).** *Particionar* es partir una tabla gigante en pedazos que Postgres maneja como si fueran una sola: una tabla por mes en lugar de una tabla infinita, como tener un cuaderno por mes en vez de un cuaderno sin fin. Para buscar "las últimas cuatro semanas", Postgres abre uno o dos cuadernos en lugar de hojear todo; para tirar 2025, tira cuadernos enteros sin leerlos. Eso es lo que hacían las *hypertables* de Timescale, y es lo que Postgres hace solo desde la versión 10. Lo que faltaba es alguien que **prepare el cuaderno del mes que viene antes de que empiece el mes**: eso es `pg_partman`, y `pg_cron` es el despertador que lo llama todos los días. El cuaderno de cada fila se elige por el **día en que empezó la sesión**, no por la hora del dato: así una sesión que cruza la medianoche queda entera en un solo cuaderno, y si mañana se recalcula la sincronización y la hora de un evento se corre unos milisegundos, la fila no cambia de lugar.
+
+**Referencia.** ADR-006 (Supabase), ADR-007 (modelo de datos), ADR-008 (retención), ADR-031 (`feature_vectors`), ADR-033 (dashboard), ADR-046 (identidad de las series), ADR-047 (particiones cerradas); CP-26, CP-32, CP-20, CP-22; Vista 4 §1. Fuentes: [Supabase — timescaledb](https://supabase.com/docs/guides/database/extensions/timescaledb) · [Supabase — migrar de TimescaleDB a pg_partman](https://supabase.com/docs/guides/database/migrating-to-pg-partman) · [Supabase — pg_partman](https://supabase.com/docs/guides/database/extensions/pg_partman) · [Tiger Data — ediciones de TimescaleDB](https://www.tigerdata.com/docs/about/latest/timescaledb-editions) · [PostgreSQL 12.2 — FK hacia tablas particionadas](https://www.postgresql.org/docs/release/12.2/).
+
+---
+
+## ADR-045 — Migraciones versionadas con la CLI de Supabase; `schema.sql` pasa a ser un snapshot generado (resuelve CP-23; revisa ADR-037)
+**Estado:** aceptada (2026-10-17) — **Decisión: el esquema evoluciona sólo por migraciones versionadas —archivos SQL con timestamp en `src/db/supabase/migrations/`—, administradas con la CLI de Supabase y aplicadas a la base remota por CI desde `master`. `src/db/schema.sql` deja de editarse a mano: pasa a ser el snapshot del esquema vigente, regenerado desde la base que arman las migraciones. La fuente única de ADR-037 pasa a ser la cadena de migraciones.**
+
+**Contexto.** CP-23 pedía cómo versionar los cambios del esquema. Hoy `schema.sql` es una **foto** de cómo tiene que quedar la base. Mientras la base está vacía alcanza: se borra todo y se crea de nuevo. Con datos de pacientes, no: cada cambio —una columna, un índice, una tabla— tiene que aplicarse como un **paso** sobre la base existente, sin perder nada y en el mismo orden en todas las copias, la de cada computadora y la de la nube. ADR-037 ya lo anticipaba (*"el historial del esquema pasa a ser el historial de ese archivo más sus migraciones"*) y lo dejó pendiente. Hay además un dato propio del proyecto: se trabaja desde **dos computadoras**, y la documentación de Supabase advierte que dos `db push` concurrentes desde máquinas distintas chocan.
+
+**Opciones evaluadas.**
+- **A — Migraciones versionadas con la CLI de Supabase (elegida).** *Pros:* es la herramienta nativa de la plataforma e integra todo lo que hace falta: base local reproducible (Docker), `db reset` (aplica todas las migraciones desde cero), `db push` (aplica en la nube sólo las pendientes y las registra en `supabase_migrations.schema_migrations`), `test db` (pgTAP) y `db dump`. Las migraciones son SQL plano. Es el patrón estándar de la industria, el mismo de Rails, Django o Flyway. *Contras:* exige Docker y la CLI en las dos computadoras, y disciplina: no se edita una migración aplicada ni se toca la base remota a mano.
+- **B — Esquema declarativo de Supabase (`pg-delta`).** *Pros:* se edita un solo archivo y la CLI genera la migración por diferencia. *Contras:* la documentación lo marca como **experimental** y **deja afuera los objetos administrados por extensiones, como las particiones de `pg_partman`**: justo las tablas centrales de ADR-044.
+- **C — sqitch / Flyway / Liquibase.** *Pros:* maduras e independientes de la base. *Contras:* duplican lo que la CLI de Supabase ya trae integrado (base local, tests, dump): una segunda cadena de herramientas sin ganancia.
+- **D — Scripts numerados a mano.** *Pros:* cero herramientas. *Contras:* hay que llevar a mano qué se aplicó y dónde; no hay base local reproducible; frágil con dos computadoras.
+
+**Decisión.**
+1. **El proyecto de Supabase vive en `src/db/supabase/`** (`supabase init` con `--workdir src/db`; todos los comandos con `--workdir src/db`). Contiene `config.toml`, `migrations/`, `tests/` (pgTAP) y `seed.sql`, con **datos sintéticos únicamente**, nunca de pacientes reales.
+2. **Cada cambio es una migración nueva:** `migrations/<AAAAMMDDHHMMSS>_<nombre>.sql` (`supabase migration new`). Tres reglas:
+   - **una migración aplicada no se edita**: si algo quedó mal, se corrige con otra migración;
+   - **nadie toca la base remota a mano**, ni desde el editor SQL ni desde el panel: lo que no está en una migración no existe;
+   - **las migraciones las aplica CI desde `master`**, nunca una persona con `db push` desde su computadora.
+3. **`src/db/schema.sql` es un snapshot generado, de sólo lectura.** Lo produce un script del repo (`src/db/scripts/`) que corre `supabase db dump --local --schema public` sobre la base armada por las migraciones y **excluye las particiones hijas**, cuyos nombres dependen de la fecha: si no, el snapshot cambiaría cada mes sin que nadie toque el esquema. Lleva un encabezado "GENERADO — no editar". Sigue siendo **el** lugar donde se lee el esquema; lo que cambia es que ya no es donde se escribe.
+4. **CI (GitHub Actions), en cada push:** `supabase start` → `db reset` (todas las migraciones desde cero + seed) → `test db` (la suite mínima de ADR-047) → regenera el snapshot y **falla si difiere** del commiteado → si es `master` y todo pasó, `db push` al proyecto remoto. La base efímera de CI es el ensayo de cada migración antes de tocar datos reales.
+5. **Regla para dos computadoras** (va a `CLAUDE.md` §4): las migraciones se aplican en el orden de sus nombres, así que una migración nueva tiene que quedar **después de todas las ya aplicadas en la base remota**. Si después del `pull --rebase` la local tiene un timestamp anterior a una ya aplicada, se renombra con un timestamp nuevo antes de pushear.
+6. **Transición.** Esta decisión se toma antes de que la base exista. `schema.sql` recibe ahora **su última edición a mano** (el diseño de ADR-044, 046 y 047). El día que se cree la base —primer paso de la fase de base del roadmap—, ese contenido pasa a ser la migración base (`…_baseline.sql`) y desde ahí rige el punto 3.
+
+**Justificación.** Las migraciones son a la base lo que los commits son al código: el historial de cambios, no sólo el estado final. Es la práctica estándar, y la herramienta nativa de la plataforma la trae integrada de punta a punta. La alternativa declarativa sería más cómoda, pero hoy deja afuera exactamente las tablas particionadas. Y se conserva el espíritu de ADR-037 —una fuente, varios consumidores—: la fuente pasa a ser la cadena de migraciones, y el snapshot, el ER y la Vista 4 son consumidores.
+
+**Consecuencias.** **Cierra CP-23.** **ADR-037 queda revisada.** Cambian: `CLAUDE.md` (fuentes únicas, dónde trabaja cada agente, estructura del repo y §4 de conflictos), `README.md`, `src/db/README.md`, la Vista 4 (§1.1 y la nueva §1.7), el maestro (§10, §11) y `stack_tecnologico.md`. **Requisito operativo:** Docker y la CLI de Supabase en las dos computadoras (verificado el 2026-10-17 en la de Juan: Docker sí, la CLI todavía no). **Queda por hacer** en la fase de base del roadmap: `supabase init`, la migración base, la suite pgTAP, el script del snapshot y el workflow de CI.
+
+**Apéndice conceptual (en llano).** Una *migración* es un archivo SQL con **un** cambio, numerado por fecha y hora. La base guarda la lista de las migraciones que ya aplicó; cuando llega una nueva, aplica sólo esa. Por eso **nunca se edita una migración ya aplicada**: la base no se entera del cambio —ya la tiene anotada como hecha— y las copias quedan distintas sin que nada avise. Si algo quedó mal, se escribe otra migración que lo corrija, igual que con un commit. El *snapshot* es la foto que se saca **después** de aplicar todas las migraciones: sirve para leer de un vistazo cómo es la base hoy, pero no se toca, porque se regenera solo. Y la base efímera de CI nace vacía, recibe todas las migraciones en orden, corre los tests y se tira: si una migración rompe algo, rompe ahí y no sobre los datos de los pacientes.
+
+**Referencia.** ADR-037 (fuente única del esquema), ADR-036 (que dejó la herramienta pendiente), ADR-044 (particionado), ADR-046 (identidad de las series), ADR-047 (suite de tests); CP-23; Vista 4 §1. Fuentes: [Supabase — migraciones](https://supabase.com/docs/guides/deployment/database-migrations) · [Supabase — esquemas declarativos](https://supabase.com/docs/guides/local-development/declarative-database-schemas) · [Supabase — testing con pgTAP](https://supabase.com/docs/guides/local-development/testing/overview) · [Supabase CLI — db dump](https://supabase.com/docs/reference/cli/supabase-db-dump).
+
+---
+
+## ADR-046 — Identidad de las series: la zancada como entidad, numerada en el borde, con FK reales (resuelve CP-29)
+**Estado:** aceptada (2026-10-17) — **Decisión: la zancada pasa a ser una entidad de la base (`strides`), identificada por `(session_id, foot, stride_seq)` con el número que le asigna la plantilla; el ciclo bilateral se identifica por `cycle_seq`, que asigna la cintura. Eventos, vectores y scores se identifican a partir de esos números y se vinculan con FK reales; toda fila de las series lleva `patient_id` y `session_started_at`, garantizados por una FK compuesta a `sessions`. La ingesta es idempotente.**
+
+**Contexto.** CP-29 registraba dos huecos de integridad en `schema.sql`:
+- **`anomaly_scores` no tenía identidad** —ni PK ni `id`—, así que `anomaly_raw_snippets.score_id` era una *"fk lógica"*: nada garantizaba que el snippet apuntara a un score existente.
+- **La zancada no existía como entidad**, aunque es la unidad alrededor de la que gira todo el sistema: las features son por zancada, los eventos la segmentan y los scores se evalúan sobre ventanas de zancadas. `feature_vectors.stride_id` no tenía contraparte en ninguna tabla y **ninguna spec decía quién numera las zancadas**. No había forma de reconstruir qué IC/MS/TO produjeron un vector, que es justo el cruce que hace falta para validar SPEC-01/02 contra el dataset.
+
+Al bajar el diseño aparecieron dos cosas más: SPEC-01 emite eventos **con `flags`** (`no_crossover`, baja confianza) y SPEC-02 emite features **marcadas**, pero la base no tenía dónde guardarlos; y la RLS de `gait_events` llegaba al paciente con un join a `sessions` **por fila**.
+
+**Opciones evaluadas.**
+- **A — Zancada como entidad, numerada en el borde, con FK reales (elegida).** *Pros:* la integridad la garantiza la base, no una convención; la **ingesta es idempotente** —reenviar un lote después de un corte no duplica filas, porque la clave viaja con el dato—, que es lo que pide un sistema con buffers, cortes de BLE y subidas en el check-in; trazabilidad completa evento → zancada → vector → score. *Contras:* el firmware tiene que numerar zancadas y ciclos (cambio chico en SPEC-01/02/05/11); las claves llevan la columna de partición (ADR-044); y un vector que apunta a dos zancadas de pies distintos necesita dos columnas constantes para sus FK.
+- **B — Agregar `stride_seq` donde falta, sin FK.** *Pros:* mínimo. *Contras:* la integridad sigue siendo una convención, y el hueco del snippet queda sin resolver.
+- **C — Identificadores generados por la base (uuid o *identity*).** *Pros:* lo habitual en aplicaciones web. *Contras:* los datos nacen en el borde antes de llegar a la base; un id asignado al insertar **rompe la idempotencia** (el mismo dato reenviado recibe otro id) y obliga a un ida y vuelta para vincular los hijos.
+
+**Decisión.**
+1. **Numeración en el borde.** Todos los contadores arrancan en `arm()` (SPEC-11):
+   - **`stride_seq`** — la plantilla, por pie. Cada IC abre la zancada siguiente; el MS y el TO de ese apoyo llevan el número de su IC (SPEC-01/02).
+   - **`cycle_seq`** — la cintura, al emparejar una zancada izquierda con una derecha por IC, sobre el reloj ya sincronizado (SPEC-05, ADR-004).
+2. **Identidades en la base.** Todas llevan además `session_started_at`, la clave de partición (ADR-044):
+
+   | Entidad | Tabla | Identidad |
+   |---|---|---|
+   | Zancada | `strides` (nueva) | `(session_id, foot, stride_seq)` |
+   | Evento | `gait_events` | la zancada + `type` (IC/MS/TO) |
+   | Vector de features | `feature_vectors` | `(session_id, scope, unit_seq, features_source, feature_set_version)`: `unit_seq` es el `stride_seq` (vector por pie) o el `cycle_seq` (bilateral); el bilateral guarda además el par `left_stride_seq`/`right_stride_seq` que cerró el ciclo |
+   | Score | `anomaly_scores` | `(session_id, model_id, scope, unit_seq)`: la misma unidad que el vector que lo disparó |
+   | Snippet de crudo | `anomaly_raw_snippets` | conserva su `id`; FK al score que lo pidió |
+3. **FK reales:** evento → zancada; vector → su zancada o sus dos zancadas; snippet → score; score → modelo del mismo paciente (ADR-043, se mantiene); y **toda fila de las series → `sessions (id, patient_id, started_at)`**. Esta última garantiza que el `patient_id` y la fecha copiados en cada fila sean los de su sesión: una fila no puede declarar el paciente de otra.
+4. **`patient_id` en cada fila de las series**, para que la RLS filtre por una columna indexada en lugar de hacer un join por fila (ADR-047).
+5. **`flags text[]`** en zancadas, eventos y vectores: guarda lo que emiten SPEC-01/02. El vocabulario lo definen las specs.
+6. **Ingesta idempotente:** el host escribe con *upsert* sobre estas claves. Reenviar un lote no duplica nada.
+7. `sessions.patient_id` y `sessions.started_at` pasan a **`not null`**, y `sessions` suma `unique (id, patient_id, started_at)`, que es el ancla de las FK compuestas.
+
+**Justificación.** La zancada es la unidad del sistema; darle identidad **donde nace** es lo que hace posibles a la vez la integridad y la idempotencia. Que el número lo asigne el dispositivo y no la base es lo habitual en pipelines de IoT y de eventos, donde el dato se produce antes de que la base lo vea. Y la clave de partición de ADR-044 hace trivial la columna extra que exigen las FK hacia tablas particionadas: vale lo mismo en todas las filas de la sesión.
+
+**Consecuencias.** **Cierra CP-29.** Cambian: `src/db/schema.sql` (tabla nueva `strides`; `gait_events`, `feature_vectors`, `anomaly_scores` y `anomaly_raw_snippets` rediseñadas), el ER, la Vista 4 (§1.1, §1.2 y la nueva §1.6), el maestro §11, **SPEC-01** (el evento sale con `stride_seq`), **SPEC-02** (definición de la zancada y su número), **SPEC-05** (buffer indexado por `stride_seq`; `cycle_seq` en la cintura), **SPEC-11** (`arm()` reinicia los contadores), la Vista 2 §3 y la Vista 1 §4 (los mensajes llevan los números).
+
+Dos efectos a tener presentes:
+- **CP-30:** si después de un reset se retoma **la misma sesión**, los contadores no pueden volver a cero —pisarían zancadas ya guardadas—: `arm()` tendría que recibir el próximo número. Queda anotado en CP-30.
+- **Modelos globales:** con `anomaly_scores.patient_id` obligatorio, la FK `(model_id, patient_id) → models (id, patient_id)` de ADR-043 se aplica siempre, así que **un score persistido es siempre de un modelo del mismo paciente**; un modelo global (`patient_id` nulo) no puede producirlos. Es coherente con ADR-000 (personalización primero), pero corrige lo que decía ADR-043: que con modelos globales la FK no se aplicaba. Si algún día un modelo poblacional justificado tuviera que dejar scores, se revisa esta FK.
+
+**Apéndice conceptual (en llano).** Funciona como las facturas de un comercio: el número lo imprime el comercio en el momento de la venta, no el banco cuando la deposita. Si el depósito falla y se reintenta, la factura 1234 sigue siendo la 1234, y el banco se da cuenta de que ya la tiene. Acá el comercio es la plantilla (numera zancadas) o la cintura (numera ciclos), y el banco es la base: si el host reenvía un lote después de un corte de BLE, cada fila llega con su número y la base la reconoce en lugar de duplicarla. Eso es la *idempotencia*. Una *FK* (clave foránea) es la base negándose a guardar una fila huérfana: un vector de features que dice ser de la zancada 57 del pie izquierdo no entra si esa zancada no existe, y un snippet de crudo no entra si el score que lo pidió no está.
+
+**Referencia.** ADR-004 (sincronización), ADR-015 y ADR-038 (eventos), ADR-018 y ADR-036 (paridad y `features_source`), ADR-043 rev (FK al modelo del paciente; ciclo de vida), ADR-044 (clave de partición), ADR-047 (RLS); SPEC-01, SPEC-02, SPEC-05, SPEC-11; CP-29, CP-30. Fuente: [PostgreSQL 12.2 — FK hacia tablas particionadas](https://www.postgresql.org/docs/release/12.2/).
+
+---
+
+## ADR-047 — Exposición por la Data API: grants explícitos, RLS en todas las tablas y particiones cerradas (extiende ADR-032)
+**Estado:** aceptada (2026-10-17) — **Decisión: ninguna tabla es accesible por la Data API sin un `GRANT` explícito; `anon` no tiene acceso a nada; RLS habilitado en todas las tablas expuestas, también en las que no tienen datos de pacientes; las particiones hijas quedan sin grants y con RLS; las funciones de las políticas viven en un esquema `private`, fuera de la API; y una suite mínima de tests pgTAP verifica todo esto en CI, en cada push.**
+
+**Contexto.** Cuatro hechos:
+1. **Supabase cambió su default.** Antes, toda tabla nueva en `public` recibía automáticamente `SELECT`, `INSERT`, `UPDATE` y `DELETE` para `anon`, `authenticated` y `service_role`. Desde el **30/05/2026** los proyectos nuevos ya no, y desde el **30/10/2026** el cambio llega a todos: una tabla sin `GRANT` explícito no existe para la Data API. El host y el worker usan `supabase-py`, que pasa por esa API, y `schema.sql` no tenía ni un `GRANT`: la primera escritura del host hubiera fallado con *permission denied*.
+2. **Cada partición es una tabla de verdad.** Según la documentación de Postgres sobre herencia —el mecanismo sobre el que está construido el particionado—, al consultar la tabla madre se chequean sus permisos y se aplican sus políticas; una tabla hija nombrada directamente se chequea **sola**, y las políticas de la madre no corren. Para la herencia está documentado; para las particiones se verifica con un test (punto 5).
+3. **`has_patient_access()` vivía en `public` con `security definer`**, o sea invocable desde afuera por la API. Supabase recomienda dejar las funciones auxiliares en un esquema no expuesto y envolver las llamadas de las políticas en `select`, para que el optimizador las evalúe **una vez por consulta** y no una vez por fila.
+4. **`devices`, `model_deployments` y `firmware_images` no tenían RLS** (*"no contienen datos de salud"*). Con los grants automáticos de antes, cualquier usuario autenticado podía **escribir en `firmware_images`**, que es de donde sale la imagen que viaja por OTA a los micros.
+
+**Opciones evaluadas.**
+- **A — Grants explícitos por rol y por tabla + RLS en todas las tablas expuestas + particiones cerradas + tests (elegida).** *Pros:* defensa en capas —el grant decide **qué tablas**, la RLS **qué filas**, y los tests lo verifican—; la seguridad de los datos de salud no depende de un default de la plataforma, que además acaba de cambiar. *Contras:* hay que mantener la matriz de grants con cada tabla nueva (la suite de tests lo hace visible).
+- **B — Volver a la exposición automática** (los *default privileges* del panel, o su equivalente en la CLI). *Pros:* cero trabajo. *Contras:* exposición por defecto: una tabla nueva queda alcanzable antes de que alguien piense su RLS.
+- **C — Todo en un esquema privado, expuesto sólo por vistas o funciones** (un esquema `api`, como sugiere Supabase para auditar la superficie). *Pros:* superficie mínima y explícita. *Contras:* una capa de vistas o funciones sobre cada tabla, para dos clientes que son nuestros (host y worker). Queda como evolución para la máxima, cuando haya app móvil y dashboard con usuarios externos.
+
+**Decisión.**
+1. **Matriz de grants** (Data API):
+
+   | Rol | Acceso |
+   |---|---|
+   | `anon` | **nada** |
+   | `authenticated` | lee lo que la RLS le deja ver; inserta y actualiza lo que escribe el host (pacientes, sesiones, dispositivos, series, blobs, modelos en el check-in, despliegues, config de feedback, jobs manuales); **no borra nada**; `firmware_images` y `patient_access`, sólo lectura |
+   | `service_role` | todo (el worker; saltea la RLS por diseño — ADR-032) |
+
+   Borrar queda para `service_role`: es raro, es sensible y nunca lo hace el cliente.
+2. **RLS en todas las tablas expuestas**, incluidas `devices`, `model_deployments` y `firmware_images`. Las tablas con datos de pacientes filtran con `patient_id in (select private.accessible_patient_ids())`; las demás tienen políticas propias (`firmware_images`: sólo lectura; `model_deployments`: los despliegues de modelos que el usuario puede ver).
+3. **Funciones de las políticas en `private`**, un esquema no expuesto: `private.accessible_patient_ids()` reemplaza a `public.has_patient_access()`. Es `security definer`, con `search_path` vacío, y sólo `authenticated` puede ejecutarla.
+4. **Particiones cerradas:** sin grants para `anon` ni `authenticated`, y con RLS habilitado y sin políticas, así que sólo `service_role` y el dueño llegan a ellas directo. Todo acceso pasa por la tabla madre. Una rutina, `private.secure_partitions()`, las cierra después de cada mantenimiento de `pg_partman` (ADR-044).
+5. **Suite mínima de pgTAP en CI** (ADR-045):
+   - (a) un usuario con acceso al paciente A no ve ni escribe datos del paciente B, en ninguna tabla;
+   - (b) `anon` no puede leer nada;
+   - (c) toda tabla de `public`, madres y particiones, tiene RLS habilitado;
+   - (d) ninguna partición tiene grants para `anon` ni `authenticated`, y nombrarla directamente falla;
+   - (e) un vector sin su zancada, o un score con el modelo de otro paciente, son rechazados (ADR-046);
+   - (f) reenviar el mismo lote no duplica filas (ADR-046).
+6. **Datos de prueba sintéticos:** `seed.sql` y los tests nunca usan datos reales de pacientes.
+
+**Justificación.** El grant y la RLS son dos llaves distintas y hacen falta las dos: el grant decide si un rol puede tocar una tabla; la RLS, qué filas ve. Para datos de salud, la regla tiene que estar escrita en el esquema y verificada por un test, no depender de un default que la plataforma puede cambiar —y que acaba de cambiar—.
+
+**Consecuencias.** **Extiende ADR-032**, que fijó la RLS por paciente: la lleva a todas las tablas expuestas y precisa los grants. La ingesta del host sigue siendo con el JWT del investigador (`owner` — ADR-032). Cambian: `src/db/schema.sql` (grants, políticas, esquema `private` y rutina de particiones), la Vista 4 §2 y el maestro §12. El **nivel formal** (consentimiento, auditoría, nivel de pairing) sigue en **CP-18**.
+
+**Apéndice conceptual (en llano).** Hay dos puertas. La primera es el **grant**: dice si un rol puede siquiera entrar a una tabla. La segunda es la **RLS**: una vez adentro, la base le muestra a cada usuario sólo las filas de sus pacientes. Supabase solía dejar la primera puerta abierta para toda tabla nueva y confiar en la segunda; ahora la deja cerrada y hay que abrirla a mano, tabla por tabla, que es lo que hace la matriz. Las particiones son el caso fino: cada mes es una tabla aparte, y si alguien pudiera abrir la del mes directamente, la segunda puerta —que está puesta en la tabla madre— no correría. Por eso las particiones quedan sin grant y con RLS propia, y un test lo verifica en cada push.
+
+**Referencia.** ADR-032 (RLS por paciente), ADR-033 (UI y dashboard), ADR-044 (particiones), ADR-045 (CI), ADR-046 (integridad); CP-18; Vista 4 §2. Fuentes: [Supabase — cambio en la exposición de tablas](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically) · [Supabase — Hardening the Data API](https://supabase.com/docs/guides/api/hardening-data-api) · [Supabase — Row Level Security](https://supabase.com/docs/guides/database/postgres/row-level-security) · [PostgreSQL — herencia](https://www.postgresql.org/docs/current/ddl-inherit.html).
 
 ---
 

@@ -83,7 +83,7 @@ El sistema se organiza en cuatro planos:
 1. **Plano de sensado y borde** (los 3 micros): adquisición a 100 Hz, sincronización, detección de eventos, cálculo de features (en captura operativa y en edge), inferencia local (clases L/E) y feedback vibrotáctil.
 2. **Plano de transporte:** WiFi (plantillas↔cintura) y BLE (cintura↔host), cada uno con un **canal rápido-tolerante** (stream) y un **canal confiable** (control/modelos).
 3. **Plano de host y cómputo:** laptop (mínima) o celular + worker en la nube (máxima). Ingesta, entrenamiento pesado, orquestación.
-4. **Plano de persistencia:** Supabase (PostgreSQL + TimescaleDB + object storage + auth), que actúa como **sistema de registro** de datos, features, scores y modelos.
+4. **Plano de persistencia:** Supabase (Postgres 17 con series particionadas + object storage + auth — ADR-044), que actúa como **sistema de registro** de datos, features, scores y modelos.
 
 ```mermaid
 flowchart LR
@@ -97,7 +97,7 @@ flowchart LR
         WK["Worker de reentrenamiento\nLaptop (mín) / Nube (máx)"]
     end
     subgraph CLOUD["Persistencia — Supabase"]
-        DB[("PostgreSQL + TimescaleDB\nmetadata · features · scores")]
+        DB[("PostgreSQL 17 · series particionadas\nmetadata · zancadas · features · scores")]
         OBJ[("Object Storage\ncrudo Parquet · modelos · firmware")]
         AUTH["Auth + RLS por paciente"]
     end
@@ -201,7 +201,7 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 
 ## 10. Persistencia y backend
 
-**Supabase** como plataforma gestionada [ADR-006/007]: PostgreSQL + **TimescaleDB** para series + **object storage** para blobs + auth. Modelo en tres capas: relacional para metadata, hypertables para eventos/features/scores, object storage para crudo (Parquet), artefactos de modelos e imágenes de firmware.
+**Supabase** como plataforma gestionada [ADR-006/007]: **Postgres 17** + **object storage** para blobs + auth. Modelo en tres capas: relacional para metadata, **tablas particionadas por mes de inicio de sesión** para zancadas/eventos/features/scores (particionado nativo + `pg_partman` — ADR-044), object storage para crudo (Parquet), artefactos de modelos e imágenes de firmware. La **zancada es una entidad** numerada en el borde, con FK reales e ingesta idempotente (ADR-046); el esquema cambia sólo por **migraciones versionadas** que aplica CI (ADR-045), y nada se expone por la Data API sin grant explícito (ADR-047).
 
 **Retención tiered por fase** [ADR-008] *(volumen y supuestos: Vista 4 §1.4)*: en fase de dataset se guarda **crudo completo** (máxima trazabilidad); en uso real se guardan features/eventos/scores y el **crudo sólo alrededor de anomalías** — evita del orden de **6,7 GB/mes/paciente** (~8 h/día, sin comprimir — supuestos en Vista 4 §1.4) conservando lo clínicamente interesante.
 
@@ -209,13 +209,13 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 
 **App host y UI de control** [ADR-033]: el host es puente (ingesta BLE, buffer local, escritura a Supabase, puente OTA, runtime espejo para clase H) **y** sede de la UI de control — app local en Python (`bleak` + FastAPI) en la mínima, app móvil en la máxima. El **dashboard clínico** es de solo-lectura y está **diferido a la máxima**.
 
-> **Detalle** (tablas, `feature_vectors` en jsonb, trazabilidad de sesión, dashboard): **Vista 4**. **Esquema ejecutable: `src/db/schema.sql`** — fuente única (ADR-037); el mapa de entidades está en **§11**.
+> **Detalle** (tablas, `feature_vectors` en jsonb, trazabilidad de sesión, dashboard): **Vista 4**. **Esquema:** migraciones en `src/db/supabase/migrations/` y snapshot para leer en `src/db/schema.sql` (ADR-045, revisa ADR-037); el mapa de entidades está en **§11**.
 
 ---
 
 ## 11. Esquema — entidades
 
-> **El DDL vive en `src/db/schema.sql`** (fuente única — **ADR-037**). Esta sección mantiene el mapa de entidades; el detalle de columnas, índices y políticas RLS **no se duplica acá**. Definición canónica del backend: **Vista 4**. Diagrama ER: `esquema_base_de_datos.mermaid`.
+> **El esquema se define por migraciones** (`src/db/supabase/migrations/`) y se lee en el snapshot **`src/db/schema.sql`** (**ADR-045**, revisa ADR-037); antes de crear la base, `schema.sql` es el diseño. Esta sección mantiene el mapa de entidades; el detalle de columnas, índices y políticas RLS **no se duplica acá**. Definición canónica del backend: **Vista 4**. Diagrama ER: `esquema_base_de_datos.mermaid`.
 
 | Capa | Tabla | Qué guarda |
 |---|---|---|
@@ -225,16 +225,17 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 | Seguridad | `patient_access` | Pertenencia `user → patient → rol`; es la base de las políticas RLS (ADR-032) |
 | Blobs | `raw_blobs` | Crudo continuo en Parquet (referencia a object storage) |
 | Blobs | `anomaly_raw_snippets` | Crudo puntual retenido ante anomalía (modo edge) |
-| Series | `gait_events` | Eventos **IC/TO/MS** por pie, con confianza y flags (hypertable) |
-| Series | `feature_vectors` | Un vector de features por zancada en `jsonb` + `feature_set_version` + **`features_source`** (`device`/`offline` — ADR-036) (hypertable) |
-| Series | `anomaly_scores` | Score, umbral, flag de anomalía y métrica de drift (hypertable) |
+| Series | `strides` | **Una fila por zancada y por pie**, identificada por el `stride_seq` que asigna la plantilla: la unidad del sistema (ADR-046) |
+| Series | `gait_events` | Eventos **IC/TO/MS** de cada zancada, con confianza y `flags` |
+| Series | `feature_vectors` | Un vector de features por zancada (por pie) o por ciclo bilateral (`cycle_seq`), en `jsonb` + `feature_set_version` + **`features_source`** (`device`/`offline` — ADR-036) |
+| Series | `anomaly_scores` | Score por unidad evaluada y por modelo, umbral, flag de anomalía y métrica de drift |
 | Registry | `models` | Clase L/E/H/W, `inference_target`, `retrain_target`, versión, linaje, métricas, artefacto |
 | Registry | `model_deployments` | Qué modelo corre en qué micro; `active` / `rolled_back` |
 | Registry | `firmware_images` | Imágenes de firmware para el OTA A/B |
 | Registry | `retrain_jobs` | Orquestación del reentrenamiento (`drift` / `schedule` / `manual`) |
 | Config | `feedback_config` | Política de feedback vibrotáctil per-paciente: `feedback_source`, bandas T1/T2/T3, N de ventana, intensidad, refractario, histéresis (ADR-027 / SPEC-09) |
 
-**Decisiones de esquema ya reflejadas en el DDL:** `feature_vectors.features` como **`jsonb`** (ADR-031) · **RLS estricto** por paciente vía `patient_access`, con `service_role` para el worker (ADR-032) · `sessions.host_type` (ADR-034) · **fase de captura de tres valores + origen de las features por fila** (ADR-036) · `gait_events.type ∈ {IC,TO,MS}` (ADR-038).
+**Decisiones de esquema ya reflejadas en el DDL:** `feature_vectors.features` como **`jsonb`** (ADR-031) · **RLS estricto** por paciente vía `patient_access`, con `service_role` para el worker (ADR-032) · `sessions.host_type` (ADR-034) · **fase de captura de tres valores + origen de las features por fila** (ADR-036) · `gait_events.type ∈ {IC,TO,MS}` (ADR-038) · **series particionadas por mes de inicio de sesión** (ADR-044) · **migraciones + snapshot** (ADR-045) · **zancada como entidad, FK reales e ingesta idempotente** (ADR-046) · **grants explícitos y RLS en todas las tablas** (ADR-047).
 
 **Pendiente:** las **columnas generadas `STORED`** e índices de expresión sobre las features calientes del dashboard (ADR-031) no se pueden fijar hasta congelar el `feature_set_version` y saber qué grafica el dashboard (**CP-20**).
 
@@ -242,7 +243,7 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 
 ## 12. Seguridad y privacidad
 
-Se tratan **datos de salud**, con postura de defensa en capas. El aislamiento se resuelve con **RLS estricto por paciente** [ADR-032]: Row-Level Security en todas las tablas con `patient_id`, filtrando por la tabla de pertenencia `patient_access` (`user_id`, `patient_id`, `role`). La base misma filtra las filas — la app no puede pedir de más. El **worker corre con `service_role`**, que saltea RLS por diseño (backend seguro, nunca en el cliente).
+Se tratan **datos de salud**, con postura de defensa en capas. El aislamiento se resuelve con **RLS estricto por paciente** [ADR-032]: Row-Level Security en todas las tablas con `patient_id`, filtrando por la tabla de pertenencia `patient_access` (`user_id`, `patient_id`, `role`). La base misma filtra las filas — la app no puede pedir de más. El **worker corre con `service_role`**, que saltea RLS por diseño (backend seguro, nunca en el cliente). Ninguna tabla se expone por la Data API sin **grant explícito**, `anon` no tiene acceso a nada, la RLS cubre **todas** las tablas expuestas y las particiones quedan cerradas; una suite pgTAP lo verifica en CI [ADR-047].
 
 Cifrado **en tránsito** (WPA2 en el enlace privado, BLE LE Secure Connections, HTTPS/TLS hacia Supabase) y **en reposo** (gestionado por la plataforma; artefactos validados por checksum). **Minimización:** `external_code` anónimo en lugar de PII directa. Al **reasignar** la cintura a otro paciente hay que borrar bonds + datos.
 
@@ -287,6 +288,8 @@ Para saber *qué* se decidió: el índice de la bitácora. Para saber *por qué*
 | Train/serve skew (features PC vs micro) | Modelo degradado en producción | Tests de paridad C↔Python en CI + entrenar con features del micro (ADR-018) |
 | Datos de salud | Privacidad/compliance | Cifrado en tránsito/reposo, **RLS estricto** por paciente vía `patient_access` (ADR-032), anonimización, consentimiento (nivel formal → CP-18) |
 | **Port de `pico-tflmicro` a RP2350 no mergeado** | Cae el runtime de inferencia elegido (SPEC-08) y parte del pipeline de ADR-022 | Validación de banco **temprana** (compilar el fork y correr un modelo int8 de juguete, sin depender del firmware del proyecto); **fallback documentado: CMSIS-NN directo** (ADR-020, opción C) — viable porque el AE denso es chico. **CP-21** |
+| Cambio de esquema con datos ya capturados | Pérdida o corrupción de datos de pacientes | **Migraciones versionadas** que CI prueba sobre una base efímera antes de aplicarlas; una migración aplicada no se edita y la base remota no se toca a mano (ADR-045) |
+| Exposición de datos por la Data API (tablas o particiones sin RLS) | Fuga de datos de salud | **Grants explícitos**, RLS en todas las tablas, particiones cerradas y tests pgTAP en CI (ADR-047) |
 
 ---
 
@@ -294,7 +297,7 @@ Para saber *qué* se decidió: el índice de la bitácora. Para saber *por qué*
 
 Se llevan en un **registro vivo aparte**, que es la única fuente de verdad: **`docs/cuestiones_pendientes.md`**. Ahí se agregan las cuestiones al detectarlas y se mueven a *Resueltas* con su ADR. Este documento **no** duplica el estado — sólo apunta.
 
-Al 2026-08-18 hay **7 abiertas**: **CP-01** (FSR y traza INT contra el PCB) · **CP-06** (proveedor del worker en la nube) · **CP-08** (modularidad de FSR y límite de ADC) · **CP-09** (presupuesto de energía) · **CP-18** (ratificación de seguridad/ética con el comité) · **CP-20** (columnas generadas sobre `features`) · **CP-21** (port de `pico-tflmicro` a RP2350 — ver §15).
+**No se copia la lista acá:** la última vez que se hizo quedó desactualizada (decía "7 abiertas" y contaba como abierta a CP-08, resuelta al día siguiente). La que amerita alerta es **CP-21** (port de `pico-tflmicro` a RP2350 — ver §15), la única que puede voltear una decisión ya tomada.
 
 ---
 

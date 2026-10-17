@@ -30,7 +30,7 @@
 
 **Latencia.** El **cruce de FSR emite el evento de inmediato**; la confirmación IMU **anota confianza sin bloquear** la emisión. **Criterio:** el evento tiene que estar disponible dentro de la **misma zancada**, porque lo consumen el ZUPT (SPEC-03), el buffer de zancadas (SPEC-05) y la fusión bilateral de la cintura. *No* es una latencia de lazo cerrado: ADR-027 derogó el objetivo "<50 ms" al hacer el feedback **terminal por ventana**.
 
-**Salida.** Evento `{ tipo: IC|TO|MS, t_evento (µs), pie, confianza, flags }` → (1) buffer local (features + segmentación de fases + ZUPT) y (2) envío a la **cintura** (fusión bilateral / double support, refinamiento de sync, timing de feedback). Persistido en `gait_events.type ∈ {IC,TO,MS}`.
+**Salida.** Evento `{ tipo: IC|TO|MS, t_evento (µs), pie, stride_seq, confianza, flags }` → (1) buffer local (features + segmentación de fases + ZUPT) y (2) envío a la **cintura** (fusión bilateral / double support, refinamiento de sync, timing de feedback). `stride_seq` es el número de la zancada a la que pertenece el evento: el IC abre una zancada nueva y el MS y el TO de ese apoyo llevan su número (SPEC-02; ADR-046). Persistido en `gait_events` (`type ∈ {IC,TO,MS}`, con sus `flags`), colgado de su zancada en `strides`.
 
 **Parámetros calibrables (por paciente, en la calibración/baseline).** `F_on`, `F_off` (derivados del peso corporal y de la curva fuerza-resistencia por-FSR), `W`, `t_ref`, `h_ms`, y el mapeo **FSR → región** (antepié / retropié), que sale de la config de posiciones del catálogo. Se versionan junto con el `feature_set_version`.
 
@@ -44,7 +44,7 @@
 
 ## SPEC-02 — Segmentación de fases (stance / swing) y sub-fases del apoyo
 
-**Deriva de:** SPEC-01 / ADR-015 (stance/swing) · **ADR-038** (sub-fases del apoyo). **Placement:** plantilla (per-pie). **Estado:** definido.
+**Deriva de:** SPEC-01 / ADR-015 (stance/swing) · **ADR-038** (sub-fases del apoyo) · **ADR-046** (numeración de la zancada). **Placement:** plantilla (per-pie). **Estado:** definido.
 
 **Objetivo.** Etiquetar cada muestra, por pie, como **stance** o **swing**, y **partir el apoyo en dos sub-fases** a partir del evento MS, para alimentar las features que dependen de fase.
 
@@ -56,6 +56,8 @@
   - **Propulsión** = `[MS, TO]` — empuje / push-off.
 - Referencia de proporción esperada (marcha típica): stance ~60-62 %, swing ~38-40 % del ciclo — útil como *sanity check*, no como regla.
 
+**Zancada e identidad (ADR-046).** Una **zancada** es `[IC(k), IC(k+1))` de un pie. La plantilla la numera con **`stride_seq`**: un contador por pie que arranca en `arm()` (SPEC-11) y avanza en cada IC; el MS y el TO de ese apoyo llevan el mismo número. Todo lo que se calcula sobre la zancada —eventos, sub-fases, vector de features— sale con ese número, que es su identidad en la base (`strides`) y lo que permite reconstruir qué eventos produjeron cada vector. Una zancada dudosa (p. ej. con IC de baja confianza) **no se descarta**: se emite con `flags` que la marcan.
+
 **Quién la consume.**
 - **ZUPT / stride length** (SPEC-03): corre durante **stance** (sin cambios: usa el apoyo completo).
 - **LDLJ** y **mean angular velocity**: se calculan sólo en **swing**.
@@ -64,7 +66,7 @@
 - **#43 (push-off time ratio)** y **#44 (propulsive impulse ratio)**: derivan directamente de MS — ver Vista 3, Parte A.
 - **Double support** (feature bilateral): solapamiento de la fase stance de **ambos** pies → se computa en la **cintura**, a partir de los eventos alineados (no necesita el crudo de ambos pies).
 
-**Salida.** Fase actual por-pie + límites de fase y de sub-fase (timestamps), al módulo de features y al ZUPT.
+**Salida.** Fase actual por-pie + límites de fase y de sub-fase (timestamps) + el `stride_seq` de la zancada en curso, al módulo de features y al ZUPT.
 
 **Degradación.** Si MS llega con `no_crossover` o baja confianza (SPEC-01), las features que dependen de la sub-fase se emiten **marcadas**; el mecanismo de dependencias del catálogo (ADR-021) permite apagarlas sin tocar el resto. Las de stance completo no se ven afectadas.
 
@@ -138,7 +140,7 @@
 
 ## SPEC-05 — Buffer de zancadas (ventana para variabilidad y simetría)
 
-**Deriva de:** definición directa (sin ADR). **Placement:** plantilla (per-pie) + cintura (bilateral). **Estado:** definido.
+**Deriva de:** definición directa; la identidad de zancadas y ciclos, de **ADR-046**. **Placement:** plantilla (per-pie) + cintura (bilateral). **Estado:** definido.
 
 **Objetivo.** Mantener un buffer de las **últimas N zancadas** de features por-pie, para las features que necesitan una **ventana multi-zancada**.
 
@@ -149,6 +151,8 @@
 **Dónde.**
 - **Plantilla (per-pie):** buffer de las features por-pie → **variabilidad** (bloque B: CoV de stride/stance/swing/cadence) y **Force Symmetry Index consecutivo** (feature 21).
 - **Cintura (bilateral):** buffer de features por-pie de **ambos** pies → **Symmetry Index** (feature 20) estabilizado sobre la ventana.
+
+**Identidad (ADR-046).** Cada entrada del buffer es una zancada identificada por su `stride_seq` (SPEC-02). En la **cintura**, al emparejar una zancada izquierda con una derecha —por IC, sobre el reloj ya sincronizado (ADR-004)—, se numera el **ciclo bilateral** con **`cycle_seq`**, un contador que arranca en `arm()`. El vector bilateral sale con ese número y con el par de `stride_seq` que cerró el ciclo, y los scores evaluados sobre ese ciclo se identifican con el mismo número.
 
 **Ventana.** Deslizante de N zancadas (estándar para CoV; coincide con el marco "≥10 zancadas"). *Alternativa:* EWMA (menos memoria, adaptación continua) — no elegida por ahora (la ventana fija es más interpretable para CoV).
 
@@ -409,14 +413,14 @@ Cada feature se calcula **por zancada**, sobre el segmento entre `IC(n)` e `IC(n
 | `wipe_raw_buffers` | Limpia el ring buffer de crudo de las dos plantillas | 3 (sólo si cambió el paciente) |
 | `provision(model, feedback_config, feature_set, adaptation_enabled)` | Escribe el artefacto al slot libre con **checksum** y **cabecera `patient_id` + versión**; conmuta atómicamente; carga config | 3 |
 | `calibrate()` | Rutina estática de SPEC-04; devuelve OK/error y un indicador en vivo de quieto/movimiento | 5 |
-| `arm(session_id, patient_id, mode)` | Verifica precondiciones y habilita el scoring | 6 |
+| `arm(session_id, patient_id, mode)` | Verifica precondiciones, habilita el scoring y **reinicia los contadores** `stride_seq` (plantillas) y `cycle_seq` (cintura) — ADR-046 | 6 |
 | `close()` | Devuelve el estado adaptado (μ, Σ) si `adaptation_enabled`; deja de scorear | 8 |
 
 **Reglas de seguridad (no negociables).**
 
 1. **Sin `arm()` no hay scoring ni feedback.** En `IDLE` el micro muestrea para el panel si se lo piden, pero **no** corre el detector ni acciona el motor.
 2. **Verificación de paciente en cada `arm()`.** Si `patient_id` de la cabecera del slot activo ≠ el de la sesión, `arm()` **falla** con código explícito. Nunca se scorea "por las dudas".
-3. **Tras un reset, el micro vuelve a `IDLE`** y re-reporta paciente y versión. Recarga el modelo de flash —por eso el flash existe— pero **no re-arma solo**: espera que el host lo re-arme.
+3. **Tras un reset, el micro vuelve a `IDLE`** y re-reporta paciente y versión. Recarga el modelo de flash —por eso el flash existe— pero **no re-arma solo**: espera que el host lo re-arme. Si el host lo re-arma **en la misma sesión**, los contadores de zancadas y ciclos no pueden volver a cero —pisarían zancadas ya guardadas—: `arm()` tiene que recibir el próximo número. Cómo se retoma una sesión tras un reset: **CP-30**.
 4. **El estado adaptado no se escribe a flash.** Vive en RAM; sube en `close()`. Si la sesión muere sin `close()`, se pierde: es el costo aceptado de que **la DB mande** (ADR-043 rev).
 
 **Gate térmico.** El micro no decide: **publica** temperatura y uptime, y el host aplica el criterio de estabilidad. Así el umbral se ajusta sin reflashear (CP-25).

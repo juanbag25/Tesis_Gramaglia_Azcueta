@@ -32,7 +32,7 @@
 1. **Plano de sensado y borde** (los 3 micros): adquisición a 100 Hz, sincronización, detección de eventos, cálculo de features (captura operativa / edge), inferencia local (clases L/E) y feedback vibrotáctil.
 2. **Plano de transporte:** WiFi (plantillas↔cintura) y BLE (cintura↔host), cada uno con un **canal rápido-tolerante** (stream) + un **canal confiable** (control/modelos).
 3. **Plano de host y cómputo:** laptop (mínima) o celular + worker en la nube (máxima). Ingesta, entrenamiento/reentrenamiento pesado, orquestación.
-4. **Plano de persistencia:** Supabase (PostgreSQL + TimescaleDB + object storage + auth), **sistema de registro** de datos, features, scores y modelos.
+4. **Plano de persistencia:** Supabase (Postgres 17 con series particionadas + object storage + auth — ADR-044), **sistema de registro** de datos, features, scores y modelos.
 
 ```mermaid
 flowchart LR
@@ -46,7 +46,7 @@ flowchart LR
         WK["Worker de reentrenamiento\nLaptop (mín) / Nube (máx)"]
     end
     subgraph CLOUD["Persistencia — Supabase"]
-        DB[("PostgreSQL + TimescaleDB\nmetadata · features · scores")]
+        DB[("PostgreSQL 17 · series particionadas\nmetadata · zancadas · features · scores")]
         OBJ[("Object Storage\ncrudo Parquet · modelos · firmware")]
         AUTH["Auth + RLS por paciente"]
     end
@@ -95,6 +95,8 @@ Principio: **dos canales por enlace**, uno optimizado para latencia y otro para 
 
 **Costo total:** 29 → **39 B/muestra** (+6 de orientación, +4 del `uint64`) ≈ **7,8 KB/s** entre las dos plantillas (contra ~5,8 antes). Mismo orden que los slots de FSR de ADR-041; BLE lo absorbe. **Cuatro slots fijos de FSR** — el máximo de diseño (**ADR-041**) — con los no poblados en cero; hoy sólo `fsr1` (punta) y `fsr2` (talón) llevan dato. El **set activo del catálogo** (ADR-021) declara cuáles son válidos, así que **el protocolo no cambia al sumar hardware**. Cuesta 4 bytes por muestra (400 B/s por pie sobre ~5 KB/s totales) y evita versionar el protocolo con plantillas ya selladas. El `seq` y `t_device` son la base de la sincronización (§5) y de la detección de pérdidas.
 
+**Mensajes por zancada (ADR-046).** Además del stream, las plantillas mandan sus **eventos** (IC/MS/TO) y sus **vectores de features por pie** con el **`stride_seq`** de la zancada a la que pertenecen; la cintura manda el **vector bilateral** y los **scores** con el **`cycle_seq`** del ciclo. Esos números, asignados en el borde desde `arm()`, son la identidad con la que se guardan en la base: el host escribe con *upsert*, así que reenviar un lote después de un corte no duplica nada.
+
 ## 5. Sincronización (alto nivel)
 
 La sincronización es crítica: la **simetría inter-miembro** exige relacionar ambos pies sobre una **misma línea de tiempo a nivel de muestra**. Muchas features se calculan sobre **ventanas de la señal bilateral** o requieren **simultaneidad** (double support; velocidad/cruces por cero del COP-ML; LDLJ; entropías; PSD). El emparejado por evento por sí solo **no** alcanza. [ADR-004]
@@ -111,7 +113,7 @@ La sincronización es crítica: la **simetría inter-miembro** exige relacionar 
 | Operación | Captura (dataset/eval) | Edge (uso real) |
 |---|---|---|
 | Muestreo 100 Hz | Plantillas | Plantillas |
-| Detección de eventos (IC/TO) | Plantilla (per-pie) | Plantilla (per-pie) |
+| Detección de eventos (IC/TO/MS) y numeración de zancadas | Plantilla (per-pie) | Plantilla (per-pie) |
 | Cálculo de features por-pie | Exploratoria: **off-device (Python)** · Operativa: **plantillas (on-device)** | **Plantillas (on-device)** |
 | Fusión bilateral (simetría, double support) | **Cintura** | **Cintura** |
 | Inferencia en tiempo real (feedback) | Opcional, en host, sólo para evaluar | **Cintura (hub)** o **host** — clases L/E/H; nunca en el worker |
@@ -142,7 +144,7 @@ Los únicos puntos de variación (app del host y ubicación del worker) están *
 **El switch mínima↔máxima no existe en el micro (CP-16 / ADR-034).** El micro es **agnóstico al tipo de central**: no detecta si habla con una computadora o un celular, y su firmware es idéntico en ambos horizontes. **El flujo lo determina el host** (laptop → worker local; celular → worker en la nube). El **modo** de operación (captura exploratoria / operativa / edge) es un **comando explícito** por el canal de control (UI, ADR-033), nunca una inferencia sobre el tipo de host. El host **declara su tipo** (`sessions.host_type`) al abrir la sesión, sólo para **trazabilidad del dataset**.
 
 ## ADRs relevantes
-ADR-001 (topología WiFi/AP), ADR-002 (uplink BLE), ADR-003 (transporte), ADR-004 (sincronización), ADR-013 (ubicación de inferencia), ADR-011 rev (ruteo micro→host), **ADR-042** (crudo post-AHRS y formato de paquete), **ADR-043 rev** (ciclo de vida de la sesión).
+ADR-001 (topología WiFi/AP), ADR-002 (uplink BLE), ADR-003 (transporte), ADR-004 (sincronización), ADR-013 (ubicación de inferencia), ADR-011 rev (ruteo micro→host), **ADR-042** (crudo post-AHRS y formato de paquete), **ADR-043 rev** (ciclo de vida de la sesión), **ADR-046** (identidad de las series: `stride_seq` y `cycle_seq` en los mensajes).
 
 ## Stack (resumen; detalle en `../stack_tecnologico.md`)
 WiFi (lwIP), BLE (BTstack), sincronización de capa de aplicación (código propio).

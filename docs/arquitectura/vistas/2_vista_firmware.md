@@ -20,7 +20,7 @@ flowchart TB
         B["IMU MPU-6050 @tick 100 Hz"]
         A --> TS["timestamp µs + seq"]
         B --> TS
-        TS --> EV["IC/TO (SPEC-01)"]
+        TS --> EV["IC/MS/TO + stride_seq (SPEC-01/02)"]
         TS --> RB["ring buffer de crudo"]
         EV --> FE["features por-pie (catálogo)"]
         FE --> TXI["→ WiFi a cintura"]
@@ -52,10 +52,10 @@ Muestreo **exacto y periódico** pese a la actividad del radio (el jitter arruin
 
 ## 3. Detección de eventos y ejecución de features
 
-- **IC/TO/MS** (núcleo del firmware): fusión **FSR-primario + confirmación IMU**, per-pie — **SPEC-01** (ADR-015 para IC/TO; **ADR-038** para **mid-stance**, detectado como cruce de carga retropié→antepié). Alimenta features espacio-temporales, segmentación, ZUPT, refinamiento de sync y timing del feedback. **Segmentación stance/swing + sub-fases del apoyo** (carga `[IC,MS]` / propulsión `[MS,TO]`)**:** SPEC-02.
+- **IC/TO/MS** (núcleo del firmware): fusión **FSR-primario + confirmación IMU**, per-pie — **SPEC-01** (ADR-015 para IC/TO; **ADR-038** para **mid-stance**, detectado como cruce de carga retropié→antepié). Alimenta features espacio-temporales, segmentación, ZUPT, refinamiento de sync y timing del feedback. **Segmentación stance/swing + sub-fases del apoyo** (carga `[IC,MS]` / propulsión `[MS,TO]`)**:** SPEC-02. **Cada IC abre una zancada y la numera** (`stride_seq`, por pie, desde `arm()`); MS y TO llevan el número de su IC. Es la identidad con la que se guarda todo lo que deriva de esa zancada (ADR-046).
 - **Módulo de features por-pie (ejecución):** el firmware **implementa** las features desde el **catálogo compartido** (definición única, ADR-021); su definición canónica vive en la Vista 3. Corre en **captura operativa y edge** (no en la exploratoria — ADR-005 rev c). Aplica el **set activo** vigente (perfil **2-FSR**: bloque E + #18 **OFF**, ADR-023).
 - **Dependencias de cómputo:** módulo IMU (orientación/gravedad — SPEC-04), buffer de N zancadas (SPEC-05), stride length/ZUPT (SPEC-03), COP_ML (SPEC-06, **diferido**), FFT/DSP con **CMSIS-DSP** (SPEC-07, ADR-019).
-- **Fusión bilateral (cintura):** simetría (bloque D) y **double support** desde los **eventos alineados** por el backbone de sync — no necesita el crudo de ambos pies co-localizado.
+- **Fusión bilateral (cintura):** simetría (bloque D) y **double support** desde los **eventos alineados** por el backbone de sync — no necesita el crudo de ambos pies co-localizado. Al emparejar una zancada izquierda con una derecha, la cintura numera el **ciclo bilateral** (`cycle_seq`, desde `arm()`): el vector bilateral y los scores se identifican con ese número (ADR-046, SPEC-05).
 - **Features de tronco (cintura, bloque I #45-47 — SPEC-10):** IHR ML, RMS y LDLJ sobre la aceleración del IMU de cintura, segmentada por zancada con los **eventos IC** que llegan de las plantillas. **Diferidas: el bloque está OFF en el set activo** (ADR-040) — el rol queda asignado y la spec escrita, pero no entra en la primera iteración de firmware.
 
 ## 4. Sincronización (implementación) — [ADR-004]
@@ -113,7 +113,7 @@ El pairing user-facing es **cintura↔host** (plantilla↔cintura es de fábrica
 - **Dependencias:** CP-04 (nivel de seguridad + borrar bonds/datos al reasignar), CP-15 (UX de la app). Apéndice conceptual en **ADR-028**.
 
 ## ADRs relevantes
-ADR-010 (C/C++ Pico SDK), ADR-014 (adquisición), ADR-026 (muestreo/lectura del IMU), ADR-004 (sync), ADR-005 (features distribuidas — ejecución), ADR-015/016/017 (SPEC-01/03/04), ADR-019 (CMSIS-DSP), ADR-020 (TFLite Micro), ADR-012 (OTA), ADR-011 rev (ruteo), ADR-023 (set activo 2-FSR), ADR-024 rev (cores) / ADR-025 (bare-metal), ADR-027 (feedback vibrotáctil), ADR-028 (pairing BLE), **ADR-042** (crudo post-AHRS: el AHRS corre acá), **ADR-043 rev** (ciclo de vida, estampa de paciente, canal de estado).
+ADR-010 (C/C++ Pico SDK), ADR-014 (adquisición), ADR-026 (muestreo/lectura del IMU), ADR-004 (sync), ADR-005 (features distribuidas — ejecución), ADR-015/016/017 (SPEC-01/03/04), ADR-019 (CMSIS-DSP), ADR-020 (TFLite Micro), ADR-012 (OTA), ADR-011 rev (ruteo), ADR-023 (set activo 2-FSR), ADR-024 rev (cores) / ADR-025 (bare-metal), ADR-027 (feedback vibrotáctil), ADR-028 (pairing BLE), **ADR-042** (crudo post-AHRS: el AHRS corre acá), **ADR-043 rev** (ciclo de vida, estampa de paciente, canal de estado), **ADR-046** (numeración de zancadas y ciclos: `stride_seq` / `cycle_seq`).
 
 ## Stack (resumen; detalle en `../stack_tecnologico.md`)
 Pico SDK (`hardware_adc/dma/timer/pio/i2c`), **lwIP**, **BTstack**, **CMSIS-DSP** (DSP/FFT/álgebra), **TFLite Micro + CMSIS-NN** (`pico-tflmicro`, int8), **Fusion** (Madgwick), driver I²C MPU-6050 (lectura por **DMA** — ADR-026). **Bare-metal** (sin RTOS — ADR-025).
