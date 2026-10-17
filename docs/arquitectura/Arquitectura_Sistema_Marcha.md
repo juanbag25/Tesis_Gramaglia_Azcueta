@@ -124,11 +124,11 @@ flowchart LR
 
 **Plantillas ↔ cintura: WiFi, cintura como Access Point** [ADR-001]. Estrella de un solo salto, sin infraestructura externa, con la fusión donde los datos ya convergen. Enlace permanente: no cambia entre mínima y máxima.
 
-**Cintura ↔ host: BLE desde la mínima** [ADR-002]. La cintura expone un servidor GATT; el host (laptop o celular) es el central. Se adopta BLE desde el inicio porque el firmware de la cintura queda **idéntico** en ambos horizontes, se enfrenta **temprano** el riesgo de coexistencia, y el caudal (~5 KB/s) sobra.
+**Cintura ↔ host: BLE desde la mínima** [ADR-002]. La cintura expone un servidor GATT; el host (laptop o celular) es el central. Se adopta BLE desde el inicio porque el firmware de la cintura queda **idéntico** en ambos horizontes, se enfrenta **temprano** el riesgo de coexistencia, y el caudal entra con margen: ~7,8 KB/s en uso y ~11,7 KB/s en las capturas, con el crudo de la cintura (ADR-048), a validar junto con la coexistencia.
 
 **Modelo de conectividad tipo auriculares** [ADR-028]. Los micros **nunca se conectan a WiFi de internet**: el único WiFi es el enlace privado plantillas↔cintura. El host tiene internet y empuja a Supabase; el OTA va por BLE. Sin provisioning de redes. Pairing cintura↔host sin botón: gesto de sacudida + passkey fijo + bond list multi-host.
 
-**Dos canales por enlace** [ADR-003]: rápido-tolerante para el stream (**UDP** / notificaciones GATT) + confiable para control y modelos (**TCP** / writes con ACK). A 100 Hz, perder una muestra es irrelevante; el *head-of-line blocking* de TCP no lo es.
+**Dos canales por enlace** [ADR-003]: rápido-tolerante para el stream (**UDP** / notificaciones GATT) + confiable para control y modelos (**TCP** / writes con ACK). A 100 Hz, perder una muestra es irrelevante; el *head-of-line blocking* de TCP no lo es. Los contratos de cada conversación —mensajes, características BLE, OTA, artefactos, catálogo, crudo y hora— están en **ADR-050 a 056** (Vista 1 §4).
 
 > **Detalle** (justificaciones, restricciones del celular, formato de paquete): **Vista 1 §3 y §4**.
 
@@ -191,7 +191,7 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 
 **Disparo:** por **drift** (Mahalanobis), por **schedule** o **manual**; queda registrado en `retrain_jobs`.
 
-**Despliegue OTA A/B desde el inicio** [ADR-012], por BLE desde el host: pesos (artefacto del modelo a un slot de flash, con checksum y conmutación atómica) y **firmware completo** (bootloader A/B con reversión si la imagen nueva no reporta OK). El riesgo de brickeo se mitiga con A/B + checksum + watchdog + modo de recuperación.
+**Despliegue OTA A/B desde el inicio** [ADR-012, ADR-052], por BLE desde el host, con un protocolo propio que retoma tras un corte y verifica la huella SHA-256: pesos (el sobre del artefacto —ADR-053— a un slot de flash, con conmutación atómica) y **firmware completo** (particiones A/B del bootrom del RP2350, sin bootloader propio: la imagen nueva arranca a prueba y, si no se confirma, vuelve la anterior). El riesgo de brickeo se mitiga con A/B + huella + arranque a prueba, y con una prueba obligatoria antes de sellar las plantillas.
 
 **Versionado y respaldo:** los modelos **E/H/W** quedan en la DB (fila en `models` + artefacto en storage) con versión, métricas y linaje, y la anterior se conserva como *last-known-good*. Los de clase **L** no viajan por OTA: su estado adaptado sube en el **check-in** de cada sesión y se versiona igual. **La DB es la fuente de verdad** y el flash del micro una copia de trabajo que se reescribe en cada provisioning [ADR-043 rev]. > **Detalle:** Vista 4 §4.1.
 

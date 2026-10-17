@@ -46,8 +46,9 @@ Una fila = **un vector de features por zancada** (con `time`, `session_id`, `pat
 
 ### 1.4 Retención tiered por fase [ADR-008]
 
-- **Fase de dataset:** **crudo completo** (Parquet en storage) + features + eventos + scores + modelos → máxima trazabilidad para re-extraer features y reevaluar algoritmos.
+- **Fase de dataset:** **crudo completo** (Parquet en storage) de las dos plantillas **y de la cintura** (ADR-048) + features + eventos + scores + modelos → máxima trazabilidad para re-extraer features y reevaluar algoritmos.
 - **Uso real (máxima):** features/eventos/scores continuos; el **crudo sólo alrededor de anomalías/drift** (snippet pedido al buffer circular de la plantilla). Evita del orden de **6,7 GB/mes/paciente** de crudo continuo conservando lo clínicamente interesante, y encaja con el sensor de drift de Mahalanobis.
+- **Formato del crudo (ADR-055):** un archivo **Parquet** por sesión, equipo (izquierda, derecha, cintura) y tramo de unos minutos, con los campos del paquete tal como llegaron (enteros) y las escalas en los metadatos; compresión zstd; ruta `raw/{patient_id}/{session_id}/{equipo}/{tramo}.parquet`, así las políticas del storage usan la misma regla que la base. Cada archivo es una fila de `raw_blobs`, única por tramo: volver a subirlo no duplica.
 
 > **Cómo sale ese número.** Con el paquete de **39 B** (ADR-042: orientación + `t_device` en `uint64`) a 100 Hz por dos plantillas son **7,8 KB/s**, o sea **~6,7 GB/mes** suponiendo **~8 h/día de uso** y **sin comprimir**; a 24 h/día serían ~20 GB, y Parquet comprime bastante por debajo de eso. El supuesto de las 8 h hay que declararlo: la cifra anterior (~4 GB) venía del paquete viejo de 29 B y tampoco lo decía, y la de ~6 GB (35 B) se había olvidado de los 4 B del `uint64`.
 
@@ -73,7 +74,7 @@ La **zancada** es una entidad: cada fila de `strides` es una zancada de un pie, 
 - **FK reales:** evento → zancada; vector → su zancada (o sus dos, el bilateral); snippet → score; score → modelo del mismo paciente; y toda fila → `sessions (id, patient_id, started_at)`, que garantiza que el paciente y la fecha copiados sean los de su sesión. *Consecuencia:* un score persistido es siempre de un modelo del mismo paciente; un modelo global no los produce (ADR-000).
 - **Ingesta idempotente:** el host escribe con *upsert* sobre esas claves, así que reenviar un lote después de un corte no duplica nada.
 - **`flags`** en zancadas, eventos y vectores: lo que emiten SPEC-01/02 (`no_crossover`, baja confianza, features marcadas).
-- Si después de un reset se retomara la misma sesión, los contadores no pueden volver a cero → **CP-30**.
+- Tras un corte o un reinicio nunca se retoma la misma sesión: se abre otra (ADR-049), así que los contadores arrancan de cero sin chocar.
 
 ### 1.7 Migraciones y CI [ADR-045, resuelve CP-23]
 
@@ -118,7 +119,7 @@ Servicio de cómputo **separado de Supabase**. Entrena las clases **E/H/W** (la 
 
 El **host** es el puente entre la cintura y la nube, **y** el lugar donde vive la UI de control del operador. La UI no es un panel de estado: es el **orquestador de la máquina de estados del sistema** — toda interacción con el equipo (abrir y cerrar sesión, elegir modo, calibrar, provisionar el modelo, disparar OTA) pasa por ella, y el micro nunca infiere nada [ADR-043 rev, ADR-034].
 
-**Funciones:** ingesta por **BLE** (notificaciones GATT para el stream; writes con ACK para control), **buffer local** (tolera cortes de conectividad), escritura a Supabase (crudo a storage + features/eventos/scores a la DB), **puente OTA** (baja el artefacto del registry y lo empuja a la cintura) y **runtime de inferencia espejo** para los modelos de clase **H** (ADR-011 rev).
+**Funciones:** ingesta por **BLE** (el servicio de ADR-051: notificaciones para el stream, las zancadas y el estado; escrituras con respuesta para el control; mensajes de ADR-050), **buffer local** (tolera cortes de conectividad), escritura a Supabase (crudo a storage en Parquet por tramos — ADR-055 — + zancadas/eventos/features/scores a la DB), **traducción de la hora** (`t_device` → UTC con una recta por sesión, ajustada intercambiando la hora con la cintura — ADR-056), **puente OTA** (baja el artefacto del registry y lo empuja a la cintura con el protocolo de ADR-052) y **runtime de inferencia espejo** para los modelos de clase **H** (ADR-011 rev).
 
 **UI de control (mínima):** **app local en Python** — el mismo proceso que hace la ingesta (`bleak`) sirve una **UI web** (FastAPI + página) en la propia laptop. Permite: elegir paciente, **abrir/cerrar sesión**, **cambiar el modo de las zapatillas** (captura exploratoria / operativa / edge), ver **estado** (conexión, muestras, batería) y **disparar OTA**. Un solo proceso y un solo lenguaje: el botón llama directo a la función que ya tiene la conexión BLE abierta.
 
@@ -138,15 +139,26 @@ Una sesión no es "apretar grabar": es una **transacción de 8 fases** que la UI
 | 3 | **Provisioning** | Se baja de la DB la versión activa del modelo + `feedback_config` + set activo y **se escribe a flash** (slot A/B, checksum, estampado con `patient_id` + versión). Si el paciente cambió, se limpian los ring buffers de crudo | seg | "Preparando equipo para \<paciente\>" |
 | 4 | **Gate térmico** | Espera el remanente, ya descontado lo consumido en 1-3 | resto | Botón de calibrar **deshabilitado** con el faltante a la vista |
 | 5 | **Calibración** | Poses (postura → CP-31); bias de giro, offset de accel, alineación anatómica (SPEC-04) | decenas de seg | Instrucción de pose + **indicador en vivo de quieto/movimiento** |
-| 6 | **Verificación** | Modelo en flash = paciente · calibración OK · dos plantillas conectadas · sync dentro de presupuesto · batería. **Sin esto no arranca** | instantáneo | Checklist; si falla, dice qué |
+| 6 | **Verificación** | Modelo en flash = paciente · calibración OK · dos plantillas conectadas · sync activa (sin umbral numérico mientras CP-28 esté diferida a la máxima) · batería. **Sin esto no arranca** | instantáneo | Checklist; si falla, dice qué |
 | 7 | **Sesión** | Fila en `sessions`; grabación/scoring según el modo; adaptación en RAM si está habilitada | la sesión | Panel en tiempo real |
 | 8 | **Cierre** | Se sella `ended_at`; si hubo adaptación el micro sube el estado final y se versiona (N+1). **El flash no se toca** | seg | Confirmación + resumen |
 
 **El warm-up corre en paralelo, no al final.** El reloj térmico arranca al **encender**, no al abrir la sesión, así que conexión, configuración y provisioning se consumen del mismo tiempo. Por eso la barra se muestra desde la fase 1: el operador tiene que entender que el reloj ya viene corriendo y que la app no lo hace esperar al final. **El gate se destraba por temperatura estable** del MPU-6050 (sensor integrado), no por temporizador — con temporizador fijo como respaldo. Entre sesiones seguidas sin apagar no vuelve a cerrarse. Cuánto tarda y con qué umbral: **CP-25**.
 
-**Autoridad del modelo: la DB manda.** Lo que se flashea es **siempre** la última versión de la base; no hay reconciliación flash↔DB. El flash es una **copia de trabajo descartable** cuya única función es que un **reset a mitad de sesión** recargue el modelo sin depender del host. *Costo aceptado:* si la subida del cierre falla, esa sesión pierde su adaptación y la siguiente arranca de la versión anterior (ADR-043 rev; cierra **CP-24**). Bordes sin resolver —caída del enlace, cierre sucio, `ended_at` huérfano— en **CP-30**.
+**Autoridad del modelo: la DB manda.** Lo que se flashea es **siempre** la última versión de la base; no hay reconciliación flash↔DB. El flash es una **copia de trabajo descartable** cuya única función es que un **reset a mitad de sesión** recargue el modelo sin depender del host. *Costo aceptado:* si la subida del cierre falla, esa sesión pierde su adaptación y la siguiente arranca de la versión anterior (ADR-043 rev; cierra **CP-24**). Los bordes —caída del enlace, reinicios, cierre sucio— están más abajo (ADR-049).
 
 **Guardas contra el cruce de pacientes.** El artefacto en flash lleva `patient_id` + versión, y la cintura **se niega a scorear** si no coincide con la sesión abierta (fase 6). Del lado de la base, la FK compuesta `anomaly_scores (model_id, patient_id) → models (id, patient_id)` impide guardar un score de un paciente calculado con el modelo de otro. Como `anomaly_scores.patient_id` es obligatorio (ADR-046), esa FK se aplica siempre: un modelo global no puede dejar scores.
+
+**Bordes: cortes, reinicios y cierre sucio [ADR-049, resuelve CP-30].**
+
+| Qué pasa | Mínima (se implementa ahora) | Máxima (diferido) |
+|---|---|---|
+| Se corta el BLE cintura↔host | La cintura deja de scorear y vuelve a reposo; el host cierra la sesión (`end_reason` = `link_lost`) | La sesión sigue en la cintura; guarda lo que no puede mandar y lo reenvía al volver el host (sin duplicar — ADR-046) |
+| Se pierde una plantilla (vence el heartbeat) | Se cierra la sesión (`insole_lost`) | La sesión sigue; las features bilaterales y el feedback se pausan, y queda marcado |
+| Se reinicia un micro | Se cierra la sesión (`reboot`) | Se cierra y se abre una sesión de continuación; se recalibra sólo el micro reiniciado |
+| Nadie cerró la sesión (apagado sin `close()`, host caído) | La cierra el host al detectarlo o en su próximo arranque (`unclean`; `ended_at` = último dato) | Ídem |
+
+Perder paquetes sueltos **no** es un corte: se tolera y se cuenta con el `seq`. Para seguir después de un corte en la mínima se abre una **sesión nueva** por el pipeline: el gate térmico no vuelve a cerrarse si nadie se reinició, la calibración se repite, y la sesión nueva puede apuntar a la anterior con `continues_session_id`. Los cortes de **internet** entre el host y Supabase no cierran nada: los absorbe el buffer local del host. En la máxima, el comportamiento se elegirá por sesión (un parámetro de `provision`), no por tipo de host (ADR-034).
 
 ### 4.2 Canal de estado (separado del stream)
 
@@ -160,7 +172,7 @@ El pipeline y el panel necesitan datos que no son muestras. Van por un canal pro
 
 Temperatura y uptime siguen viajando **con la sesión corriendo**: la temperatura se aleja del punto de calibración durante el uso (el pie calienta la plantilla), así que es una **señal de calidad del dato** que permite explicar después una sesión anómala; y una caída del uptime es cómo se detecta un reset silencioso. El paciente y la versión en flash, en cambio, no van en el stream.
 
-Este canal es lo que alimenta el panel de monitoreo y **la evidencia con la que se validan** la coexistencia WiFi-AP + BLE y la precisión de sincronización (**CP-28**): hoy el sistema produce esos números —el `seq` existe explícitamente para detectar pérdidas— y ningún componente los consume.
+Este canal es lo que alimenta el panel de monitoreo y **la evidencia con la que se validan** la coexistencia WiFi-AP + BLE y la precisión de sincronización (**CP-28**, diferida a la máxima): hoy el sistema produce esos números —el `seq` existe explícitamente para detectar pérdidas— y ningún componente los consume.
 
 ### 4.3 Configuración de feedback per-paciente [ADR-027 / SPEC-09]
 
@@ -182,18 +194,18 @@ Aplicación **web de solo-lectura** sobre Supabase (con RLS), para el profesiona
 
 El backend **publica y versiona**; el firmware **valida y conmuta** (mecánica en Vista 2 §8).
 
-- El worker sube el artefacto a object storage y registra la fila en **`models`** (versión, linaje `parent_version`, métricas, `checksum`, `artifact_format`).
-- El host observa el registry, **descarga** el artefacto y lo empuja por **BLE** a la cintura.
+- El worker sube el artefacto a object storage y registra la fila en **`models`** (versión, linaje `parent_version`, métricas, `checksum`, `artifact_format`). El artefacto es el **sobre** de ADR-053 (`artifact_format = envelope_v1`) y `checksum` es su huella SHA-256: la misma que anuncia el OTA y que verifica la cintura.
+- El host observa el registry, **descarga** el artefacto y lo empuja por **BLE** a la cintura con el protocolo de ADR-052 (aviso, pedazos, acuses con retoma, huella, conmutación).
 - El resultado del despliegue queda en **`model_deployments`** (`active` / `rolled_back`); las imágenes de firmware en **`firmware_images`**.
 - **Respaldo.** Los modelos de clase **E/H/W** quedan respaldados como artefacto en el registry. Los de clase **L** no viajan por OTA: su estado adaptado se sube en el **check-in** de cada sesión y se versiona en la DB (§4.1, ADR-043 rev). En los dos casos **la DB es la fuente de verdad** y el flash del micro una copia de trabajo descartable: si un micro se rompe o se pierde, se recupera desde la DB.
 
 ---
 
 ## ADRs relevantes
-ADR-006 (Supabase), ADR-007 (modelo de datos en tres capas; capa de series revisada por ADR-044), ADR-008 (retención tiered), ADR-009 (worker de reentrenamiento), ADR-011 rev (ruteo model-agnostic / runtime espejo en el host), ADR-012 (OTA — lado backend), ADR-022 (cuantización int8), ADR-027 + SPEC-09 (config de feedback), ADR-031 (esquema de `feature_vectors`), ADR-032 (RLS y seguridad), ADR-033 (UI de control y dashboard), ADR-034 (`host_type` en la sesión), **ADR-043 rev** (ciclo de vida de la sesión, canal de estado, autoridad del modelo), **ADR-044** (series con particionado nativo), **ADR-045** (migraciones y CI), **ADR-046** (identidad de las series e integridad), **ADR-047** (exposición por la Data API).
+ADR-006 (Supabase), ADR-007 (modelo de datos en tres capas; capa de series revisada por ADR-044), ADR-008 (retención tiered), ADR-009 (worker de reentrenamiento), ADR-011 rev (ruteo model-agnostic / runtime espejo en el host), ADR-012 (OTA — lado backend), ADR-022 (cuantización int8), ADR-027 + SPEC-09 (config de feedback), ADR-031 (esquema de `feature_vectors`), ADR-032 (RLS y seguridad), ADR-033 (UI de control y dashboard), ADR-034 (`host_type` en la sesión), **ADR-043 rev** (ciclo de vida de la sesión, canal de estado, autoridad del modelo), **ADR-044** (series con particionado nativo), **ADR-045** (migraciones y CI), **ADR-046** (identidad de las series e integridad), **ADR-047** (exposición por la Data API), **ADR-048** (crudo de la cintura en las capturas), **ADR-049** (la sesión ante cortes y reinicios), **ADR-050 a 056** (contratos de interfaz: mensajes, enlace BLE, OTA, artefactos, catálogo, crudo en Parquet y hora UTC).
 
 ## Stack (resumen; detalle en `../stack_tecnologico.md`)
-**Supabase** (Postgres 17 + `pg_partman`/`pg_cron` + Storage + Auth) · **CLI de Supabase** + Docker (migraciones) · **pgTAP** + GitHub Actions (CI de la base) · **supabase-py** (worker y host) · **bleak** (BLE del host, mínima) · **FastAPI** (UI de control) · **TensorFlow/Keras + conversor TFLite/LiteRT** (worker) · scikit-learn, numpy/scipy/pandas · framework de dashboard **a definir** (máxima) · stack móvil **a definir** (máxima).
+**Supabase** (Postgres 17 + `pg_partman`/`pg_cron` + Storage + Auth) · **CLI de Supabase** + Docker (migraciones) · **pgTAP** + GitHub Actions (CI de la base) · **supabase-py** (worker y host) · **bleak** (BLE del host, mínima) · **protobuf** (mensajes, ADR-050) · **pyarrow** (Parquet, ADR-055) · **FastAPI** (UI de control) · **TensorFlow/Keras + conversor TFLite/LiteRT** (worker) · scikit-learn, numpy/scipy/pandas · framework de dashboard **a definir** (máxima) · stack móvil **a definir** (máxima).
 
 ## Diagramas de esta vista
 - `../esquema_base_de_datos.mermaid` — modelo entidad-relación.

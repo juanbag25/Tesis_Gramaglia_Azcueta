@@ -131,7 +131,7 @@ El marco teórico daba por perdidas las features de tronco/lower-back de Brasili
 >
 > **Principio (ADR-040).** El catálogo es una **biblioteca de features disponibles**, no una lista de obligaciones. El **set activo** es lo que efectivamente se calcula, y no tiene por qué ser todo desde el día uno.
 
-**Resuelto (ADR-021):** el catálogo es un **archivo de datos declarativo** (JSON/TOML) en `src/firmware/shared/` (metadata: id/bloque/scope/inputs/deps/params/tolerancia/activo + `feature_set_version`); **dos implementaciones** (C firmware / Python worker) reconciliadas por **tests de paridad** (codegen y C-único-bindeado **descartados**); el set activo se distribuye por **config/OTA**. La *selección* data-driven de qué features se prenden sigue en el backlog (#12).
+**Resuelto (ADR-021):** el catálogo es un **archivo de datos declarativo** en `src/firmware/shared/` —**TOML** (`features.toml`), con una tabla de C generada para el firmware (ADR-054)— (metadata: id/bloque/scope/inputs/deps/params/tolerancia/activo + `feature_set_version`); **dos implementaciones** (C firmware / Python worker) reconciliadas por **tests de paridad** (codegen y C-único-bindeado **descartados**); el set activo se distribuye por **config/OTA**. La *selección* data-driven de qué features se prenden sigue en el backlog (#12).
 
 ---
 

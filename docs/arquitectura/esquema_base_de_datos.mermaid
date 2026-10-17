@@ -45,11 +45,17 @@ erDiagram
         boolean adaptation_enabled
         timestamptz started_at "se copia como session_started_at"
         timestamptz ended_at
+        text end_reason "normal|link_lost|insole_lost|reboot|unclean"
+        uuid continues_session_id FK "sesion anterior"
+        bigint clock_t0_device "recta t_device a UTC (ADR-056)"
+        timestamptz clock_t0_utc
+        double clock_drift_ppm
     }
     RAW_BLOBS {
         uuid id PK
         uuid session_id FK
         uuid device_id FK
+        int chunk_index "tramo (ADR-055)"
         text storage_url "parquet"
         bigint n_samples
         text checksum
@@ -73,6 +79,7 @@ erDiagram
         timestamptz session_started_at PK
         uuid patient_id FK
         timestamptz time
+        bigint t_device "cuenta de la cintura (ADR-056)"
         real confidence
         text[] flags "no_crossover"
     }
@@ -124,7 +131,8 @@ erDiagram
         int version
         int parent_version
         text artifact_url
-        text checksum
+        text artifact_format "envelope_v1 (ADR-053)"
+        text checksum "SHA-256 del sobre"
         jsonb metrics
         text status
     }

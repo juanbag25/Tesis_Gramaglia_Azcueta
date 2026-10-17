@@ -3,7 +3,8 @@
 -- pg_partman + pg_cron; object storage para el crudo y los artefactos; auth.
 --
 -- ESTADO DE ESTE ARCHIVO (ADR-045). Es la ULTIMA version escrita a mano: el diseno de
--- ADR-044 (particionado), ADR-046 (identidad de las series) y ADR-047 (grants y RLS).
+-- ADR-044 (particionado), ADR-046 (identidad de las series) y ADR-047 (grants y RLS), con
+-- los ajustes de ADR-049 (fin de sesion), ADR-053 (artefactos), ADR-055 (crudo) y ADR-056 (hora).
 -- Todavia no se corrio contra una base: se valida al crear la migracion base.
 -- Cuando se cree la base, este contenido pasa a ser la migracion base
 -- (src/db/supabase/migrations/<timestamp>_baseline.sql) y el esquema cambia SOLO con
@@ -13,8 +14,8 @@
 -- Definicion conceptual del backend: docs/arquitectura/vistas/4_vista_backend_app.md.
 -- Mapa de entidades: maestro §11. Diagrama ER: docs/arquitectura/esquema_base_de_datos.mermaid.
 --
--- El crudo continuo (100 Hz) NO entra a la base: va como Parquet a object storage y se
--- referencia desde raw_blobs (ADR-008, ADR-042).
+-- El crudo continuo (100 Hz) NO entra a la base: va como Parquet a object storage, un archivo
+-- por sesion, equipo y tramo, y se referencia desde raw_blobs (ADR-008, ADR-042, ADR-055).
 
 -- ============================================================
 -- Extensiones y esquemas
@@ -70,6 +71,18 @@ create table sessions (
   -- lo copia como session_started_at, que es la clave de particion (ADR-044): no cambia nunca.
   started_at timestamptz not null default now(),
   ended_at timestamptz,
+  -- Por que termino la sesion (ADR-049). En la minima un corte de enlace o un reinicio la
+  -- cierran; 'unclean' = la cerro el host porque nadie la cerro (apagado sin close()).
+  end_reason text check (end_reason in ('normal','link_lost','insole_lost','reboot','unclean')),
+  -- Sesion de la que esta es continuacion, tras un corte o un reinicio (ADR-049).
+  continues_session_id uuid references sessions(id),
+  -- Recta de la hora (ADR-056): utc = clock_t0_utc + (t_device - clock_t0_device) * (1 + clock_drift_ppm/1e6).
+  -- t_device es la cuenta en us de la cintura. La ajusta el host intercambiando la hora con la
+  -- cintura durante la sesion; aca queda la recta final, para poder rehacer la conversion.
+  clock_t0_device bigint,
+  clock_t0_utc timestamptz,
+  clock_drift_ppm double precision,
+  clock_fit_rmse_us real,               -- residuo del ajuste: calidad de la conversion
   notes text,
   -- Ancla de las FK compuestas de las series (ADR-046): una fila no puede declarar el paciente
   -- ni la fecha de otra sesion.
@@ -90,16 +103,21 @@ create table patient_access (
 -- ============================================================
 -- Crudo (referenciado a object storage)
 -- ============================================================
+-- Un archivo Parquet por sesion, equipo y tramo de unos minutos (ADR-055), en
+-- raw/{patient_id}/{session_id}/{equipo}/{tramo}.parquet. Volver a subir un tramo no duplica:
+-- (session_id, device_id, chunk_index) es unica.
 create table raw_blobs (
   id uuid primary key default gen_random_uuid(),
   session_id uuid not null references sessions(id),
-  device_id uuid references devices(id),
+  device_id uuid not null references devices(id),
+  chunk_index int not null,             -- numero de tramo dentro de la sesion y el equipo
   storage_url text,                     -- object storage (Parquet)
   format text default 'parquet',
   start_time timestamptz,
   end_time timestamptz,
   n_samples bigint,
-  checksum text
+  checksum text,                        -- SHA-256 del archivo
+  constraint raw_blobs_chunk_uq unique (session_id, device_id, chunk_index)
 );
 
 -- ============================================================
@@ -117,8 +135,11 @@ create table models (
   parent_version int,
   feature_set_version text,
   artifact_url text,                         -- object storage
-  artifact_format text,                      -- 'tflite_int8','npz','json'
-  checksum text,
+  -- Todo artefacto es el sobre de ADR-053: cabecera (tipo, model_id, patient_id, version,
+  -- feature_set_version) + contenido segun el algo + SHA-256 al final. Un formato nuevo entra
+  -- por migracion.
+  artifact_format text check (artifact_format in ('envelope_v1')),
+  checksum text,                             -- SHA-256 del sobre: la misma huella en registry, OTA y flash
   metrics jsonb,                             -- {auc, threshold, ...}
   status text check (status in ('active','shadow','archived','rolled_back')),
   created_at timestamptz default now(),
@@ -145,7 +166,7 @@ create table firmware_images (
   version text,
   target_role text check (target_role in ('insole','waist')),
   storage_url text,
-  checksum text,
+  checksum text,                        -- SHA-256 de la imagen; la anuncia y verifica el OTA (ADR-052)
   created_at timestamptz default now()
 );
 
@@ -242,7 +263,8 @@ create table gait_events (
   foot                text        not null check (foot in ('left','right')),
   stride_seq          int         not null,
   type                text        not null check (type in ('IC','TO','MS')),
-  time                timestamptz not null,                -- instante del evento
+  time                timestamptz not null,                -- instante del evento, en UTC (ADR-056)
+  t_device            bigint      not null,                -- el mismo instante en la cuenta de la cintura (us): ancla exacta con el crudo
   confidence          real,
   flags               text[]      not null default '{}',   -- p. ej. 'no_crossover' en MS (ADR-038)
   primary key (session_id, foot, stride_seq, type, session_started_at),

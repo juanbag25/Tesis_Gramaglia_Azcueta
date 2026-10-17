@@ -169,7 +169,7 @@ Con el FSR arriba, la tensión del nodo **sube con la fuerza** (el FSR baja su r
 | # | Pendiente | Ref |
 |---|---|---|
 | A | **Corte por baja tensión:** leer VSYS por el ADC y apagar ordenadamente antes de que actúe el PCM (un corte duro puede corromper la flash). **Gana importancia sin dormant:** un equipo que quede encendido consume hasta agotar la celda. | ADR-035 |
-| B | **Heartbeat cintura→plantillas** para **salud del enlace** (detectar una plantilla caída o sin batería). No es gestión de energía. | ADR-035 |
+| B | **Heartbeat cintura→plantillas** para **salud del enlace** (detectar una plantilla caída o sin batería). No es gestión de energía. **Necesario:** en la mínima, perder una plantilla cierra la sesión (ADR-049). | ADR-035; ADR-049 |
 
 *(Quedaron **sin efecto** con la revisión de ADR-035: auto-sleep dependiente del modo, indicador de encendido por pulso del motor y secuencia de wake cintura↔plantillas. Se reactivarían si en la máxima se adopta wake-on-motion o WiFi power-save.)*
 

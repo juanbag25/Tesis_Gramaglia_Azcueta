@@ -24,7 +24,7 @@ El catálogo nominal es de **47 features en bloques A–I** (A espacio-temporale
 
 ### 1.1 Modularidad de features (CP-12 → ADR-021)
 
-Todas las features **disponibles**, pero se **prenden/apagan** según el análisis de datos, sin reescribir firmware ni worker y manteniendo paridad. **Mecanismo:** catálogo declarativo (JSON/TOML en `shared/`: `id/bloque/scope/inputs/deps/params/tolerancia/activo` + `feature_set_version`) + **set activo** versionado; prender/apagar = cambiar el set activo (config/OTA), no el código. **Codegen y C-único-bindeado descartados.** La *selección data-driven* de qué se prende es el backlog #12. **Detalle → satélite Parte B.**
+Todas las features **disponibles**, pero se **prenden/apagan** según el análisis de datos, sin reescribir firmware ni worker y manteniendo paridad. **Mecanismo:** catálogo declarativo (`features.toml` en `shared/` — ADR-054: `id/bloque/scope/inputs/deps/params/tolerancia/activo` + `feature_set_version`; el firmware compila una tabla de C generada desde ese archivo) + **set activo** versionado; prender/apagar = cambiar el set activo (config/OTA), no el código. **Codegen y C-único-bindeado descartados.** La *selección data-driven* de qué se prende es el backlog #12. **Detalle → satélite Parte B.**
 
 ---
 
@@ -121,7 +121,7 @@ Los algoritmos se evalúan **de a poco, escalando sólo si el anterior no alcanz
 ---
 
 ## ADRs relevantes
-ADR-005 (features distribuidas + fases de captura), ADR-018 (paridad / anti skew), ADR-021 (catálogo declarativo + set activo), ADR-023 (set activo 2-FSR), ADR-011 rev (taxonomía/ruteo model-agnostic), ADR-013 (inferencia RT en hub/host), ADR-009 (backend de reentrenamiento), ADR-022 (framework de entrenamiento + cuantización int8), ADR-017 (módulo IMU / calibración), **ADR-042** (crudo post-AHRS: qué recibe el worker), **ADR-043 rev** (ciclo de vida, adaptación conmutable, autoridad del modelo).
+ADR-005 (features distribuidas + fases de captura), ADR-018 (paridad / anti skew), ADR-021 (catálogo declarativo + set activo), ADR-023 (set activo 2-FSR), ADR-011 rev (taxonomía/ruteo model-agnostic), ADR-013 (inferencia RT en hub/host), ADR-009 (backend de reentrenamiento), ADR-022 (framework de entrenamiento + cuantización int8), ADR-017 (módulo IMU / calibración), **ADR-042** (crudo post-AHRS: qué recibe el worker), **ADR-043 rev** (ciclo de vida, adaptación conmutable, autoridad del modelo), **ADR-053** (sobre de los artefactos), **ADR-054** (catálogo en TOML), **ADR-055** (crudo en Parquet: qué lee el worker).
 
 ## Stack (resumen; detalle en `../stack_tecnologico.md`)
 numpy, scipy, **scikit-learn** (Isolation Forest, ajuste Mahalanobis), **TensorFlow/Keras** (autoencoders) + conversor **TFLite/LiteRT** (PTQ int8, representative dataset — ADR-022), pandas. *(`imufusion` ya no hace falta: el crudo llega post-AHRS y el worker no re-procesa IMU — ADR-042.)* El runtime on-device es de la Vista 2 (TFLite Micro + CMSIS-NN / CMSIS-DSP).

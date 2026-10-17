@@ -60,6 +60,15 @@
 | 045 | Migraciones versionadas (CP-23) | **CLI de Supabase** en `src/db/supabase/`; cada cambio es una migración nueva que **aplica CI desde `master`**, después de probarla en una base efímera (pgTAP). `schema.sql` pasa a ser un **snapshot generado** (sin las particiones hijas). Una migración aplicada no se edita; la base remota no se toca a mano. Revisa ADR-037. Cierra CP-23 | aceptada |
 | 046 | Identidad de las series (CP-29) | **La zancada es una entidad** (`strides`) numerada en el borde: `stride_seq` (plantilla, por pie) y `cycle_seq` (cintura, ciclo bilateral), desde `arm()`. Eventos, vectores y scores se identifican con esos números y se vinculan con **FK reales**; toda fila lleva `patient_id` e inicio de sesión garantizados por una FK a `sessions`. **Ingesta idempotente** (upsert). Suma `flags`. Cierra CP-29 | aceptada |
 | 047 | Exposición por la Data API | **Grants explícitos** por rol (`anon`: nada; `authenticated`: no borra; `service_role`: todo), **RLS en todas las tablas expuestas**, particiones sin grants y con RLS, funciones de las políticas en `private` y **suite pgTAP en CI**. Supabase dejó de exponer tablas nuevas por defecto (30/05/2026 y 30/10/2026). Extiende ADR-032 | aceptada |
+| 048 | Crudo de la cintura en las capturas (parte de CP-33) | En las capturas exploratoria y operativa la cintura **graba y sube su propio crudo** (definición de ADR-042: aceleración lineal sin gravedad + giro + ángulos, 100 Hz), con el paquete de 39 B y los FSR en cero; no en edge. Sin él, el bloque I no se podría explorar con ningún dataset. Caudal BLE en captura: ~11,7 KB/s | aceptada |
+| 049 | La sesión ante cortes y reinicios (CP-30) | **Mínima:** un corte (BLE, WiFi de una plantilla) o un reinicio **cierra la sesión** con `end_reason`; para seguir se abre otra. **Máxima (diferido):** la cintura sostiene la sesión, guarda y reenvía; un reinicio abre una sesión de continuación. El host cierra las sesiones huérfanas. Suma `end_reason` y `continues_session_id` | aceptada |
+| 050 | Mensajes entre programas (CP-34 a) | **Protocol Buffers:** un `mensajes.proto` genera el C (nanopb, sin memoria dinámica) y el Python; reglas de evolución (números de campo fijos, campos nuevos opcionales); los mensajes por zancada de las plantillas van por TCP; test de ida y vuelta en CI. La muestra sigue en 39 B fijos | aceptada |
+| 051 | Enlace BLE (CP-34 b) | **Servicio propio con una característica por canal** (`stream`, `zancadas`, `estado`, `control`, `ota`) + *Battery* y *Device Information*; muestras de a 4 por notificación; control y estado con prioridad; el contrato es el `.gatt` de BTstack | aceptada |
+| 052 | Protocolo de OTA (CP-34 c) | **Propio, de cinco pasos** (aviso, pedazos con offset, acuses con retoma, SHA-256 de lo escrito, conmutación), igual para modelos y firmware; el firmware usa las **particiones A/B del bootrom** del RP2350 (sin bootloader propio); *store-and-forward* a las plantillas; prueba obligatoria antes de sellar. Precisa ADR-012 | aceptada |
+| 053 | Formato de los artefactos (CP-34 d) | **Sobre común:** cabecera fija (tipo, `model_id`, `patient_id`, versión, `feature_set_version`) + contenido por tipo + SHA-256 al final; la misma huella en el registry, el OTA y la flash; `artifact_format = envelope_v1` | aceptada |
+| 054 | Formato del catálogo (CP-34 e) | **TOML** en `shared/` + tabla de C generada; el set activo viaja como lista de ids en `provision()`. Precisa ADR-021 | aceptada |
+| 055 | Crudo en Parquet (CP-34 f) | **Un archivo por sesión, equipo y tramo** de minutos; columnas = el paquete tal cual (enteros) + escalas en los metadatos; zstd; ruta por paciente y sesión; `raw_blobs` idempotente por tramo | aceptada |
+| 056 | Base de tiempo (CP-34 g) | `t_device` = cuenta de la cintura; **el host la traduce a UTC** con una recta (desfase + deriva) ajustada cada ~10 s; guarda la recta en `sessions` y conserva `t_device` en el crudo y en `gait_events`. No es CP-28 | aceptada |
 
 ---
 
@@ -130,6 +139,8 @@
 
 **Consecuencias.** El nº de secuencia + timestamp por muestra habilita la sincronización (ADR-004) y la detección de pérdidas.
 
+*(Precisado el 2026-10-17: el formato de los mensajes lo fija ADR-050 y la organización del enlace BLE, ADR-051. Los mensajes por zancada de las plantillas —eventos y vectores— van por el canal confiable, porque son la identidad de la zancada.)*
+
 ---
 
 ## ADR-004 — Sincronización temporal
@@ -170,6 +181,22 @@
 - *TPSN* — ACM 10.1145/958491.958508.
 - *Synchronized multi-unit IMU platform* — MDPI Electronics 9:1118.
 - *Moticon SDKs & sync* — moticon.com/solutions-integrations.
+
+**Nota (2026-10-17) — precisión de la sincronización: CP-28, diferida a la máxima.** El backbone sigue siendo el único mecanismo de sincronización y corre siempre. Lo que quedó pendiente es el **número** —cuánto error se tolera— y la **prueba de banco** que demuestra que se cumple: Juan los difirió a la máxima, y en la mínima se asume que el error no afecta las features (riesgo aceptado, registrado en CP-28). Mientras tanto, la verificación de la fase 6 (ADR-043) comprueba que la sincronización esté activa, sin umbral numérico, y el canal de estado sigue publicando el error estimado, para que haya datos cuando se retome. Traducir la hora del equipo a la hora real es otro problema: ADR-056.
+
+**Apéndice conceptual (en llano) — el error de sincronización y cómo se mediría (CP-28).** *(Agregado el 2026-10-17, con la explicación que se dio al diferir CP-28.)*
+- **El beacon mantiene sincronizadas las plantillas todo el tiempo, solo.** Nadie tiene que hacer nada. CP-28 no agrega otra sincronización: es el número que responde "¿qué tan sincronizadas alcanza?", más la prueba que demuestra que el beacon lo cumple.
+- **"Sincronizadas" no es sí o no.** Dos personas ponen en hora sus relojes por teléfono: una dice "¡ya, son las 14:00!" y la otra ajusta. La voz tarda un poco en llegar, así que quedan casi iguales, no exactamente iguales, y después los relojes se van corriendo. Si repiten la llamada y promedian, el error baja mucho, pero no llega a cero. Con el beacon pasa lo mismo:
+  - cada beacon tarda en llegar por WiFi un tiempo distinto (la radio puede estar ocupada o reintentar), y la plantilla no sabe cuánto tardó cada uno;
+  - entre beacons los relojes siguen corriéndose: los cristales no son idénticos y el ritmo cambia con la temperatura (el pie calienta la plantilla);
+  - la recta promedia muchos beacons y cancela casi todo eso, pero no todo.
+- **Para dimensionar:** sin beacon, con ~0,2 ms por minuto, en una hora los pies se desfasarían ~12 ms, más que la distancia entre dos muestras (10 ms).
+- **Por qué importa el número.** Las features bilaterales restan tiempos de un pie y del otro. El *double support* dura ~100-200 ms por paso y se calcula como "cuándo apoya un pie" menos "cuándo despega el otro". Con 10 ms de error sale un 5-10 % mal, el tamaño de las asimetrías que se buscan; con 1 ms, un 0,5-1 %, menos de lo que varía naturalmente de un paso a otro.
+- **Cuándo se aplicaría: en tres momentos, y sólo el primero lo hace una persona.**
+  1. *Una vez, en banco* (y de nuevo sólo si cambia el código de sincronización). Es la única medición del error real: un cable lleva un pulso eléctrico a una pata de cada plantilla, por ejemplo uno por segundo; cada plantilla anota la hora de su reloj sincronizado al verlo, y la diferencia entre las dos anotaciones es el error. Se deja correr ~2 h para que entren el corrimiento y el calentamiento (~7.200 mediciones). Es también un resultado de la tesis. En una sesión real no se puede hacer: no hay un cable entre los pies del paciente.
+  2. *En cada sesión, automático, antes de arrancar* (fase 6). Sin cable no se mide el error real, pero se estima por lo desparramados que caen los beacons alrededor de la recta. La prueba de banco sirve también para comprobar que ese estimado dice la verdad. Si supera el número, la sesión no arranca.
+  3. *Durante la sesión, automático.* Si en algún tramo el estimado se pasa (por interferencia, por ejemplo), esos datos se marcan y el entrenamiento puede dejarlos afuera. La sesión no se corta.
+- **Opciones planteadas para cuando se retome:** **≤ 1 ms** (el 95 % de las mediciones de 2 h bajo 1 ms y ninguna sobre 2 ms; la recomendada: el error queda invisible en los datos); **≤ 5 ms** (fácil de cumplir, pero es el 2,5-5 % del double support, del orden de lo que se busca); **≤ 0,1 ms** (exige marcar la hora en el hardware de la radio, que el Pico no deja usar, y a 100 Hz no mejora nada).
 
 ---
 
@@ -259,6 +286,8 @@ O sea: "el micro calcula sus features por-pie" aplica a **operativa y edge**, no
 
 **Justificación.** Balancea trazabilidad (donde importa) con costo/privacidad (en uso diario). Se apoya en la señal de drift que ya se calcula.
 
+*(Formato y organización del crudo en storage: ADR-055, 2026-10-17.)*
+
 ---
 
 ## ADR-009 — Backend de reentrenamiento (máxima)
@@ -334,6 +363,8 @@ Campos del registry: `inference_target ∈ {hub, host, worker}`, `retrain_target
 **Decisión.** **OTA completo (pesos + firmware) con A/B desde el inicio**, mitigando el riesgo con A/B, checksum, watchdog y modo de recuperación.
 
 **Justificación.** El uso desatendido en casa (máxima) hace que actualizar firmware por aire sea muy valioso; construirlo desde el inicio evita retrofits riesgosos. El respaldo de todo modelo en la base (registry + artifact) garantiza recuperación ante pérdida/rotura del micro.
+
+*(Precisado el 2026-10-17 por ADR-052 y ADR-053: el "bootloader A/B" es el del bootrom del RP2350, sin bootloader propio; el protocolo de transferencia y el formato de los artefactos quedan fijados ahí.)*
 
 ---
 
@@ -590,6 +621,8 @@ Campos del registry: `inference_target ∈ {hub, host, worker}`, `retrain_target
 **Justificación.** Cada lado queda idiomático y óptimo; encaja con el fasado (exploración Python-first) y con ADR-018 pto 2 (el training usa las features del micro → la paridad es un guard, no una dependencia dura); evita la sobre-ingeniería de un codegen o de un binding C↔Python para una tesis.
 
 **Consecuencias.** **Refina ADR-018** (su punto 4: se **descartan** el C-compartido y el codegen como escalación; quedan disciplina numérica + tolerancias + monitoreo round-trip). **Resuelve CP-12** (mecanismo de modularidad: catálogo declarativo + set activo versionado; la *selección* data-driven de qué se prende sigue en el backlog #12). Ubicación: `src/firmware/shared/` (catálogo + definición en C) + espejo en el worker (Python) + tests de paridad en CI. Detalle: **Vista 3, Parte B**.
+
+*(Formato fijado el 2026-10-17 por ADR-054: TOML, con una tabla de C generada para el firmware.)*
 
 **Fuentes.**
 - Golden/round-trip parity tests con tolerancia + eliminación de train/serve skew — dswok (train/serve skew); Nubank (guía); Confluent (eliminación).
@@ -1422,6 +1455,8 @@ La secuencia de 8 estados de arriba se detalla acá; el diagrama vive en `../arq
 | 7 | Sesión | Fila en `sessions`; grabación/scoring según el modo; adaptación en RAM si está habilitada | la sesión |
 | 8 | Cierre | Se sella `ended_at`; si hubo adaptación el micro sube el estado final y el host lo versiona (N+1). **El flash no se toca** | seg |
 
+*(Nota 2026-10-17: el presupuesto de sincronización de la fase 6 —CP-28— quedó diferido a la máxima; mientras tanto, la fase 6 verifica que la sincronización esté activa, sin umbral numérico.)*
+
 **Autoridad del modelo: la DB manda.** Lo que se flashea es **siempre** la última versión de la base; no hay reconciliación. El flash es una **copia de trabajo descartable** y la DB es la única fuente de verdad del modelo — mismo criterio que ADR-037 para el esquema y ADR-039 para las decisiones.
 
 *Costo aceptado:* si la subida del cierre falla, **esa sesión pierde su adaptación**; la siguiente flashea la versión anterior y sigue desde ahí. La pérdida está acotada a una sesión y no queda ambigüedad sobre cuál versión es la buena. El caso es angosto —la subida ocurre al cerrar, cuando el host está conectado por definición— y los escenarios reales (batería agotada, cuelgue) pierden la sesión de todos modos.
@@ -1554,7 +1589,7 @@ Al bajar el diseño aparecieron dos cosas más: SPEC-01 emite eventos **con `fla
 **Consecuencias.** **Cierra CP-29.** Cambian: `src/db/schema.sql` (tabla nueva `strides`; `gait_events`, `feature_vectors`, `anomaly_scores` y `anomaly_raw_snippets` rediseñadas), el ER, la Vista 4 (§1.1, §1.2 y la nueva §1.6), el maestro §11, **SPEC-01** (el evento sale con `stride_seq`), **SPEC-02** (definición de la zancada y su número), **SPEC-05** (buffer indexado por `stride_seq`; `cycle_seq` en la cintura), **SPEC-11** (`arm()` reinicia los contadores), la Vista 2 §3 y la Vista 1 §4 (los mensajes llevan los números).
 
 Dos efectos a tener presentes:
-- **CP-30:** si después de un reset se retoma **la misma sesión**, los contadores no pueden volver a cero —pisarían zancadas ya guardadas—: `arm()` tendría que recibir el próximo número. Queda anotado en CP-30.
+- **CP-30:** si después de un reset se retoma **la misma sesión**, los contadores no pueden volver a cero —pisarían zancadas ya guardadas—: `arm()` tendría que recibir el próximo número. Queda anotado en CP-30. *(Resuelto por ADR-049: tras un reinicio nunca se retoma la misma sesión, siempre se abre otra, así que la restricción no aplica.)*
 - **Modelos globales:** con `anomaly_scores.patient_id` obligatorio, la FK `(model_id, patient_id) → models (id, patient_id)` de ADR-043 se aplica siempre, así que **un score persistido es siempre de un modelo del mismo paciente**; un modelo global (`patient_id` nulo) no puede producirlos. Es coherente con ADR-000 (personalización primero), pero corrige lo que decía ADR-043: que con modelos globales la FK no se aplicaba. Si algún día un modelo poblacional justificado tuviera que dejar scores, se revisa esta FK.
 
 **Apéndice conceptual (en llano).** Funciona como las facturas de un comercio: el número lo imprime el comercio en el momento de la venta, no el banco cuando la deposita. Si el depósito falla y se reintenta, la factura 1234 sigue siendo la 1234, y el banco se da cuenta de que ya la tiene. Acá el comercio es la plantilla (numera zancadas) o la cintura (numera ciclos), y el banco es la base: si el host reenvía un lote después de un corte de BLE, cada fila llega con su número y la base la reconoce en lugar de duplicarla. Eso es la *idempotencia*. Una *FK* (clave foránea) es la base negándose a guardar una fila huérfana: un vector de features que dice ser de la zancada 57 del pie izquierdo no entra si esa zancada no existe, y un snippet de crudo no entra si el score que lo pidió no está.
@@ -1606,6 +1641,349 @@ Dos efectos a tener presentes:
 **Apéndice conceptual (en llano).** Hay dos puertas. La primera es el **grant**: dice si un rol puede siquiera entrar a una tabla. La segunda es la **RLS**: una vez adentro, la base le muestra a cada usuario sólo las filas de sus pacientes. Supabase solía dejar la primera puerta abierta para toda tabla nueva y confiar en la segunda; ahora la deja cerrada y hay que abrirla a mano, tabla por tabla, que es lo que hace la matriz. Las particiones son el caso fino: cada mes es una tabla aparte, y si alguien pudiera abrir la del mes directamente, la segunda puerta —que está puesta en la tabla madre— no correría. Por eso las particiones quedan sin grant y con RLS propia, y un test lo verifica en cada push.
 
 **Referencia.** ADR-032 (RLS por paciente), ADR-033 (UI y dashboard), ADR-044 (particiones), ADR-045 (CI), ADR-046 (integridad); CP-18; Vista 4 §2. Fuentes: [Supabase — cambio en la exposición de tablas](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically) · [Supabase — Hardening the Data API](https://supabase.com/docs/guides/api/hardening-data-api) · [Supabase — Row Level Security](https://supabase.com/docs/guides/database/postgres/row-level-security) · [PostgreSQL — herencia](https://www.postgresql.org/docs/current/ddl-inherit.html).
+
+---
+
+## ADR-048 — El crudo de la cintura se graba en las capturas (resuelve una parte de CP-33)
+**Estado:** aceptada (2026-10-17) — **Decisión: en las capturas exploratoria y operativa, la cintura graba y sube su propio crudo, con la misma definición de ADR-042 —aceleración lineal xyz sin gravedad, giro xyz y ángulos (pitch/roll/yaw), a 100 Hz— y el mismo formato de paquete que las plantillas, con los cuatro slots de FSR en cero. En edge no se graba crudo continuo de la cintura.**
+
+**Contexto.** La cintura tiene su propio IMU en la zona lumbar (~L4-L5), que mide el movimiento del tronco. Lo lee a 100 Hz y lo procesa igual que las plantillas (SPEC-04 + AHRS) para usarlo adentro: el gesto de pairing (ADR-028) y, a futuro, el bloque I (SPEC-10). Pero **ningún documento decía que ese crudo se grabe**: el "crudo continuo" de ADR-005 rev c era, implícitamente, el de las plantillas. Lo detectó el relevamiento previo a la implementación (CP-33).
+
+El hueco importa por tres motivos: el bloque I está apagado (ADR-040) hasta tomar tres decisiones metodológicas "mirando espectros reales", y esos espectros salen justamente del crudo del tronco; el crudo **no se reconstruye después** (ADR-042) y volver a capturar pacientes es lo más caro del proyecto; y según ADR-030 el bloque I es la principal justificación de que la cintura exista como nodo.
+
+**Qué es "crudo" acá.** Lo mismo que en ADR-042: no es la salida tal cual del sensor, sino la señal con el procesamiento básico ya aplicado en el micro —calibración y AHRS, que saca la gravedad y estima la orientación— y **ningún otro**: aceleración lineal xyz, giro xyz y los ángulos, a 100 Hz.
+
+**Opciones evaluadas.**
+- **A — Grabarlo en las capturas, no en edge (elegida).** *Pros:* el bloque I se puede explorar con los datos que se van a tomar de todas formas; mismo formato de paquete y mismo parser. *Contras:* +50 % de caudal BLE durante las capturas y +50 % de crudo en storage.
+- **B — No grabarlo** (lo implícito hasta hoy). *Pros:* menos caudal y storage. *Contras:* el bloque I no se podría explorar con ningún dataset ya capturado.
+- **C — Una bandera por sesión.** *Pros:* flexibilidad si el caudal aprieta. *Contras:* un parámetro más que olvidar, y lo que no se grabó no vuelve.
+
+**Decisión.**
+1. En las capturas **exploratoria y operativa**, la cintura emite su propio stream de crudo: la definición de ADR-042, a 100 Hz, con el **paquete de 39 B** de las plantillas (Vista 1 §4), los cuatro slots de FSR en cero y `device_id` = la cintura.
+2. En **edge** no se graba crudo continuo de la cintura, igual que el de las plantillas (ADR-008).
+3. **Caudal:** tres streams de ~3,9 KB/s ≈ **11,7 KB/s** por BLE durante las capturas (contra 7,8 KB/s con dos). Hay que validarlo junto con la coexistencia WiFi-AP + BLE, que ya es un riesgo registrado (maestro §15).
+4. **Storage:** el crudo de captura crece un 50 %; se guarda como un dispositivo más (un archivo por dispositivo y por tramo — ADR-055).
+
+**Justificación.** El dato del tronco es irrecuperable si no se graba en el momento, y es la materia prima de la feature más discriminativa de la evidencia (IHR ML, ADR-040). El costo —un stream más, en un formato que ya existe— es chico al lado de volver a capturar.
+
+**Consecuencias.** **Resuelve la parte de la cintura de CP-33**; el protocolo de captura sigue abierto. Cambian: la Vista 1 (§1 canales de la cintura, §3.2 caudal, §4 quién emite muestras), la Vista 2 (§1 y §7), SPEC-10 (los espectros para decidir el bloque I salen de este crudo), la Vista 4 §1.4 y el maestro (caudal).
+
+**Referencia.** ADR-005 rev c (fases de captura), ADR-008 (retención), ADR-030 (por qué existe la cintura), ADR-040 y SPEC-10 (bloque I), ADR-042 (qué es crudo), ADR-002/003 (BLE); CP-33, CP-34.
+
+---
+
+## ADR-049 — La sesión ante cortes y reinicios: en la mínima el corte la cierra; en la máxima la cintura la sostiene (diferido) — resuelve CP-30
+**Estado:** aceptada (2026-10-17) — **Decisión: en la mínima, un corte de enlace con los dispositivos (BLE cintura↔host o WiFi plantilla↔cintura) o el reinicio de un micro cierra la sesión, con el motivo registrado; para seguir se abre una sesión nueva. En la máxima —diferido: se implementa más adelante— la cintura sostiene la sesión ante cortes de enlace y un reinicio abre una sesión de continuación. Una sesión que nadie cerró la cierra el host.**
+
+**Contexto.** ADR-043 definió el camino feliz de la sesión; CP-30 preguntaba por los bordes: (1) se corta el BLE entre la cintura y el host; (2) se corta el WiFi de una plantilla; (3) un micro se reinicia (watchdog o baja tensión); (4) se apaga todo sin cerrar y la sesión queda abierta para siempre en la base. Lo que ya estaba dicho: la inferencia y el feedback corren en la cintura (ADR-013); tras un reinicio el micro vuelve a reposo y no se re-arma solo (SPEC-11); y ADR-046 sumó una restricción —si se retomara la misma sesión después de un reinicio, los contadores de zancadas no podrían volver a cero—. Los cortes de **internet** entre el host y Supabase no entran acá: ya los cubre el buffer local del host (Vista 4 §4).
+
+**Opciones evaluadas.**
+- **A — Cualquier corte cierra la sesión.** *Pros:* semántica simplísima; datasets limpios, sin huecos que reconstruir; nunca chocan los contadores. *Contras:* si el host se aleja, la sesión se corta y hay que abrir otra.
+- **B — La cintura sostiene la sesión ante cortes de enlace; un reinicio la cierra y abre una de continuación.** *Pros:* el uso diario sigue aunque el celular se aleje (scoring y feedback corren en la cintura); los datos esperan en un buffer y se reenvían sin duplicar (ADR-046). *Contras:* más firmware (buffer, reenvío, marcado de huecos).
+- **C — La cintura sostiene todo, incluso un reinicio.** *Pros:* máxima continuidad. *Contras:* hay que guardar en flash la sesión, el modo y la calibración, y numerar zancadas con una "época de arranque"; lo más complejo de probar.
+
+**Decisión — A en la mínima, B en la máxima (diferido).**
+
+1. **Mínima (opción A).**
+   - **Qué cuenta como corte:** la desconexión BLE entre cintura y host (la detecta la capa de enlace al vencer su *supervision timeout*); la pérdida de una plantilla (vence el heartbeat cintura→plantillas — pendiente B de `esquema_alimentacion.md`, que pasa a ser necesario); el reinicio de un micro (se ve en el *uptime* del canal de estado). Perder paquetes sueltos **no** es un corte: se tolera y se cuenta con el `seq` (ADR-003). Los tiempos de espera son parámetros a fijar al implementar.
+   - **Al cortarse:** la cintura deja de scorear y de dar feedback y vuelve a reposo (como tras un reinicio); el host cierra la sesión con `ended_at` = último dato recibido y `end_reason` ∈ {`link_lost`, `insole_lost`, `reboot`}. Lo recibido se conserva; lo que estaba en viaje se pierde (en la mínima no hay reenvío).
+   - **Para seguir:** se abre una sesión nueva por el pipeline de ADR-043. El gate térmico no vuelve a cerrarse si nadie se reinició; la calibración se repite. La sesión nueva puede apuntar a la anterior con `continues_session_id`.
+   - **Contadores:** arrancan de cero en la sesión nueva —es otro `session_id`—, así que no chocan (ADR-046).
+2. **Cierre sucio (los dos horizontes).** Una sesión sin `ended_at` de la que el host ya no recibe datos la cierra el host: al detectar el corte o, si el que se cayó fue el host, en su próximo arranque. `ended_at` = último dato en la base; `end_reason` = `unclean`. La adaptación de esa sesión se pierde (costo ya aceptado en ADR-043 rev).
+3. **Máxima (opción B) — diferido: se documenta ahora y se implementa más adelante.**
+   - *Corte BLE:* la sesión sigue en la cintura, con scoring y feedback. La cintura guarda lo que no puede mandar —los datos por zancada (~0,5 KB/s) entran del orden de media hora en el flash libre; el crudo de captura, un par de minutos— y lo reenvía cuando vuelve el host. Los reenvíos no duplican (ADR-046); lo que no entró queda marcado como hueco.
+   - *Corte de una plantilla:* la sesión sigue; las features bilaterales y el feedback se pausan, y queda marcado.
+   - *Reinicio:* la sesión se cierra (`end_reason` = `reboot`) y se abre una de continuación (`continues_session_id`); sólo se recalibra el micro que se reinició. Límite: si la cintura se reinicia sin el celular cerca, espera en reposo hasta que vuelva.
+   - El comportamiento se elegirá **por sesión** (un parámetro de `provision`), no por tipo de host: el micro sigue sin saber con quién habla (ADR-034).
+4. **Esquema:** `sessions.end_reason` (`normal`, `link_lost`, `insole_lost`, `reboot`, `unclean`) y `sessions.continues_session_id` (FK a `sessions`).
+
+**Justificación.** La mínima es un entorno controlado, con la laptop al lado (ADR-033): un corte es raro, y cerrar la sesión limpio deja datasets sin huecos que reconstruir. La complejidad de B —buffers, reenvío, marcado de huecos— sólo se paga en el uso diario, donde el celular se aleja por diseño. Documentar B ahora asegura que lo de la mínima no cierre esa puerta: identidades idempotentes (ADR-046), `end_reason` y `continues_session_id` ya sirven para los dos.
+
+**Consecuencias.** **Cierra CP-30.** La restricción de contadores que ADR-046 había anotado deja de aplicar: nunca se retoma la misma sesión tras un reinicio, siempre se abre otra. Cambian: la Vista 4 §4.1 (bordes de la sesión) y §1.6, SPEC-11 (comportamiento ante un corte y regla 3), `src/db/schema.sql` (dos columnas), el ER y `esquema_alimentacion.md` (el heartbeat pasa a ser necesario).
+
+**Referencia.** ADR-043 rev (ciclo de vida), ADR-046 (identidades e idempotencia), ADR-013 (inferencia en la cintura), ADR-033 (la mínima con laptop), ADR-034 (el micro no conoce al host), ADR-035 (heartbeat), ADR-003 (`seq` y pérdidas); SPEC-11; CP-30.
+
+---
+
+## ADR-050 — Mensajes entre programas: Protocol Buffers para todo, salvo la muestra (resuelve CP-34 a)
+**Estado:** aceptada (2026-10-17) — **Decisión: todos los mensajes entre programas, salvo la muestra de 100 Hz, se describen una sola vez en un archivo `mensajes.proto` (Protocol Buffers), del que se genera el código de C (nanopb, sin memoria dinámica) y el de Python. La muestra conserva su formato fijo de 39 B (Vista 1 §4).**
+
+**Contexto.** CP-34 registró que estaba definido *qué* viaja entre firmware, host, worker y base, pero no *cómo*. Este ADR y los seis siguientes (051 a 056) resuelven sus siete partes; Juan confirmó el 2026-10-17 las siete opciones tal como se recomendaron. Esta primera parte es el formato de los mensajes. Además de la muestra viajan los eventos de marcha con su `stride_seq` (SPEC-01), los vectores de features por pie y bilaterales, los scores (ADR-046), los comandos de SPEC-11 y sus respuestas, el canal de estado (Vista 4 §4.2), el beacon de sincronización (ADR-004), el intercambio de hora (ADR-056) y los mensajes del OTA (ADR-052).
+
+Cada mensaje tiene varios campos, y los escriben programas en dos lenguajes —C en los micros, Python en el host y el worker— que programan dos personas en paralelo. Además, los mensajes tienen que poder cambiar: si se agrega un campo, un equipo con firmware viejo, por ejemplo una plantilla ya sellada, no puede romperse.
+
+**Opciones evaluadas.**
+- **A — Structs binarios a mano**, como la muestra. *Pros:* cero dependencias, tamaño mínimo. *Contras:* cada mensaje se programa dos veces (C para escribir, Python para leer) y, si las dos copias difieren en un byte, nada avisa; el versionado es manual.
+- **B — Protocol Buffers (elegida).** Un archivo `.proto` describe cada mensaje y una herramienta genera el código de C (nanopb, la implementación para micros) y el de Python (la librería oficial). *Pros:* una sola fuente; los campos nuevos no rompen a los lectores viejos; es el estándar de la industria para firmware↔app (Meshtastic, por ejemplo, define así todos los mensajes entre su firmware y sus apps, por BLE, serie y TCP). *Contras:* un paso de generación en el build y una dependencia más de cada lado.
+- **C — CBOR** (binario tipo JSON, sin esquema). *Pros:* flexible. *Contras:* el formulario vuelve a vivir sólo en un documento; nada en el código lo verifica.
+
+**Decisión.**
+1. **Fuente única:** `mensajes.proto`, en el código compartido (`src/firmware/shared/`, donde ADR-021 ya pone el catálogo); el host y el worker lo toman de ahí. El código generado **no se edita a mano**: se regenera.
+2. **C con nanopb, sin memoria dinámica.** Cada campo de largo variable declara su máximo (`max_size`, `max_count`), así todo mensaje tiene tamaño acotado y vive en memoria estática, como pide el firmware bare-metal (ADR-025).
+3. **Python con la librería oficial de Protocol Buffers**, en el host y en el worker.
+4. **Reglas de evolución** (el contrato del contrato):
+   - un número de campo no se cambia ni se reutiliza; si se elimina un campo, su número queda reservado;
+   - un campo nuevo es opcional: el lector viejo lo saltea y el nuevo, si no viene, usa el valor por defecto;
+   - si cambia el *significado* de un mensaje, es un mensaje nuevo, no el viejo con otro sentido.
+5. **Un mensaje raíz por canal.** Cada canal lleva un mensaje raíz con un `oneof` que dice qué tipo viaja, así el receptor sabe qué está leyendo. En TCP cada mensaje va precedido por su largo; en UDP y en BLE va un mensaje por paquete (la fragmentación de BLE la fija ADR-051).
+6. **Qué canal lleva cada mensaje.** Los mensajes por zancada de las plantillas van por el canal confiable: son la identidad de la zancada (ADR-046) y no se pueden perder.
+
+   | Mensaje | Plantillas ↔ cintura (WiFi) | Cintura ↔ host (BLE, ADR-051) |
+   |---|---|---|
+   | Muestra (39 B fijos) | UDP | `stream` |
+   | Eventos y vectores por pie | TCP | `zancadas` |
+   | Vector bilateral y scores | — (los calcula la cintura) | `zancadas` |
+   | Snippet de crudo ante anomalía (edge) | TCP | `zancadas` |
+   | Estado (batería, temperatura, uptime, pérdidas) | TCP | `estado` |
+   | Comandos de SPEC-11 y sus respuestas | TCP | `control` |
+   | Beacon de sincronización | UDP (broadcast) | — |
+   | Intercambio de hora (ADR-056) | — | `control` |
+   | OTA (ADR-052) | TCP | `ota` |
+
+7. **La muestra de 100 Hz no cambia:** sigue siendo el struct fijo de 39 B. Es lo que más viaja, ya está definida byte a byte y un formato fijo se lee igual en C, en Python y en Parquet (ADR-055).
+8. **Test de ida y vuelta en CI:** un mensaje escrito en C se lee en Python, y al revés, con el mismo resultado. Es la misma idea que los tests de paridad de ADR-018.
+
+**Justificación.** El riesgo de un formulario escrito dos veces es que los errores no avisan: un campo leído en otra unidad no tira error, tira datos falsos. Con una sola fuente generada ese error desaparece por construcción, y las reglas de evolución protegen a los equipos sellados. nanopb cubre la restricción del micro: sin `malloc` y con tamaños acotados.
+
+**Consecuencias.** Resuelve CP-34 (a). Cambian: la Vista 1 §4 (contratos y canales), la Vista 2 §1 (`shared/`) y el stack (nanopb y protobuf). No es la generación de código que descartó ADR-021: aquella generaba la **matemática** de las features; esta sólo genera el código que empaqueta y desempaqueta mensajes.
+
+**Apéndice conceptual (en llano).**
+- **Qué es un contrato de interfaz.** El sistema son cinco programas —plantillas, cintura, host, worker y base— que se pasan cosas todo el tiempo: muestras, zancadas, scores, comandos, modelos. Por la radio sólo viajan bytes, números de 0 a 255 uno detrás de otro, y un byte no dice qué es. Para que el que recibe entienda, los dos lados acuerdan antes un formulario: qué dato va primero, cuántos bytes ocupa, en qué unidad está. Ese formulario es el contrato. Ya había uno, la muestra de 39 B: el primer byte dice qué equipo es, los cuatro siguientes el número de muestra, los ocho siguientes la hora, y así.
+- **Por qué importa.** Los errores de contrato no avisan. Si la plantilla manda la aceleración en milésimas de g y el host la lee como centésimas, no salta ningún error: el host guarda valores diez veces más grandes y el modelo se entrena con eso. Es como una fecha 03/04 que uno escribe como día/mes y el otro lee como mes/día. Como el firmware y el host se programan en paralelo, el formulario tiene que estar escrito antes.
+- **Serializar** es pasar un mensaje a bytes, y de vuelta. **Versionar** es poder cambiar el formulario sin romper a quien todavía usa el viejo.
+- **Protocol Buffers.** Los mensajes se describen una sola vez en un archivo de texto. Cada campo lleva un número fijo, como las casillas numeradas de un formulario impreso, y una herramienta escribe sola el código de C y el de Python que llenan y leen esas casillas. Si mañana se agrega la casilla 9, un programa viejo que no la conoce la saltea sin romperse.
+- **nanopb** es la versión de Protocol Buffers pensada para micros: genera C que no pide memoria mientras corre, porque cada casilla tiene un tamaño máximo declarado.
+- **Por qué la muestra queda afuera.** Es lo que más viaja —100 veces por segundo por equipo—, ya está definida byte a byte y no va a cambiar: no gana nada con un formulario flexible.
+- **Por qué no las otras.** Escribirlos a mano son dos copias del mismo formulario, y si difieren en un byte nadie se entera. CBOR es flexible, pero el formulario queda en un documento que el código no verifica.
+
+**Referencia.** CP-34; ADR-003 (canales), ADR-004 (beacon), ADR-018 (paridad), ADR-021 (codegen descartado, otro alcance), ADR-025 (bare-metal), ADR-046 (`stride_seq`/`cycle_seq`), ADR-051, ADR-052, ADR-056; SPEC-01, SPEC-11; Vista 1 §4; Vista 4 §4.2. Fuentes: [nanopb — referencia (`max_size`, `max_count`, asignación estática)](https://jpa.kapsi.fi/nanopb/docs/reference.html) · [Protocol Buffers — guía del lenguaje (proto3)](https://protobuf.dev/programming-guides/proto3/) · [Meshtastic — API de cliente (protobuf sobre BLE, serie y TCP)](https://meshtastic.org/docs/development/device/client-api/).
+
+---
+
+## ADR-051 — Enlace BLE: un servicio propio con una característica por canal (resuelve CP-34 b)
+**Estado:** aceptada (2026-10-17) — **Decisión: la cintura publica un servicio GATT propio con una característica por canal —`stream`, `zancadas`, `estado`, `control` y `ota`— más los servicios estándar de batería y de información del dispositivo. Las muestras viajan de a cuatro por notificación, y el control y el estado tienen prioridad sobre el stream.**
+
+**Contexto.** ADR-002 y ADR-003 fijaron BLE con notificaciones para el stream y escrituras con respuesta para el control, con la restricción de diseño del celular (MTU ~185 B en iOS). Faltaba la tabla concreta: qué características existen, con qué propiedades, y cómo se reparte el caudal, que en las capturas llega a ~11,7 KB/s (ADR-048).
+
+**Opciones evaluadas.**
+- **A — Una característica por canal (elegida).** *Pros:* cada canal tiene su prioridad, así el stream no tapa un comando; se depura con cualquier app genérica de BLE, que muestra cada característica por separado; la batería y la versión se leen con servicios que cualquier celular entiende. *Contras:* más definición GATT.
+- **B — Un caño de subida y uno de bajada, todo multiplexado** (el estilo de Meshtastic). *Pros:* GATT mínimo. *Contras:* el stream compite con el control dentro del mismo caño; hay que multiplexar y demultiplexar a mano; depurar cuesta más.
+
+**Decisión.**
+1. **Servicio propio** (UUID de 128 bits) con cinco características:
+
+   | Característica | Sentido | Propiedad | Qué lleva |
+   |---|---|---|---|
+   | `stream` | cintura → host | notificación | Muestras de 39 B **de a 4 por notificación** (156 B), de cualquiera de los tres equipos; cada una se identifica por su `device_id` |
+   | `zancadas` | cintura → host | notificación | Eventos, vectores por pie y bilaterales, scores y snippets (ADR-050) |
+   | `estado` | cintura → host | notificación + lectura | El canal de estado cada 1-2 s y los datos a demanda (Vista 4 §4.2, SPEC-11) |
+   | `control` | host → cintura, con respuesta | escritura con respuesta + notificación | Los comandos de SPEC-11 y el intercambio de hora (ADR-056); el resultado vuelve por notificación de la misma característica |
+   | `ota` | host → cintura, con acuses | escritura sin respuesta + notificación | Los pedazos del OTA y sus acuses (ADR-052) |
+
+2. **Servicios estándar del Bluetooth SIG:** *Battery Service* (nivel de batería) y *Device Information Service* (modelo, revisión de hardware, versión de firmware).
+3. **Tamaño de envío.** Se negocia el MTU más grande que acepte el central, pero todo se diseña para el peor caso del celular: ~185 B de MTU, unos 182 B útiles por envío. Un mensaje más grande se parte con una **cabecera mínima de fragmentación**, común a todas las características: número de mensaje, índice y total de fragmentos. El detalle de bits se fija en el código del contrato.
+4. **Prioridad.** Con varios envíos pendientes, el firmware despacha primero `control` y `estado`, después `zancadas` y por último `stream`. Si el stream no entra, se pierde stream (y queda contado por el `seq`), nunca un comando.
+5. **Seguridad.** Las características del servicio propio exigen enlace cifrado y autenticado (pairing de ADR-028); los servicios estándar se pueden leer sin pairing.
+6. **Dónde vive el contrato.** La tabla GATT se escribe en un archivo `.gatt` que la herramienta `compile_gatt` de BTstack convierte en código, invocada desde CMake con `pico_btstack_make_gatt_header`. Los UUID se publican desde el mismo lugar para el host (`bleak`).
+
+**Justificación.** Es la organización estándar de un periférico BLE: un servicio por función, una característica por flujo y los servicios del SIG para lo que ya tiene estándar. Separar los flujos da prioridad y visibilidad casi gratis; juntarlos en un caño ahorra definición pero pasa la complejidad al código.
+
+**Consecuencias.** Resuelve CP-34 (b). Cambian: la Vista 1 §4, la Vista 2 §1, la Vista 4 §4 y el stack. En captura, el stream ocupa unas 75 notificaciones por segundo (11,7 KB/s ÷ 156 B); el margen real con la coexistencia WiFi-AP + BLE se valida en banco, como ya estaba registrado.
+
+**Apéndice conceptual (en llano).**
+- **Servicio y característica.** En BLE, el equipo publica una lista de buzones con nombre fijo. Bluetooth llama *características* a los buzones y *servicios* a los grupos de buzones. El host se suscribe a los que le interesan.
+- **Notificación y escritura con respuesta.** En una notificación, la cintura deja el dato en el buzón, avisa y sigue, sin esperar respuesta: sirve para el stream, donde perder una muestra no importa. En una escritura con respuesta, el host deja el dato y espera el "recibido": sirve para los comandos, que no se pueden perder. Es la misma idea que UDP y TCP en el WiFi (ADR-003).
+- **MTU.** Es el tamaño máximo de un envío. Un celular acepta alrededor de 185 bytes; por eso las muestras van de a cuatro (4 × 39 = 156 B) y un mensaje más grande se parte en pedazos numerados.
+- **Por qué un buzón por canal.** Si todo fuera por un solo caño, un pico de muestras podría demorar un comando. Con buzones separados, el firmware atiende primero lo importante, y con una app genérica (como nRF Connect) se ve cada buzón por separado para depurar.
+- **Servicios estándar.** La batería y la información del equipo ya tienen un formato definido por el Bluetooth SIG, el organismo que mantiene el estándar. Cualquier celular los entiende sin una app nuestra.
+- **El archivo `.gatt`.** En el Pico, la lista de buzones se escribe en un archivo de texto que BTstack —la parte del SDK que maneja Bluetooth— convierte en código. Ese archivo es el contrato.
+
+**Referencia.** CP-34; ADR-002, ADR-003, ADR-028 (pairing), ADR-043 rev (canal de estado), ADR-048 (caudal), ADR-050 (mensajes), ADR-052 (OTA), ADR-056 (hora); SPEC-11; Vista 4 §4.2. Fuentes: [Pico SDK — documentación de `pico_btstack` (`pico_btstack_make_gatt_header`)](https://codex.ac6.fr/Zephyr/xref/hal_rpi_pico-latest/src/rp2_common/pico_btstack/doc.h) · [Meshtastic — API de cliente (la alternativa de caño único)](https://meshtastic.org/docs/development/device/client-api/).
+
+---
+
+## ADR-052 — Protocolo de OTA propio, sobre el A/B del bootrom del RP2350 (resuelve CP-34 c)
+**Estado:** aceptada (2026-10-17) — **Decisión: un protocolo propio de cinco pasos —aviso, pedazos numerados, acuses que permiten retomar, verificación de la huella y conmutación—, igual para modelos y firmware, del host a la cintura por BLE y de la cintura a las plantillas por WiFi. Para el firmware se usan las particiones A/B y el arranque "a prueba" que trae el bootrom del RP2350, sin bootloader propio.**
+
+**Contexto.** ADR-012 decidió OTA de pesos y de firmware completo con esquema A/B, checksum y vuelta atrás, pero no el protocolo de transferencia. Los tamaños: un modelo pesa de 2 a 50 KB (unos 280 envíos BLE de ~180 B para 50 KB) y un firmware, cientos de KB. El riesgo de fondo está escrito en `CLAUDE.md`: al sellar una plantilla se pierde el BOOTSEL, así que un OTA que deja un equipo sin arrancar lo inutiliza.
+
+Dato relevado el 2026-10-17: el bootrom del RP2350 maneja **tablas de particiones con pares A/B**, elige al arrancar la imagen "mejor" del par y expone una función (`explicit_buy`) para confirmar una imagen que arrancó a prueba. Con eso, lo que ADR-012 llamaba "bootloader A/B" ya lo trae el chip.
+
+**Opciones evaluadas.**
+- **A — Protocolo propio y chico (elegida).** *Pros:* hace justo lo que hace falta, incluida la estampa de paciente (ADR-043); se retoma tras un corte; corre igual sobre BLE y sobre TCP; se apoya en el A/B del chip en lugar de inventarlo. *Contras:* lo probamos nosotros, y es la zona donde un error inutiliza un equipo.
+- **B — SMP/MCUmgr**, el protocolo de gestión de Zephyr y MCUboot. *Pros:* probado, con herramientas de host. *Contras:* pensado para Zephyr; en el Pico SDK habría que programar el lado del equipo (no se verificó que exista una implementación), y su modelo de imágenes es el de MCUboot, no el del bootrom del RP2350.
+
+**Decisión.**
+1. **Un protocolo para todo:** modelos (los artefactos de ADR-053) y firmware; del host a la cintura por la característica `ota` (ADR-051) y de la cintura a las plantillas por el canal confiable (TCP). Sus mensajes van en `mensajes.proto` (ADR-050).
+2. **Los cinco pasos.**
+   1. **Aviso:** tipo (modelo o firmware), equipo destino, tamaño, huella SHA-256 del archivo completo, versión y, si es un modelo, paciente. El receptor acepta o rechaza con motivo: no hay lugar, versión incompatible, el modelo es de otro paciente.
+   2. **Pedazos:** cada uno con su posición (offset) dentro del archivo. Por BLE van como escritura sin respuesta, para no esperar un acuse por pedazo.
+   3. **Acuses:** cada N pedazos o cada T segundos, el receptor informa hasta qué posición tiene todo completo. Si se corta, el emisor retoma desde ahí y no reenvía lo que ya llegó.
+   4. **Verificación:** al terminar, el receptor calcula la huella SHA-256 de lo que **quedó escrito en la flash**, así también se verifica la escritura, y la compara con la anunciada. Si no coincide, se descarta. El RP2350 tiene un acelerador de SHA-256 por hardware (`pico_sha256` en el SDK).
+   5. **Conmutación:** recién entonces se usa lo nuevo (puntos 3 y 4).
+3. **Modelos.** El artefacto se escribe en el slot libre (el A/B de ADR-012) y pasa a activo de forma atómica; el anterior queda como último bueno conocido.
+4. **Firmware.** La imagen se escribe en la partición inactiva del par A/B del bootrom y el equipo se reinicia. La imagen nueva arranca **a prueba**: corre un autotest —la radio levanta, los sensores responden, hay enlace con el host o con la cintura— y recién entonces se confirma con `explicit_buy`. Si no se confirma, el chip vuelve a la imagen anterior. **A verificar en el datasheet del RP2350 (capítulo del bootrom) antes de implementar:** cómo se marca una imagen a prueba, qué dispara la vuelta atrás y en cuánto tiempo.
+5. **Firmware de las plantillas (*store-and-forward*).** La cintura recibe la imagen completa, la verifica y recién entonces se la pasa a la plantilla con el mismo protocolo. Si se corta el WiFi, retoma desde su propia copia sin volver a pedírsela al host.
+6. **Sólo fuera de sesión.** El OTA corre en reposo o en el provisioning (fase 3 de ADR-043), nunca con la sesión armada.
+7. **Prueba obligatoria antes de sellar una plantilla:** cortar la transferencia a mitad, mandar una imagen dañada y mandar un firmware que no se confirma. En los tres casos el equipo tiene que seguir arrancando con lo anterior.
+
+**Justificación.** El protocolo tiene lo mínimo que se considera indispensable en un OTA —integridad por huella, retoma, cambio atómico, vuelta atrás— y nada más. La parte más peligrosa, decidir qué imagen arrancar, la hace el bootrom del chip, que ya está probado: nuestro código no tiene que adivinarla.
+
+**Consecuencias.** Resuelve CP-34 (c). **Precisa ADR-012:** el "bootloader A/B" pasa a ser el del bootrom del RP2350, sin bootloader propio. Cambian: la Vista 2 §8, SPEC-11 (`provision`), la Vista 4 §6 y el maestro (OTA). La tabla de particiones de la flash tiene que prever dos imágenes de firmware, los slots de modelo y, en la cintura, el lugar para la imagen de una plantilla en tránsito. **Riesgo explícito:** la semántica exacta del arranque a prueba no está verificada; la prueba del punto 7 es la que lo cierra.
+
+**Apéndice conceptual (en llano).**
+- **OTA** es actualizar sin cable. Un modelo pesa de 2 a 50 KB y un firmware cientos de KB. Como cada envío BLE lleva unos 180 bytes, un modelo de 50 KB son unos 280 pedazos.
+- **Las tres cosas que hay que garantizar.** Que lleguen todos los pedazos, en orden. Que el archivo no llegue dañado. Y que, si algo falla, el equipo siga arrancando con lo anterior: una plantilla sellada que no arranca no se recupera.
+- **La huella (*hash*, SHA-256).** Es un número de 32 bytes que se calcula a partir del archivo; si cambia un solo bit del archivo, cambia la huella. El que manda anuncia la huella, el que recibe la recalcula y compara, y si no coinciden algo se dañó y se descarta.
+- **Los cinco pasos, como una mudanza.** Primero se avisa qué se va a mandar (el inventario). Después van las cajas numeradas. Cada tanto el que recibe dice "tengo hasta la caja 120", así si se corta se sigue desde la 121. Al final se revisa el inventario contra lo recibido, y recién ahí se usa lo nuevo.
+- **A/B.** Son dos cajones en la memoria: el firmware nuevo se escribe en el cajón vacío mientras el viejo sigue intacto.
+- **Arranque a prueba.** El chip arranca el firmware nuevo "a prueba". Si el nuevo no confirma que anda —porque no levantó la radio, por ejemplo—, el chip vuelve al cajón viejo. El RP2350 trae esto en su bootrom, el programa fijo que corre al encender; por eso no hace falta escribir un bootloader propio. Los detalles exactos hay que confirmarlos en el datasheet.
+- **Por qué no SMP/MCUmgr.** Es un estándar probado, pero de otro ecosistema (Zephyr): habría que programar el lado del equipo y adaptarlo a cómo arranca el RP2350.
+
+**Referencia.** CP-34; ADR-012 (OTA A/B), ADR-043 rev (estampa y provisioning), ADR-050, ADR-051, ADR-053; SPEC-11; Vista 2 §8. Fuentes: [Embassy — funciones del bootrom del RP2350 (`explicit_buy`, particiones A/B)](https://docs.embassy.dev/embassy-rp/git/rp235xa/rom_data/index.html) · [Pico SDK — `rom_pick_ab_partition`](https://sourcevu.sysprogs.com/rp2040/picosdk/symbols/rom_pick_ab_partition) · [Pico SDK — `pico_sha256`](https://sourcevu.sysprogs.com/rp2040/picosdk/files/src/rp2_common/pico_sha256/include/pico/sha256.h) · [picotool — particiones del RP2350](https://dyn.manpages.debian.org/testing/picotool/picotool-partition.1.en.html) · [Mongoose — OTA en RP2350](https://mongoose.ws/articles/rp2350-ota-firmware-update/).
+
+---
+
+## ADR-053 — Formato de los artefactos: un sobre común con huella de punta a punta (resuelve CP-34 d)
+**Estado:** aceptada (2026-10-17) — **Decisión: todo modelo se guarda en un único archivo con tres partes: una cabecera fija (qué modelo es, de qué paciente, qué versión, con qué set de features, cuánto mide), el contenido propio de cada algoritmo y, al final, la huella SHA-256 de todo lo anterior. Ese mismo archivo es el que guarda el registry, el que viaja por OTA y el que queda en la flash.**
+
+**Contexto.** ADR-012 y la Vista 2 §8 dicen qué lleva cada modelo —Mahalanobis: μ y Σ⁻¹; AE y LSTM: flatbuffer int8 de TFLite; Isolation Forest: tablas de árboles (ADR-020)— y ADR-043 rev exige la estampa `patient_id` + versión, pero nadie había fijado el formato del archivo. SPEC-11 remitía a "el formato de slot de SPEC-08", que nunca se escribió, y `models.artifact_format` admitía `'tflite_int8','npz','json'`: un formato distinto según el modelo, y ninguno con estampa.
+
+**Opciones evaluadas.**
+- **A — Un sobre común (elegida).** *Pros:* un solo cargador y una sola verificación en el micro; lo que guarda el registry es exactamente lo que se graba en la flash, con la misma huella de punta a punta; la estampa va siempre en el mismo lugar. *Contras:* es un formato propio, con escritor en Python y lector en C.
+- **B — Formatos de Python (npz, json) que el host traduce antes del OTA.** *Pros:* cómodos para analizar. *Contras:* dos formatos por modelo; lo guardado no es lo que corrió; la traducción vive en un tercer programa.
+
+**Decisión.**
+1. **Tres partes:**
+   - **Cabecera fija** (little-endian, de un largo múltiplo de 16 bytes para que el contenido quede alineado en la flash, como lo necesita el flatbuffer de TFLite): identificador del formato, versión del formato, tipo de modelo (el `algo` del registry), `model_id`, `patient_id`, versión del modelo, `feature_set_version`, cantidad de features de entrada y largo del contenido.
+   - **Contenido según el tipo:**
+     - Mahalanobis: μ y Σ⁻¹ en float32;
+     - Isolation Forest: la tabla de nodos de cada árbol (feature, umbral, hijos, valor de hoja) y la constante de normalización;
+     - autoencoder y LSTM AE: el flatbuffer int8 de TFLite **tal cual**.
+
+     Si un modelo necesita normalizar su entrada, esos parámetros viajan **dentro** del contenido, nunca aparte, para que no se separen del modelo (anti *train/serve skew*, ADR-018).
+   - **Huella:** SHA-256 de cabecera + contenido, al final del archivo.
+2. **Una sola huella de punta a punta.** La misma se guarda en `models.checksum`, la anuncia el OTA (ADR-052) y la verifica la cintura al recibir el archivo y **cada vez que lo carga** desde la flash.
+3. **Un solo cargador en la cintura.** Comprueba el identificador, la versión del formato, la huella, el `patient_id` (contra la sesión — regla 2 de SPEC-11) y el `feature_set_version` (contra el set activo). Recién entonces entrega el contenido al runtime de su tipo (SPEC-08).
+4. **El estado adaptado de clase L usa el mismo sobre.** En `close()` la cintura devuelve μ/Σ empaquetados así, y el host lo registra como versión N+1 (ADR-043 rev).
+5. **Esquema.** `models.artifact_format` pasa a tener un único valor, `envelope_v1`, con un CHECK; un formato nuevo entra por migración.
+6. **Escritor en Python (worker), lector en C (firmware) y un test en CI:** el worker escribe un artefacto de prueba, el lector en C lo carga y calcula el mismo score que Python sobre un vector conocido (paridad, ADR-018).
+
+**Justificación.** Separar el rótulo del contenido y poner la verificación al final es el patrón de los formatos de imagen para embebidos (MCUboot, por ejemplo, usa cabecera, contenido y una cola con la huella). Con un sobre, todo lo que la cintura necesita para decidir si un modelo sirve para esta sesión está en el mismo lugar, y la base puede probar qué modelo exacto corrió en cada sesión.
+
+**Consecuencias.** Resuelve CP-34 (d) y la referencia rota de SPEC-11, que ahora apunta acá. Cambian: `src/db/schema.sql` (`artifact_format`), SPEC-08 (OTA), SPEC-11 (`provision`, `close()` y parámetros), la Vista 2 §8 y la Vista 4 §6.
+
+**Apéndice conceptual (en llano).**
+- **Artefacto** es el modelo ya entrenado, guardado como archivo. Lo produce el worker, lo guarda la base y lo carga la cintura.
+- **Qué hay adentro depende del algoritmo.** Para Mahalanobis, un vector de promedios y una matriz. Para Isolation Forest, una tabla de árboles. Para el autoencoder, el archivo de TensorFlow Lite tal cual, que ya viene en un formato (*flatbuffer*) pensado para que el micro lo lea directo de memoria, sin desarmarlo.
+- **El sobre** es como una caja con etiqueta. La etiqueta dice qué hay adentro, para qué paciente es, qué versión y con qué lista de features se entrenó. Al final va un precinto: la huella de todo lo anterior. La cintura lee primero la etiqueta y el precinto, y abre la caja sólo si es para este paciente y está intacta.
+- **Por qué un solo sobre para todos.** La cintura tiene un solo cargador, que verifica siempre lo mismo. Y el archivo que guarda la base es exactamente el que se graba en el micro: con la misma huella de punta a punta se puede probar qué modelo corrió en cada sesión.
+- **Por qué no formatos de Python.** Son más cómodos para analizar, pero habría dos formatos por modelo y lo guardado no sería exactamente lo que corrió.
+
+**Referencia.** CP-34; ADR-012, ADR-018, ADR-020, ADR-022, ADR-043 rev, ADR-052; SPEC-08, SPEC-11; Vista 2 §8; Vista 4 §6. Fuente del patrón: [MCUboot — diseño y formato de imagen](https://docs.mcuboot.com/design.html).
+
+---
+
+## ADR-054 — Catálogo de features en TOML, con una tabla de C generada (resuelve CP-34 e)
+**Estado:** aceptada (2026-10-17) — **Decisión: el catálogo declarativo de ADR-021 se escribe en TOML. Python lo lee directo; para el firmware, un script genera una tabla constante en C que se compila adentro. El set activo viaja al micro como una lista de números en `provision()`.**
+
+**Contexto.** ADR-021 fijó el catálogo como un archivo de datos declarativo en `src/firmware/shared/` —por feature: id, bloque, scope, inputs, dependencias, parámetros, tolerancia y activo—, más el set activo y su `feature_set_version`, y dejó el formato en "JSON/TOML". Lo usan el worker (Python) y el firmware (C). Para Python leer texto no cuesta nada; para el micro, interpretarlo cuesta código y memoria sin ganar nada.
+
+**Opciones evaluadas.**
+- **A — TOML + tabla de C generada (elegida).** *Pros:* TOML se edita a mano con comodidad y admite comentarios, que sirven para anotar por qué una feature está apagada; Python lo lee con la librería estándar (`tomllib`, desde Python 3.11); el micro no interpreta nada. *Contras:* un paso de generación en el build.
+- **B — JSON + el mismo script.** *Pros:* universal. *Contras:* no admite comentarios.
+- *Descartado de entrada:* que el micro interprete el archivo; gasta código y RAM para nada.
+
+**Decisión.**
+1. **`features.toml`** en `src/firmware/shared/`, con una entrada por feature y los campos de ADR-021.
+2. **Los sets activos, en el mismo formato:** cada set es una lista de ids con su `feature_set_version`. Hoy hay uno: el perfil 2-FSR de ADR-023, con el bloque I apagado (ADR-040).
+3. **Tabla de C generada.** Un script de Python lee el TOML y escribe un `.h`/`.c` con la tabla constante (id, bloque, scope, banderas) que se compila en el firmware. El código generado no se edita a mano: CI lo regenera y falla si no coincide con el que está en el repo.
+4. **El set activo viaja en `provision()`** como una lista de ids con su `feature_set_version` (un mensaje de ADR-050). La cintura y las plantillas verifican que cada id exista en su tabla y que su hardware lo pueda calcular; si no, rechazan el set con motivo.
+5. **La matemática no está en el TOML.** Cada feature se implementa dos veces, en C y en Python, y se reconcilian con los tests de paridad (ADR-021, ADR-018). El TOML es la ficha, no la fórmula.
+
+**Justificación.** Es la forma habitual de compartir una definición entre herramientas de escritorio y un firmware: la fuente se edita en un formato pensado para personas y el micro recibe una tabla ya armada.
+
+**Consecuencias.** Resuelve CP-34 (e) y **precisa ADR-021** ("JSON/TOML" → TOML). Cambian: la Vista 3 (resumen y Parte B), el satélite de análisis y el stack.
+
+**Apéndice conceptual (en llano).**
+- **El catálogo** es la ficha de las 47 features: número, nombre, bloque, unidad, de qué señales sale, si es por pie o bilateral. Lo usan el worker y el firmware, y tiene que ser el mismo para los dos (ADR-021).
+- **TOML** es un formato de texto para configuraciones, pensado para editarse a mano, que admite comentarios. JSON es parecido, pero no admite comentarios.
+- **Por qué el micro no lee el TOML.** Leer texto es fácil para Python y caro para un micro: hace falta código para interpretarlo y memoria para guardarlo. Por eso un script lo traduce, antes de compilar, a una tabla de C que ya viene armada dentro del firmware.
+- **El set activo** es la lista de las features que efectivamente se calculan. Viaja al micro como una lista de números, así se prenden o apagan features sin reflashear (ADR-021).
+
+**Referencia.** CP-34; ADR-018, ADR-021, ADR-023, ADR-040, ADR-050; Vista 3 Parte B. Fuentes: [TOML — especificación v1.0.0](https://toml.io/en/v1.0.0) · [Python — `tomllib`](https://docs.python.org/3/library/tomllib.html).
+
+---
+
+## ADR-055 — Crudo en Parquet: un archivo por sesión, equipo y tramo (resuelve CP-34 f)
+**Estado:** aceptada (2026-10-17) — **Decisión: el host escribe el crudo en archivos Parquet de unos minutos, uno por sesión y por equipo (izquierda, derecha, cintura), con los campos del paquete tal como llegaron (enteros), comprimidos con zstd y guardados por paciente y sesión. Cada archivo se registra en `raw_blobs`.**
+
+**Contexto.** ADR-008 y ADR-042 mandan el crudo continuo a object storage en Parquet, y ADR-048 suma el crudo de la cintura, pero faltaba fijar el esquema de columnas, cómo se parte en archivos y dónde se guarda. El volumen: 100 filas por segundo por equipo; una sesión de 8 h con los tres equipos suma unos 8,6 millones de filas.
+
+**Opciones evaluadas.**
+- **A — Un archivo por sesión, equipo y tramo de unos minutos (elegida).** *Pros:* un corte pierde a lo sumo el tramo en curso; se sube mientras se graba; los archivos tienen un tamaño manejable. *Contras:* muchos archivos chicos.
+- **B — Un archivo por sesión y equipo, escrito al cerrar.** *Pros:* pocos archivos. *Contras:* todo está en riesgo hasta el cierre, nada se sube antes y un archivo de 8 h es grande.
+
+**Decisión.**
+1. **Tramos:** un archivo cada pocos minutos, por sesión y por equipo. La duración es un parámetro; el arranque sugerido es 5 min, unas 30.000 filas por equipo.
+2. **Columnas = los campos del paquete de 39 B tal como llegaron**, sin convertir: `device_id`, `seq`, `t_device`, `ax ay az`, `gx gy gz`, `pitch roll yaw` y `fsr1` a `fsr4`, como enteros. El archivo queda bit a bit igual a lo que produjo el micro, que es lo que necesitan los tests de paridad (ADR-018).
+3. **Metadatos del archivo** (los que Parquet guarda en su pie): versión del formato, `session_id`, equipo, versión de firmware, **escalas** para pasar cada columna a unidades físicas, número de tramo y rango de `seq`. Las escalas se fijan en el contrato de la muestra (`shared/`) al implementar el firmware. *(Los parámetros de calibración no se guardan: la calibración es irreversible por diseño — Vista 4 §1.)*
+4. **Compresión zstd**, con un *row group* por archivo.
+5. **Ruta:** `raw/{patient_id}/{session_id}/{equipo}/{tramo}.parquet`. Con el paciente primero, las políticas del storage pueden usar la misma regla que la base (`private.accessible_patient_ids()`, ADR-047).
+6. **Registro.** Cada archivo es una fila de `raw_blobs` con su número de tramo (`chunk_index`), la cantidad de muestras, el rango temporal y la huella SHA-256. La terna `(session_id, device_id, chunk_index)` es única: volver a subir un tramo no duplica (ingesta idempotente, como en ADR-046).
+7. **Huecos:** no se rellenan. Las muestras perdidas se ven como saltos en `seq`.
+8. **Lectura:** una función del worker junta los tramos de un equipo, aplica las escalas y convierte `t_device` a UTC con la recta de ADR-056.
+
+**Justificación.** Parquet es el formato estándar para tablas grandes en archivos: comprime por columna y pandas lo lee en una línea. Partir en tramos es lo habitual en la ingesta continua: acota lo que se pierde ante un corte y permite subir durante la sesión.
+
+**Consecuencias.** Resuelve CP-34 (f). Cambian: `src/db/schema.sql` (`raw_blobs.chunk_index`, unicidad y `device_id` obligatorio), la Vista 4 §1.4 y el stack (pyarrow). Las políticas del storage entran en la migración base (ADR-045, ADR-047).
+
+**Apéndice conceptual (en llano).**
+- **Por qué el crudo no va a la base.** Son 100 filas por segundo por equipo: una sesión de 8 h suma unos 8,6 millones de filas entre los tres. Eso va a archivos en storage (ADR-008); la base guarda zancadas, eventos y scores.
+- **Parquet** es un formato de archivo para tablas grandes. Es como un CSV, pero binario, comprimido y ordenado por columnas, y pandas lo abre con una sola línea.
+- **Tramos.** En lugar de un archivo gigante por sesión, se guarda un archivo cada pocos minutos. Si algo falla, se pierde a lo sumo el tramo en curso, y los tramos ya cerrados se van subiendo mientras la sesión sigue.
+- **Enteros tal como llegaron.** El archivo guarda los números exactamente como los mandó el micro, y anota aparte cómo pasarlos a unidades físicas (por ejemplo, cuántos m/s² vale cada unidad). Así lo guardado es idéntico a lo que el micro usó para calcular.
+- **Ordenado por paciente y sesión.** La carpeta de cada archivo empieza por el paciente, así los permisos del storage usan la misma regla que la base: cada usuario ve sólo los archivos de sus pacientes.
+
+**Referencia.** CP-34; ADR-008, ADR-018, ADR-042, ADR-045, ADR-046, ADR-047, ADR-048, ADR-056; Vista 4 §1.4. Fuentes: [Apache Parquet — formato de archivo](https://parquet.apache.org/docs/file-format/) · [Supabase — control de acceso del storage](https://supabase.com/docs/guides/storage/security/access-control).
+
+---
+
+## ADR-056 — Base de tiempo: el host traduce la cuenta de la cintura a UTC (resuelve CP-34 g)
+**Estado:** aceptada (2026-10-17) — **Decisión: todo `t_device` que sale del equipo está en la cuenta de microsegundos de la cintura. El host la traduce a UTC con una recta (desfase + deriva) que ajusta intercambiando la hora con la cintura cada ~10 s; la usa al escribir y guarda la recta final con la sesión. El crudo y los eventos conservan `t_device`, así la conversión se puede rehacer.**
+
+**Contexto.** Cada micro cuenta microsegundos desde que se prendió (`t_device`, en `uint64` — ADR-042) y no sabe la fecha. El backbone de ADR-004 pone a las plantillas en la línea de tiempo de la cintura. La base, en cambio, guarda instantes en `timestamptz` (UTC): `sessions.started_at`, `strides.started_at`, `gait_events.time` y el resto de las series. El único que conoce la hora real es el host (laptop o celular, por internet), y nadie había definido cómo se pasa de una a otra. **No es CP-28:** aquella trata de la precisión de la sincronización entre plantillas; esta, de traducir la hora del equipo a la hora del mundo.
+
+**Opciones evaluadas.**
+- **A — Traduce el host, con una recta ajustada durante la sesión (elegida).** *Pros:* corrige también la deriva del reloj del micro; el crudo sigue crudo; la conversión se puede rehacer. *Contras:* lógica en el host y un mensaje más.
+- **B — El host le dice la hora a la cintura una vez, al armar.** *Pros:* simple. *Contras:* no corrige la deriva (con ~0,2 ms/min de ADR-004, ~0,1 s en 8 h), y ese único aviso ya llega con el retardo variable de un viaje por BLE, que puede ser de decenas de ms.
+- **C — Sólo tiempo relativo a la sesión.** *Pros:* lo más simple. *Contras:* la base pide fecha y hora, y así no se puede alinear con otro sistema.
+
+**Decisión.**
+1. **Una sola línea de tiempo dentro del equipo.** Todo `t_device` que llega al host —las muestras de los tres equipos, los eventos, los mensajes— está en la cuenta de la cintura. Qué nodo aplica la corrección de ADR-004 es un detalle de implementación de la sincronización; el contrato es lo que llega al host.
+2. **Intercambio de hora** (por `control`, ADR-051). El host anota su hora UTC al pedir (T1); la cintura responde con su `t_device`, leído al recibir el pedido; el host anota la hora al llegar la respuesta (T2). El par es (`t_device`, (T1+T2)/2), con una incertidumbre de (T2−T1)/2. Se repite cada ~10 s (parámetro).
+3. **La recta:** `utc = t0_utc + (t_device − t0_device) × (1 + deriva)`, ajustada por regresión sobre los pares de la sesión, con más peso para los intercambios más rápidos: los de menor ida y vuelta son los más precisos, como en NTP. Mientras la sesión corre se usa la recta del momento; al cerrar se calcula la final.
+4. **Uso:** el host convierte a UTC al escribir cada fila de la base.
+5. **Qué se guarda:**
+   - en `sessions`, la recta final: `clock_t0_device`, `clock_t0_utc`, `clock_drift_ppm` y el residuo del ajuste, `clock_fit_rmse_us`;
+   - en el Parquet, `t_device` (ADR-055);
+   - en `gait_events`, además de `time` (UTC), el **`t_device`** del evento. Es el ancla exacta con el crudo: el resto de la serie cuelga de los eventos (cada zancada empieza en un IC, y los vectores y scores se identifican por su zancada).
+6. **Para qué sirve la hora UTC:** para ubicar sesiones y eventos en el calendario y, si hiciera falta en la validación (CP-33), para alinear con un equipo de referencia. Las features no la usan: trabajan sobre `t_device`.
+7. **Una recta por sesión.** Un reinicio de la cintura reinicia su cuenta, pero en la mínima también cierra la sesión (ADR-049), así que nunca conviven dos cuentas en una misma sesión.
+
+**Justificación.** Es el método de NTP aplicado a un enlace local: medir la ida y vuelta, quedarse con los intercambios más limpios y ajustar desfase y deriva. Guardar la hora del equipo en los datos, y no sólo la convertida, sigue el mismo principio que el crudo: conservar lo original para poder recalcular lo derivado.
+
+**Consecuencias.** Resuelve CP-34 (g). Cambian: `src/db/schema.sql` (`sessions.clock_*` y `gait_events.t_device`), el ER, la Vista 1 §5 y la Vista 4 §4.
+
+**Apéndice conceptual (en llano).**
+- **Dos relojes distintos.** Cada micro cuenta microsegundos desde que se prendió, sin saber la fecha. El beacon hace que las plantillas usen la cuenta de la cintura, así que adentro del equipo hay un solo reloj, pero ese reloj no sabe qué hora es. La base, en cambio, guarda cada zancada y cada evento con fecha y hora real.
+- **UTC** es la hora de referencia mundial, sin husos horarios. Es lo que guardan las bases de datos.
+- **Quién sabe la hora.** Sólo el host (laptop o celular), por internet. Alguien tiene que traducir "microsegundo 3.600.000.000 de la cintura" a "17/10/2026 14:32:05,123".
+- **El intercambio de hora.** El host le pide la cuenta a la cintura y mide cuánto tardó la respuesta: si tardó poco, el dato es preciso; si tardó mucho, menos. Con muchos de esos pares (hora del host, cuenta de la cintura) traza una recta. La recta corrige el desfase —las dos cuentas arrancaron en momentos distintos— y la deriva —el cristal del micro anda un poquito más rápido o más lento—.
+- **Por qué guardar también la cuenta original.** Si mañana aparece un error en la traducción, se puede rehacer, igual que se recalculan features desde el crudo.
+- **Por qué no las otras.** Decirle la hora una sola vez no corrige la deriva (unos 0,1 s en 8 h), y el aviso mismo llega con la demora de un viaje por BLE. Guardar sólo el tiempo desde el inicio no alcanza: la base pide fecha y hora.
+
+**Referencia.** CP-34; ADR-004 (sincronización), ADR-042 (`t_device`), ADR-049 (reinicios), ADR-051 (`control`), ADR-055 (Parquet); CP-28, CP-33. Fuente del método: [NTP — RFC 5905 (desfase y retardo por ida y vuelta)](https://www.rfc-editor.org/rfc/rfc5905).
 
 ---
 

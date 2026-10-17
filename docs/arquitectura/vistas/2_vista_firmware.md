@@ -8,10 +8,10 @@
 
 ## 1. Arquitectura de firmware (dos builds + código compartido)
 
-Dos firmwares en **C/C++ con el Pico SDK** [ADR-010], con **código compartido** en `src/firmware/shared/` (protocolo de paquetes, **definición de features** —catálogo, ADR-021—, sincronización y OTA):
+Dos firmwares en **C/C++ con el Pico SDK** [ADR-010], con **código compartido** en `src/firmware/shared/`: el formato de la muestra, los mensajes (`mensajes.proto`, del que nanopb genera el C — ADR-050), la **definición de features** (catálogo `features.toml` con su tabla de C generada — ADR-021/054), la sincronización y el protocolo OTA (ADR-052). La tabla de servicios BLE (`.gatt`) vive en el firmware de la cintura (ADR-051).
 
 - **Plantilla (insole):** adquiere a 100 Hz, detecta IC/TO, calcula **features por-pie**, mantiene un buffer de crudo y acciona el **motor PWM**.
-- **Cintura (waist):** **AP WiFi**, **maestro de sync** (beacon), **fusión bilateral**, **inferencia + decisión de feedback**, **uplink BLE**.
+- **Cintura (waist):** **AP WiFi**, **maestro de sync** (beacon), **fusión bilateral**, **inferencia + decisión de feedback**, **uplink BLE**; en las capturas, además, **sube su propio crudo** del tronco (ADR-048).
 
 ```mermaid
 flowchart TB
@@ -77,18 +77,19 @@ El detector corre en la **cintura**, pero el **motor está en la plantilla** →
 
 ## 7. Buffer circular de crudo
 
-Cada plantilla mantiene un **ring buffer** de crudo; en **edge**, ante una anomalía la cintura **pide el snippet** y se envía. En **captura operativa** se sube el crudo **continuo** junto con las features del micro.
+Cada plantilla mantiene un **ring buffer** de crudo; en **edge**, ante una anomalía la cintura **pide el snippet** y se envía. En **captura operativa** se sube el crudo **continuo** junto con las features del micro. En las capturas (exploratoria y operativa) **la cintura sube también su propio crudo** (ADR-048).
 
 **Borrado al cambiar de paciente.** El buffer queda con marcha del paciente anterior, así que el **check-out** (fase 3 del pipeline) lo limpia en las dos plantillas antes de provisionar el modelo nuevo. Es lo que le da mecanismo, en la mínima, al requisito de borrado de ADR-032 — el factory-reset completo sigue diferido a la máxima (ADR-028). [ADR-043 rev; Vista 4 §4.1]
 
-## 8. OTA A/B (pesos + firmware) — [ADR-012]
+## 8. OTA A/B (pesos + firmware) — [ADR-012 · ADR-052 · ADR-053]
 
-**OTA completo desde el inicio**, por **BLE** desde el host, esquema **A/B**:
+**OTA completo desde el inicio**, por **BLE** desde el host (característica `ota`, ADR-051), esquema **A/B**, con un **protocolo propio de cinco pasos** (ADR-052): aviso (tipo, tamaño, SHA-256, versión y paciente) → pedazos con su posición → acuses que permiten retomar tras un corte → SHA-256 de lo que quedó escrito en flash → conmutación. Corre sólo fuera de sesión (en reposo o en el provisioning).
 
-- **Pesos (modelos):** artefacto del modelo (Mahalanobis = μ + Σ⁻¹; AE/LSTM = **flatbuffer int8** de TFLite Micro) a un **slot** de flash; **checksum** → **conmutación atómica** → el anterior queda **last-known-good** para rollback.
+- **Pesos (modelos):** el artefacto viaja en el **sobre** de ADR-053 —cabecera fija con la estampa, contenido según el modelo (Mahalanobis = μ + Σ⁻¹; AE/LSTM = **flatbuffer int8** de TFLite Micro; Isolation Forest = tablas de árboles) y huella SHA-256 al final— a un **slot** de flash; huella verificada → **conmutación atómica** → el anterior queda **last-known-good** para rollback. La cintura vuelve a verificar la huella cada vez que carga el modelo.
 - **Estampa de paciente (ADR-043 rev).** Todo artefacto en flash lleva **`patient_id` + versión** en su cabecera, y la cintura **se niega a scorear** si no coincide con el paciente de la sesión abierta. Sin esto, el par A/B —que existe para *rollback de versión*— se contamina al rotar pacientes y un rollback cargaría el baseline de otra persona.
 - **El flash es una copia de trabajo.** Se reescribe desde la DB en el **provisioning** de cada sesión: la DB manda y no hay reconciliación. Su única función propia es que un **reset a mitad de sesión** recargue el modelo sin depender del host — el estado adaptado de clase L vive en RAM y sólo sube en el check-in.
-- **Firmware:** **bootloader A/B** con dos imágenes; arranca la nueva y **revierte** si no reporta OK. Se mitiga el brickeo con A/B + checksum + **watchdog** + modo de recuperación. Flash: dos firmwares + dos slots, dentro del RP2350.
+- **Firmware:** **particiones A/B del bootrom del RP2350**, sin bootloader propio (ADR-052). La imagen nueva se escribe en la partición inactiva y arranca **a prueba**: tras un autotest (radio, sensores, enlace) se confirma con `explicit_buy`; si no se confirma, el chip vuelve a la anterior. La semántica exacta del arranque a prueba se verifica en el datasheet antes de implementar. Las plantillas reciben su firmware de la cintura por TCP, que primero guarda y verifica la imagen completa (*store-and-forward*). Flash: dos firmwares + los slots de modelo y, en la cintura, el lugar para la imagen de una plantilla en tránsito.
+- **Prueba obligatoria antes de sellar una plantilla:** cortar la transferencia a mitad, mandar una imagen dañada y mandar un firmware que no se confirma. En los tres casos el equipo tiene que seguir arrancando con lo anterior (ADR-052).
 
 ## 9. Asignación de cores y RTOS — [ADR-024 rev · ADR-025 · ADR-026]
 
@@ -113,10 +114,10 @@ El pairing user-facing es **cintura↔host** (plantilla↔cintura es de fábrica
 - **Dependencias:** CP-04 (nivel de seguridad + borrar bonds/datos al reasignar), CP-15 (UX de la app). Apéndice conceptual en **ADR-028**.
 
 ## ADRs relevantes
-ADR-010 (C/C++ Pico SDK), ADR-014 (adquisición), ADR-026 (muestreo/lectura del IMU), ADR-004 (sync), ADR-005 (features distribuidas — ejecución), ADR-015/016/017 (SPEC-01/03/04), ADR-019 (CMSIS-DSP), ADR-020 (TFLite Micro), ADR-012 (OTA), ADR-011 rev (ruteo), ADR-023 (set activo 2-FSR), ADR-024 rev (cores) / ADR-025 (bare-metal), ADR-027 (feedback vibrotáctil), ADR-028 (pairing BLE), **ADR-042** (crudo post-AHRS: el AHRS corre acá), **ADR-043 rev** (ciclo de vida, estampa de paciente, canal de estado), **ADR-046** (numeración de zancadas y ciclos: `stride_seq` / `cycle_seq`).
+ADR-010 (C/C++ Pico SDK), ADR-014 (adquisición), ADR-026 (muestreo/lectura del IMU), ADR-004 (sync), ADR-005 (features distribuidas — ejecución), ADR-015/016/017 (SPEC-01/03/04), ADR-019 (CMSIS-DSP), ADR-020 (TFLite Micro), ADR-012 (OTA), ADR-011 rev (ruteo), ADR-023 (set activo 2-FSR), ADR-024 rev (cores) / ADR-025 (bare-metal), ADR-027 (feedback vibrotáctil), ADR-028 (pairing BLE), **ADR-042** (crudo post-AHRS: el AHRS corre acá), **ADR-043 rev** (ciclo de vida, estampa de paciente, canal de estado), **ADR-046** (numeración de zancadas y ciclos: `stride_seq` / `cycle_seq`), **ADR-048** (crudo de la cintura en las capturas), **ADR-049** (cortes y reinicios), **ADR-050 a 056** (contratos de interfaz: mensajes, BLE, OTA, artefactos, catálogo, crudo y hora).
 
 ## Stack (resumen; detalle en `../stack_tecnologico.md`)
-Pico SDK (`hardware_adc/dma/timer/pio/i2c`), **lwIP**, **BTstack**, **CMSIS-DSP** (DSP/FFT/álgebra), **TFLite Micro + CMSIS-NN** (`pico-tflmicro`, int8), **Fusion** (Madgwick), driver I²C MPU-6050 (lectura por **DMA** — ADR-026). **Bare-metal** (sin RTOS — ADR-025).
+Pico SDK (`hardware_adc/dma/timer/pio/i2c`, `pico_sha256`), **lwIP**, **BTstack** (tabla GATT desde un `.gatt`), **nanopb** (mensajes), **CMSIS-DSP** (DSP/FFT/álgebra), **TFLite Micro + CMSIS-NN** (`pico-tflmicro`, int8), **Fusion** (Madgwick), driver I²C MPU-6050 (lectura por **DMA** — ADR-026). **Bare-metal** (sin RTOS — ADR-025).
 
 **Diagrama de esta vista:** pipeline de firmware (arriba) + `../adquisicion_dma_irq.mermaid` (adquisición por DMA/IRQ sin frenar la inferencia del core 1). Un diagrama de calibración/baseline vive en la Vista 3.
 

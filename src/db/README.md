@@ -4,7 +4,7 @@ Esquema, migraciones y tests de la base. Plataforma: **Supabase** (Postgres 17 +
 
 ## Contenido
 
-- `schema.sql` — el esquema para **leer**. Hoy es el **diseño** (ADR-044, 046 y 047), escrito a mano por última vez. Cuando exista la base pasa a ser un **snapshot generado** desde las migraciones, sin las particiones hijas: **no se edita a mano** (ADR-045).
+- `schema.sql` — el esquema para **leer**. Hoy es el **diseño** (ADR-044, 046 y 047, con los ajustes de ADR-049, 053, 055 y 056), escrito a mano por última vez. Cuando exista la base pasa a ser un **snapshot generado** desde las migraciones, sin las particiones hijas: **no se edita a mano** (ADR-045).
 - `supabase/` *(todavía no existe)* — proyecto de la CLI de Supabase: `config.toml`, `migrations/`, `tests/` (pgTAP) y `seed.sql` (sólo datos sintéticos).
 - `scripts/` *(todavía no existe)* — el script que regenera `schema.sql` desde la base local.
 
@@ -23,7 +23,8 @@ Reglas: una migración aplicada **no se edita** (se corrige con otra); la base r
 
 - **Relacional:** `patients`, `devices`, `sessions`, `patient_access`, `models`, `model_deployments`, `firmware_images`, `retrain_jobs`, `feedback_config`.
 - **Series (particionadas por mes de inicio de sesión — ADR-044):** `strides` (la zancada como entidad), `gait_events`, `feature_vectors`, `anomaly_scores`. Se identifican con los números que asigna el borde —`stride_seq` (plantilla) y `cycle_seq` (cintura)—, con FK reales e ingesta idempotente por *upsert* (ADR-046).
-- **Object storage (referenciado):** `raw_blobs` (crudo continuo en Parquet), `anomaly_raw_snippets` (FK a su score), artefactos de modelos y firmware.
+- **Object storage (referenciado):** `raw_blobs` (crudo continuo en Parquet, una fila por sesión, equipo y tramo — ADR-055), `anomaly_raw_snippets` (FK a su score), artefactos de modelos (el sobre de ADR-053, `artifact_format = envelope_v1`) y firmware.
+- **Hora (ADR-056):** las series guardan la hora en UTC; `sessions` guarda la recta con que el host la tradujo (`clock_*`) y `gait_events.t_device` conserva la cuenta original de la cintura.
 
 Diagrama ER en `docs/arquitectura/esquema_base_de_datos.mermaid`; definición conceptual en la Vista 4 (`docs/arquitectura/vistas/4_vista_backend_app.md`).
 

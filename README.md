@@ -7,13 +7,14 @@ Sistema wearable que detecta desviaciones **personalizadas** en la marcha de pac
 - ✅ Objetivos y alcance definidos; **anteproyecto** y **marco teórico** incorporados.
 - ✅ Investigación previa consolidada (bibliografía, catálogo de features, algoritmos).
 - ✅ **Arquitectura cerrada**, en **4 vistas consolidadas** (`docs/arquitectura/vistas/`). El maestro es **índice + overview**, no duplica el detalle de las vistas (ADR-039).
-- ✅ **Diseño detallado terminado** — **ADR-000 a 047** en la bitácora, **SPEC-01 a SPEC-11** de algoritmos de firmware. El backlog de investigación **#1 a #10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) esperan firmware y dataset.
+- ✅ **Diseño detallado terminado** — **ADR-000 a 056** en la bitácora, **SPEC-01 a SPEC-11** de algoritmos de firmware. El backlog de investigación **#1 a #10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) esperan firmware y dataset.
 - ✅ **Esquema de la base diseñado** — Postgres 17 con **series particionadas** + `pg_partman` (ADR-044), **migraciones versionadas** con la CLI de Supabase y CI (ADR-045), **la zancada como entidad** con FK reales e ingesta idempotente (ADR-046) y **grants explícitos + RLS en todas las tablas** (ADR-047). El diseño está en `src/db/schema.sql`; se crea como migraciones al implementar la base.
+- ✅ **Contratos de interfaz definidos** — mensajes en Protocol Buffers, enlace BLE, protocolo de OTA, formato de los artefactos, catálogo en TOML, crudo en Parquet y traducción de la hora a UTC (ADR-050 a 056; tabla en la Vista 1 §4).
 - 🔄 **Hardware en banco** — 2 FSR conectados (punta + talón); la próxima revisión del PCB suma medial y lateral con mux (ADR-041) y el cargador de corriente limitada. Checklist en `docs/arquitectura/esquema_alimentacion.md` §7.
 - ⏳ **Roadmap de implementación por fases** — próximo paso.
 - ⏳ **Firmware y worker** — aún no iniciados (`src/firmware/`, `src/host/`, `src/worker/`).
 
-**Cuestiones abiertas (14):** ver `docs/cuestiones_pendientes.md`, que es la **única fuente de verdad** — este archivo no duplica la lista. Ninguna bloquea el diseño. **CP-21** (`pico-tflmicro` en RP2350) es la única que puede voltear una decisión ya tomada. Y hay una fecha límite: la base tiene que **existir como migraciones antes de la primera captura** (ADR-045).
+**Cuestiones abiertas (12):** ver `docs/cuestiones_pendientes.md`, que es la **única fuente de verdad** — este archivo no duplica la lista. Ninguna bloquea el diseño. **CP-21** (`pico-tflmicro` en RP2350) es la única que puede voltear una decisión ya tomada. Y hay una fecha límite: la base tiene que **existir como migraciones antes de la primera captura** (ADR-045).
 
 ## Cómo empezar
 

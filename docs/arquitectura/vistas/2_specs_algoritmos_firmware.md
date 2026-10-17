@@ -233,7 +233,7 @@ Solapamiento (hop) configurable (p. ej. 50 %). **N y hop versionados con `featur
 
 ## SPEC-08 — Runtime de inferencia on-device (ejecución de modelos int8)
 
-**Decisión:** ADR-020. **Placement:** cintura (hub). **Estado:** definido (a implementar). **Depende de:** modelo entrenado + cuantizado (worker, #10); OTA (ADR-012).
+**Decisión:** ADR-020. **Placement:** cintura (hub). **Estado:** definido (a implementar). **Depende de:** modelo entrenado + cuantizado (worker, #10); OTA (ADR-012, ADR-052) y el sobre de los artefactos (ADR-053).
 
 **Objetivo.** Ejecutar los modelos de detección **en la cintura en tiempo real**, con el runtime adecuado por tipo de modelo. Es **inferencia**, no reentrenamiento (eso es del worker, ADR-009/011).
 
@@ -245,7 +245,7 @@ Solapamiento (hop) configurable (p. ej. 50 %). **N y hop versionados con `featur
 
 **Flujo del AE denso (clase E).**
 1. Entrenamiento + cuantización en el worker: **TensorFlow/Keras** → **conversor TFLite/LiteRT (PTQ int8, representative dataset)** → **flatbuffer int8** (ADR-022).
-2. **OTA** del flatbuffer a la cintura (ADR-012, esquema A/B con checksum/rollback).
+2. **OTA** del flatbuffer, dentro del sobre de ADR-053, a la cintura (ADR-012/052: esquema A/B con huella SHA-256 y rollback).
 3. En la cintura: TFLM carga el flatbuffer en una **tensor arena** (bloque de RAM reservado) y, por zancada, corre `interpreter.invoke()`; CMSIS-NN acelera las capas.
 4. Score de anomalía = error de reconstrucción (MSE input vs. output); umbral por percentil de calibración.
 
@@ -253,15 +253,15 @@ Solapamiento (hop) configurable (p. ej. 50 %). **N y hop versionados con `featur
 
 **Paridad train↔serve (ADR-018).** TFLM sigue la **spec de cuantización de TFLite**, así que el int8 que produce el converter es el que ejecuta el micro → paridad por construcción.
 
-**OTA (ADR-012).** El modelo viaja como **flatbuffer int8** a un slot A/B con checksum y rollback. Cambiar de modelo = OTA de un flatbuffer nuevo (no reflashear firmware, salvo que cambie el runtime).
+**OTA (ADR-012, ADR-052, ADR-053).** El modelo viaja como **flatbuffer int8** dentro del **sobre** de ADR-053 —cabecera con la estampa, contenido y huella SHA-256— a un slot A/B con rollback. El cargador único de la cintura verifica el identificador, la huella, el paciente y el `feature_set_version` antes de entregarle el contenido a TFLM. Cambiar de modelo = OTA de un sobre nuevo (no reflashear firmware, salvo que cambie el runtime).
 
 **Riesgo / fallback.** El port **RP2350 de `pico-tflmicro` no está mergeado** → validar temprano (llevar patch/fork o portar). Fallback: **CMSIS-NN directo** (sin intérprete) para el AE denso (ADR-020).
 
 **Parámetros.** Arquitectura del AE (p. ej. 25-12-6-12-25), esquema de cuantización int8, tamaño de tensor arena — se fijan en el entrenamiento (#10) y se versionan con el modelo en el registry.
 
-**Mecánica a implementar.** Integrar `pico-tflmicro` (con CMSIS-NN) al build del firmware de la cintura; reservar la tensor arena; cargar el flatbuffer (flash / OTA); loop de `invoke()` por zancada; wiring del score al decisor de feedback. Mahalanobis (CMSIS-DSP) e IF (árboles en C) van aparte.
+**Mecánica a implementar.** Integrar `pico-tflmicro` (con CMSIS-NN) al build del firmware de la cintura; reservar la tensor arena; cargar el flatbuffer desde el sobre en flash (ADR-053); loop de `invoke()` por zancada; wiring del score al decisor de feedback. Mahalanobis (CMSIS-DSP) e IF (árboles en C) van aparte.
 
-**Referencias.** `pico-tflmicro` (Raspberry Pi); CMSIS-NN (ARM; arXiv 1801.06601); TFLite Micro (footprint); ADR-011/013 (taxonomía/ubicación de inferencia), ADR-012 (OTA), ADR-018 (paridad). Detalle de la decisión: **ADR-020**.
+**Referencias.** `pico-tflmicro` (Raspberry Pi); CMSIS-NN (ARM; arXiv 1801.06601); TFLite Micro (footprint); ADR-011/013 (taxonomía/ubicación de inferencia), ADR-012 (OTA), ADR-018 (paridad), ADR-052 (protocolo de OTA), ADR-053 (sobre de los artefactos). Detalle de la decisión: **ADR-020**.
 
 ---
 
@@ -312,7 +312,7 @@ Solapamiento (hop) configurable (p. ej. 50 %). **N y hop versionados con `featur
 
 **Objetivo.** Calcular, por zancada y en la cintura, tres descriptores del movimiento del tronco a partir del IMU ubicado a ~L4-L5: **#45 Improved Harmonic Ratio ML**, **#46 RMS de aceleración de tronco** (AP/ML/V) y **#47 LDLJ de tronco**.
 
-**Entradas.** Aceleración triaxial del IMU de cintura a 100 Hz (calibrada y con gravedad removida — SPEC-04) + **eventos IC de ambas plantillas**, ya alineados sobre el timeline común (ADR-004). La cintura tiene todo esto sin pedir nada nuevo.
+**Entradas.** Aceleración triaxial del IMU de cintura a 100 Hz (calibrada y con gravedad removida — SPEC-04) + **eventos IC de ambas plantillas**, ya alineados sobre el timeline común (ADR-004). La cintura tiene todo esto sin pedir nada nuevo. Y como su crudo **se graba en las capturas** (ADR-048), las decisiones metodológicas de abajo se pueden tomar mirando espectros reales antes de prender el bloque.
 
 ---
 
@@ -392,7 +392,7 @@ Cada feature se calcula **por zancada**, sobre el segmento entre `IC(n)` e `IC(n
 
 ## SPEC-11 — Ciclo de vida de la sesión (lado firmware)
 
-**Decisión:** ADR-043 rev. **Placement:** cintura (orquesta) + plantillas (obedecen). **Estado:** definido (a implementar). **Depende de:** canal confiable (ADR-003), OTA/slots de flash (ADR-012, SPEC-08), calibración (SPEC-04), buffer de crudo (Vista 2 §7).
+**Decisión:** ADR-043 rev. **Placement:** cintura (orquesta) + plantillas (obedecen). **Estado:** definido (a implementar). **Depende de:** canal confiable (ADR-003), mensajes y enlace BLE (ADR-050, ADR-051), OTA y slots de flash (ADR-012, ADR-052, SPEC-08), sobre de los artefactos (ADR-053), calibración (SPEC-04), buffer de crudo (Vista 2 §7).
 
 **Objetivo.** Especificar **qué tiene que exponer y hacer el micro** para que la UI pueda orquestar el pipeline de 8 fases. La secuencia completa y la lógica de la app viven en la **Vista 4 §4.1**; acá va sólo el contrato del firmware.
 
@@ -411,24 +411,26 @@ Cada feature se calcula **por zancada**, sobre el segmento entre `IC(n)` e `IC(n
 | Comando | Efecto | Fase |
 |---|---|---|
 | `wipe_raw_buffers` | Limpia el ring buffer de crudo de las dos plantillas | 3 (sólo si cambió el paciente) |
-| `provision(model, feedback_config, feature_set, adaptation_enabled)` | Escribe el artefacto al slot libre con **checksum** y **cabecera `patient_id` + versión**; conmuta atómicamente; carga config | 3 |
+| `provision(model, feedback_config, feature_set, adaptation_enabled)` | Recibe el artefacto con el protocolo de OTA (ADR-052) y lo escribe al slot libre: es el **sobre** de ADR-053, con la **cabecera `patient_id` + versión** y la **huella SHA-256**; conmuta atómicamente; carga la config y el set activo (lista de ids — ADR-054) | 3 |
 | `calibrate()` | Rutina estática de SPEC-04; devuelve OK/error y un indicador en vivo de quieto/movimiento | 5 |
 | `arm(session_id, patient_id, mode)` | Verifica precondiciones, habilita el scoring y **reinicia los contadores** `stride_seq` (plantillas) y `cycle_seq` (cintura) — ADR-046 | 6 |
-| `close()` | Devuelve el estado adaptado (μ, Σ) si `adaptation_enabled`; deja de scorear | 8 |
+| `close()` | Devuelve el estado adaptado (μ, Σ) si `adaptation_enabled`, empaquetado en el mismo sobre (ADR-053); deja de scorear | 8 |
+| Intercambio de hora | Responde con su `t_device`, leído al recibir el pedido; el host arma con eso la recta a UTC (ADR-056) | siempre, cada ~10 s |
 
 **Reglas de seguridad (no negociables).**
 
 1. **Sin `arm()` no hay scoring ni feedback.** En `IDLE` el micro muestrea para el panel si se lo piden, pero **no** corre el detector ni acciona el motor.
 2. **Verificación de paciente en cada `arm()`.** Si `patient_id` de la cabecera del slot activo ≠ el de la sesión, `arm()` **falla** con código explícito. Nunca se scorea "por las dudas".
-3. **Tras un reset, el micro vuelve a `IDLE`** y re-reporta paciente y versión. Recarga el modelo de flash —por eso el flash existe— pero **no re-arma solo**: espera que el host lo re-arme. Si el host lo re-arma **en la misma sesión**, los contadores de zancadas y ciclos no pueden volver a cero —pisarían zancadas ya guardadas—: `arm()` tiene que recibir el próximo número. Cómo se retoma una sesión tras un reset: **CP-30**.
+3. **Tras un reset, el micro vuelve a `IDLE`** y re-reporta paciente y versión. Recarga el modelo de flash —por eso el flash existe— pero **no re-arma solo**: espera que el host lo re-arme. Tras un reinicio **nunca se re-arma la misma sesión**: el host abre otra (ADR-049), así que los contadores de zancadas y ciclos arrancan de cero sin chocar con los ya guardados.
 4. **El estado adaptado no se escribe a flash.** Vive en RAM; sube en `close()`. Si la sesión muere sin `close()`, se pierde: es el costo aceptado de que **la DB mande** (ADR-043 rev).
+5. **En la mínima, un corte cierra la sesión (ADR-049).** Si se pierde el enlace BLE con el host (vence el *supervision timeout*) o una plantilla (vence el heartbeat), la cintura deja de scorear y de accionar el motor y vuelve a `IDLE`; el host cierra la sesión con su motivo. Perder paquetes sueltos no es un corte (se cuenta con el `seq`). En la máxima —diferido— la cintura sostendrá la sesión y guardará lo que no pueda mandar.
 
 **Gate térmico.** El micro no decide: **publica** temperatura y uptime, y el host aplica el criterio de estabilidad. Así el umbral se ajusta sin reflashear (CP-25).
 
-**Parámetros.** Período del canal de estado (1-2 s), tamaño de la cabecera de estampa, timeout de `arm()`, umbral del indicador de quietud para la calibración.
+**Parámetros.** Período del canal de estado (1-2 s), período del intercambio de hora (~10 s — ADR-056), timeout de `arm()`, umbral del indicador de quietud para la calibración, *supervision timeout* del BLE y timeout del heartbeat de las plantillas (ADR-049).
 
-**Mecánica a implementar.** Máquina de estados en la cintura (`IDLE` → `PROVISIONED` → `CALIBRATED` → `ARMED` → `RUNNING`); cabecera de estampa en el formato de slot de SPEC-08; publicación del canal de estado; propagación de `wipe_raw_buffers` a las plantillas por el canal confiable; serialización de μ/Σ para `close()`.
+**Mecánica a implementar.** Máquina de estados en la cintura (`IDLE` → `PROVISIONED` → `CALIBRATED` → `ARMED` → `RUNNING`); cargador del sobre de ADR-053 (verifica identificador, huella, `patient_id` y `feature_set_version`); publicación del canal de estado; propagación de `wipe_raw_buffers` a las plantillas por el canal confiable; empaquetado de μ/Σ en el mismo sobre para `close()`; respuesta al intercambio de hora (ADR-056).
 
-**Referencias.** ADR-043 rev (decisión y pipeline completo), Vista 4 §4.1 y §4.2, `../pipeline_sesion.mermaid`, SPEC-04 (calibración), SPEC-08 (slots y runtime), ADR-012 (OTA A/B), ADR-032 (borrado al reasignar), CP-25 (warm-up), CP-30 (bordes: desconexión y cierre sucio), CP-31 (postura de calibración).
+**Referencias.** ADR-043 rev (decisión y pipeline completo), Vista 4 §4.1 y §4.2, `../pipeline_sesion.mermaid`, SPEC-04 (calibración), SPEC-08 (slots y runtime), ADR-012 (OTA A/B), ADR-032 (borrado al reasignar), CP-25 (warm-up), **ADR-049** (bordes: cortes, reinicios y cierre sucio), CP-31 (postura de calibración), **ADR-050 a 054 y 056** (mensajes, enlace BLE, protocolo de OTA, sobre de los artefactos, set activo y hora).
 
 ---

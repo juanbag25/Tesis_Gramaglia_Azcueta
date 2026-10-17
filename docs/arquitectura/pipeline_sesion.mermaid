@@ -65,7 +65,7 @@ sequenceDiagram
     rect rgb(238,252,243)
     Note over UI,MI: FASE 6 - VERIFICACION (GATE DURO)
     UI->>CI: verificar precondiciones
-    Note over UI,CI: modelo en flash = paciente de la sesion<br/>calibracion OK<br/>dos plantillas conectadas<br/>sincronizacion dentro de presupuesto (CP-28)<br/>bateria suficiente
+    Note over UI,CI: modelo en flash = paciente de la sesion<br/>calibracion OK<br/>dos plantillas conectadas<br/>sincronizacion activa (umbral: CP-28, diferida)<br/>bateria suficiente
     alt falla alguna
         UI-->>OP: indica cual y NO deja arrancar
     end

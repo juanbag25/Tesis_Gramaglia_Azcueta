@@ -5,8 +5,8 @@ Firmware para los tres micros (Raspberry Pi Pico 2 W, RP2350). **C/C++ con el Pi
 ## Subcarpetas
 
 - `insole/` — **plantillas**: adquisición determinística a 100 Hz (FSR por ADC + DMA con sobremuestreo y decimación; IMU MPU-6050 leído en el tick maestro por DMA — ADR-014/026), AHRS en el micro (el crudo sale post-AHRS — ADR-042), detección de eventos **IC/TO/MS** y numeración de zancadas (`stride_seq` — SPEC-01/02, ADR-046), features **por-pie** en captura operativa y edge (ADR-005 rev c), ring buffer de crudo y motor PWM.
-- `waist/` — **cintura (hub)**: WiFi AP para las plantillas, maestro de sincronización (beacon + drift — ADR-004), fusión bilateral y numeración de ciclos (`cycle_seq`), inferencia de clases L/E (SPEC-08), decisión de feedback (SPEC-09), uplink BLE al host (GATT; pairing ADR-028), ciclo de vida de la sesión (SPEC-11) y OTA A/B.
-- `shared/` — **código compartido**: catálogo de features (ADR-021), formatos de mensajes y paquetes, sincronización y protocolo OTA.
+- `waist/` — **cintura (hub)**: WiFi AP para las plantillas, maestro de sincronización (beacon + drift — ADR-004), fusión bilateral y numeración de ciclos (`cycle_seq`), inferencia de clases L/E (SPEC-08), decisión de feedback (SPEC-09), uplink BLE al host (servicio de ADR-051, definido en un `.gatt`; pairing ADR-028), ciclo de vida de la sesión (SPEC-11) y OTA A/B sobre el bootrom del RP2350 (ADR-052).
+- `shared/` — **código compartido**: catálogo `features.toml` y su tabla de C generada (ADR-021/054), formato de la muestra, `mensajes.proto` (nanopb — ADR-050), sincronización, protocolo OTA (ADR-052) y cargador del sobre de los artefactos (ADR-053).
 
 **Guías de implementación:** `docs/arquitectura/vistas/2_specs_algoritmos_firmware.md` (SPEC-01 a SPEC-11). Overview: Vista 2.
 
@@ -18,7 +18,7 @@ Firmware para los tres micros (Raspberry Pi Pico 2 W, RP2350). **C/C++ con el Pi
 
 ## Dependencias previstas
 
-Pico SDK (lwIP, BTstack), **CMSIS-DSP**, **TFLite Micro + CMSIS-NN** (`pico-tflmicro`: validar en RP2350 — CP-21), **Fusion** (AHRS). Las versiones se anclan al implementar (`docs/arquitectura/stack_tecnologico.md`).
+Pico SDK (lwIP, BTstack, `pico_sha256`), **nanopb**, **CMSIS-DSP**, **TFLite Micro + CMSIS-NN** (`pico-tflmicro`: validar en RP2350 — CP-21), **Fusion** (AHRS). Las versiones se anclan al implementar (`docs/arquitectura/stack_tecnologico.md`).
 
 ## Notas de hardware
 
@@ -26,4 +26,4 @@ Pico SDK (lwIP, BTstack), **CMSIS-DSP**, **TFLite Micro + CMSIS-NN** (`pico-tflm
 - Coexistencia WiFi-AP + BLE en el CYW43439 (un solo radio): validar temprano.
 - Antes de sellar una plantilla el OTA tiene que estar probado: al cerrarla se pierde el acceso al BOOTSEL.
 
-> **Pendiente:** contratos de interfaz —formatos de mensajes, GATT, OTA, artefactos— (**CP-34**) e inicializar el proyecto CMake del Pico SDK con los esqueletos de `insole/`, `waist/` y `shared/`.
+> **Contratos definidos** (ADR-050 a 056; tabla en la Vista 1 §4): mensajes, tabla GATT, protocolo OTA, sobre de los artefactos, catálogo y base de tiempo (`t_device` = cuenta de la cintura). **Pendiente:** inicializar el proyecto CMake del Pico SDK con los esqueletos de `insole/`, `waist/` y `shared/`, y verificar en el datasheet del RP2350 el arranque "a prueba" del bootrom antes de implementar el OTA de firmware.
