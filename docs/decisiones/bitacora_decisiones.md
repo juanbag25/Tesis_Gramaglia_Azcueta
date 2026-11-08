@@ -76,6 +76,7 @@
 | 061 | Registro de la sincronización y WiFi sin ahorro | Cada plantilla reporta los beacons recibidos y sus correcciones, y el host los guarda (`raw_blobs.kind = 'sync'`); las tres placas apagan el ahorro de energía del CYW43, que viene prendido por defecto (verificado) | aceptada |
 | 062 | Umbrales del detector de pasos | Dos poses guiadas por la interfaz en cada sesión (sentado con los pies en el aire; parado): cero y carga de pie de cada FSR; `F_on` = cero + 15 % y `F_off` = cero + 10 % de la diferencia, ajustables en el piloto; se guardan con la sesión. Cierra CP-31 | aceptada |
 | 063 | Tipo de sujeto y pie de referencia | La interfaz registra sano (prueba) o afectado y el lado afectado; el pie de referencia del emparejado es el afectado (en los sanos, el izquierdo) y se copia en la sesión | aceptada |
+| 064 | Emparejado izquierda–derecha (CP-36) | Cada zancada del pie de referencia se empareja con la del otro pie cuyo IC cae adentro; sin par, ambigua o con pausa → no hay ciclo y queda marcada. Las features por pie se calculan siempre; las bilaterales sólo con par, nunca un 0 de relleno. Arranque e IC de baja confianza fuera del baseline; `no_crossover` adentro | aceptada |
 
 ---
 
@@ -2180,11 +2181,43 @@ Dato relevado el 2026-10-17: el bootrom del RP2350 maneja **tablas de particione
 1. **En la interfaz** (laptop en la mínima; app en la máxima), al dar de alta a una persona: **sano (prueba)** o **afectado**; si es afectado, **lado afectado** (izquierdo o derecho). Se puede corregir después.
 2. **En la base:** `patients.cohort ∈ {healthy, affected}` y `patients.affected_side ∈ {left, right}`, obligatorio sólo si es afectado (lo garantiza un CHECK). `create_patient()` (ADR-059) recibe los dos datos.
 3. **Pie de referencia:** el lado afectado; en los sanos, el izquierdo. Se copia en `sessions.reference_foot` al abrir la sesión, para que una sesión ya grabada no cambie si después se corrige el dato del paciente. Es el mismo pie de referencia que usa SPEC-10 para las features de tronco.
-4. **Queda abierto (CP-36):** qué valor queda en las features cuando una zancada no tiene par, es ambigua o viene después de una pausa.
+4. **Queda abierto (CP-36):** qué valor queda en las features cuando una zancada no tiene par, es ambigua o viene después de una pausa. *(Resuelto el mismo día en ADR-064.)*
 
 **Consecuencias.** Cambian `src/db/schema.sql` (`patients.cohort`, `sessions.reference_foot`, `create_patient()`), el ER, la Vista 4 (§1.1, §4, §4.1), SPEC-05 y SPEC-10. Separar sanos de afectados también ordena el dataset: los voluntarios sanos con anomalías inducidas y los pacientes quedan distinguidos en la base.
 
 **Referencia.** ADR-046, ADR-059; SPEC-05, SPEC-10; CP-36.
+
+---
+
+## ADR-064 — Emparejado izquierda–derecha: la regla y qué queda en los casos raros (resuelve CP-36)
+**Estado:** aceptada (2026-11-08) — **Decisión: cada zancada del pie de referencia (ADR-063) se empareja con la zancada del otro pie cuyo IC cae dentro de ella; si no cae ninguno, caen dos o la zancada contiene una pausa, no se forma ciclo bilateral y la zancada queda marcada. Las features de cada pie se calculan siempre; las bilaterales existen sólo si hubo par, nunca con un 0 de relleno. Las zancadas de arranque y las de IC de baja confianza se calculan y se marcan, pero no entran al baseline ni al entrenamiento; las de `no_crossover` sí entran. Precisa ADR-046, SPEC-05 y SPEC-09.**
+
+**Contexto.** ADR-046 y SPEC-05 decían que la cintura empareja una zancada izquierda con una derecha "por IC" y numera el ciclo con `cycle_seq`, pero no daban la regla. CP-36 la propuso; ADR-063 fijó el pie de referencia y dejó abierto qué valor queda en las features cuando una zancada no tiene par, es ambigua o viene después de una pausa. Tobías confirmó la propuesta el 2026-11-08, con una precisión: la exclusión del baseline no alcanza a `no_crossover`.
+
+**Opciones evaluadas (qué queda cuando no hay par).**
+- **A — No hay vector bilateral; las features de cada pie sí (elegida).** *Pros:* no inventa datos, y cada pie conserva sus números aunque el otro no haya tocado. *Contras:* la serie bilateral tiene huecos, que las ventanas tienen que tolerar.
+- **B — Guardar 0 en las features bilaterales.** *Contras:* un 0 de asimetría significa simetría perfecta: el detector leería el hueco —que suele ser un tropiezo, un giro o un paso extra— como el ciclo más normal de todos.
+
+**Decisión.**
+1. **Regla de emparejado**, la misma en la cintura y en Python (ADR-018). Sobre el pie de referencia de la sesión (`sessions.reference_foot`, ADR-063) y el reloj ya sincronizado (ADR-004): para cada zancada de referencia `[IC(k), IC(k+1))`, su par es la zancada del otro pie cuyo IC cae adentro. Con el par, la cintura numera el ciclo (`cycle_seq`, ADR-046).
+2. **Casos raros**, que quedan como marcas en `strides.flags`:
+   - **Sin par:** no cae ningún IC del otro pie (paso no detectado, giro, frenada) → no hay ciclo.
+   - **Ambigua:** caen dos o más (paso extra, giro, falso positivo) → no hay ciclo.
+   - **Pausa:** la zancada es demasiado larga (frenada o pausa; el umbral se fija en el piloto) → corta la serie. La primera zancada después de una pausa, igual que la primera después de `arm()`, se marca como **arranque**.
+   - **IC de baja confianza** (SPEC-01) → se empareja igual, con su marca.
+3. **Qué valor queda.**
+   - Las features **de cada pie** se calculan siempre, con par o sin él, y dan sus números normales.
+   - Sin par o ambigua, **no hay vector bilateral**: ni un 0 ni otro valor de relleno.
+   - La zancada que contiene una pausa larga **no deja números**: describirían a alguien parado, no caminando.
+   - Las zancadas de **arranque** y las de **IC de baja confianza** se calculan y quedan marcadas, pero **no entran al baseline ni al entrenamiento**. Las demás marcas no excluyen: en particular, **`no_crossover` entra**, porque es señal de anomalía y no error (ADR-038), y en un paciente que nunca pasa la carga al antepié es su marcha habitual; excluirlo lo dejaría sin baseline.
+   - Las **ventanas multi-zancada** (SPEC-05, SPEC-09) usan las últimas N zancadas **válidas**: las que dejaron números y no tienen marca de exclusión; en las bilaterales, además, las que formaron ciclo. Una pausa corta la serie, así que después de ella la ventana vuelve a juntar N. Mientras no hay N, el feedback cuenta **"sin dato"** y no alerta.
+4. **Para el piloto:** el umbral de "zancada demasiado larga" y la fracción de zancadas con IC de baja confianza. Si esa fracción es grande, excluirlas también sesga el baseline, y se revisa.
+
+**Consecuencias.** Cambian SPEC-05 (identidad y ventana), SPEC-09 (ventana y "sin dato") y la Vista 3 §5 (qué entra al baseline). El esquema no cambia: las marcas van en los `flags` de `strides` y de `feature_vectors` (ADR-046), y un ciclo que no se formó simplemente no tiene fila bilateral. Cierra **CP-36** y el hueco 8 de la revisión del 2026-10-17.
+
+**Apéndice conceptual (en llano).** Para comparar los dos pies hay que saber qué paso del izquierdo va con qué paso del derecho. La regla mira un paso del pie de referencia, de un contacto con el piso al siguiente, y le busca pareja: el paso del otro pie que empezó en el medio. Si no empezó ninguno, si empezaron dos o si la persona se frenó, no hay pareja y no se inventa: cada pie conserva sus números, pero ese ciclo no tiene número de simetría. Rellenar con un cero sería peor que dejar el hueco, porque cero de asimetría quiere decir "perfectamente simétrico", justo lo contrario de un tropiezo. Y la marcha normal de cada paciente se aprende con los pasos bien medidos —sin los de arranque ni los de contacto dudoso—, pero con los pasos sin cruce de carga, que para muchos pacientes son su forma habitual de caminar.
+
+**Referencia.** ADR-004, ADR-018, ADR-038, ADR-046, ADR-063; SPEC-01, SPEC-05, SPEC-09; CP-36.
 
 ---
 

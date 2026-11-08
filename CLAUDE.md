@@ -8,7 +8,7 @@
 
 Sistema de **plantillas inteligentes bilaterales** para **detección personalizada de anomalías de marcha en pacientes post-ACV**, con **feedback vibrotáctil en tiempo real** e **inferencia en el borde (edge)**. Proyecto Final de Carrera de Bioingeniería (ITBA, 16.30), al que el repo llama "la tesis". **Entrega: 1 de marzo de 2027** (`docs/cronograma.md`).
 
-**Estado actual:** arquitectura **cerrada** en 4 vistas consolidadas; **diseño detallado terminado**. Decisiones en **ADR-000 a 061**; specs de firmware **SPEC-01 a SPEC-11**. El backlog de investigación **#1–#10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) requieren firmware y dataset. El **esquema de la base está diseñado** (`src/db/schema.sql`: Postgres 17 con series particionadas, zancada como entidad, grants explícitos — ADR-044 a 047) y se crea como **migraciones** al implementar la base (ADR-045). Los **contratos de interfaz** entre firmware, host, worker y base también están definidos (ADR-050 a 056). **Firmware, worker y base todavía no existen.** Próximo paso: ejecutar el **cronograma** (`docs/cronograma.md`, propuesta del 2026-11-08): cerrar las decisiones de diseño que quedan, presentar el protocolo al comité de ética e iniciar `src/`.
+**Estado actual:** arquitectura **cerrada** en 4 vistas consolidadas; **diseño detallado terminado**. Decisiones en **ADR-000 a 064**; specs de firmware **SPEC-01 a SPEC-11**. El backlog de investigación **#1–#10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) requieren firmware y dataset. El **esquema de la base está diseñado** (`src/db/schema.sql`: Postgres 17 con series particionadas, zancada como entidad, grants explícitos — ADR-044 a 047) y se crea como **migraciones** al implementar la base (ADR-045). Los **contratos de interfaz** entre firmware, host, worker y base también están definidos (ADR-050 a 056). **Firmware, worker y base todavía no existen.** Próximo paso: ejecutar el **cronograma** (`docs/cronograma.md`, propuesta del 2026-11-08, con el OK de Tobías; falta el de Juan): cerrar las decisiones de diseño que quedan, presentar el protocolo al comité de ética e iniciar `src/`.
 
 ## Orden de lectura recomendado (onboarding)
 
@@ -184,7 +184,7 @@ El autor ve `CONFLICT (content): Merge conflict in <archivo>`. Vos resolvés **e
 
 ## Cuestiones pendientes
 
-El registro vivo está en **`docs/cuestiones_pendientes.md`** — **única fuente de verdad, y este archivo no la duplica**. Al 2026-11-08 hay **16 abiertas** y **22 resueltas**. Copiar la lista acá fue justamente lo que la desactualizó antes: vale la misma regla que ADR-037 (esquema) y ADR-039 (decisiones) — *una sola fuente, varios consumidores*.
+El registro vivo está en **`docs/cuestiones_pendientes.md`** — **única fuente de verdad, y este archivo no la duplica**. Al 2026-11-08 hay **13 abiertas** y **25 resueltas**. Copiar la lista acá fue justamente lo que la desactualizó antes: vale la misma regla que ADR-037 (esquema) y ADR-039 (decisiones) — *una sola fuente, varios consumidores*.
 
 **La única que amerita alerta en el onboarding:** **CP-21** (port de `pico-tflmicro` a RP2350) es la **única cuestión abierta que puede voltear una decisión ya tomada** (ADR-020/SPEC-08). El mantenedor de `pico-tflmicro` confirmó en el issue #18 (cerrado el 27/12/2024) que corre en RP2350, pero el README sigue nombrando sólo el RP2040. Se descarta con una prueba de banco aislada, sin necesidad del firmware del proyecto, y conviene hacerla **antes** de escribir firmware que dependa de SPEC-08.
 
