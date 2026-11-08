@@ -1,6 +1,6 @@
 # Cronograma y plan de trabajo hasta la entrega
 
-> **Estado:** propuesta del 2026-11-08; **Tobías dio el OK el mismo día**, con la validación contra una referencia ya pasada a trabajo futuro (§4). Falta el OK de Juan. **Fecha de entrega fijada por Juan: 1 de marzo de 2027.**
+> **Estado:** **confirmado por Juan y Tobías el 2026-11-08** (el OK de Juan lo transmitió Tobías), con la validación contra una referencia ya pasada a trabajo futuro (§4). **Fecha de entrega fijada por Juan: 1 de marzo de 2027.**
 >
 > **Qué es.** El calendario de lo que falta hacer, con el alcance que entra hasta la entrega. Reemplaza el cronograma del anteproyecto (§7: seis fases entre abril y noviembre de 2026), que queda como registro histórico, igual que el resto del anteproyecto (ADR-030). Es también el roadmap de implementación por fases que estaba pendiente.
 >
@@ -52,7 +52,7 @@ El diseño llevó más que lo previsto, pero deja resueltas casi todas las decis
 - **Capturas:** piloto técnico, voluntarios sanos con anomalías inducidas; pacientes, si se puede (§4). La calibración de cada sujeto lleva ~200 zancadas por pie (ADR-060).
 - **Redacción de la tesis.**
 
-## 4. Alcance hasta el 1/3 (OK de Tobías; falta el de Juan)
+## 4. Alcance hasta el 1/3 (confirmado)
 
 **Entra lo que el anteproyecto llama objetivos de mínima** (§5.2), que son el compromiso formal de la tesis, **salvo la validación contra una referencia del objetivo 2**, que pasa a trabajo futuro (8/11):
 

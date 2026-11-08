@@ -2,6 +2,10 @@
 
 > Registro cronológico de cambios en el proyecto (arquitectura, docs, código, decisiones). Entrada más reciente arriba. Formato: fecha — qué cambió — por qué / referencia.
 
+## 2026-11-08 — Cronograma confirmado
+
+- `docs/cronograma.md` deja de ser propuesta: lo confirmaron Juan y Tobías (el OK de Juan lo transmitió Tobías), con la validación contra una referencia ya pasada a trabajo futuro. Cambian el encabezado y la §4 del cronograma, el *Estado actual* de `CLAUDE.md` y `memoria/memory.md`.
+
 ## 2026-11-08 — Vista 4 §1.5: las tablas de series son cinco
 
 - La Vista 4 §1.5 decía "las cuatro tablas de series" y no nombraba `device_status`, que ADR-059 sumó como serie particionada. Ahora dice cinco, como `src/db/schema.sql` y la §1.1 de la misma vista. Archivo: `docs/arquitectura/vistas/4_vista_backend_app.md`.
