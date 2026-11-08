@@ -13,6 +13,8 @@ Dos firmwares en **C/C++ con el Pico SDK** [ADR-010], con **código compartido**
 - **Plantilla (insole):** adquiere a 100 Hz, detecta IC/TO/MS, calcula **features por-pie**, mantiene un buffer de crudo y acciona el **motor PWM**.
 - **Cintura (waist):** **AP WiFi**, **maestro de sync** (beacon), **fusión bilateral**, **inferencia + decisión de feedback**, **uplink BLE**; en las capturas, además, **sube su propio crudo** del tronco (ADR-048).
 
+**Regla de codificación para la paridad (ADR-021, nota del 2026-11-08).** Las funciones que calculan features (y las de eventos y scores) son **puras**: reciben números —las muestras de la ventana, los eventos, los parámetros— y devuelven números, sin leer el ADC, el IMU, la radio ni ningún periférico. La lectura del hardware vive en otra capa, que les pasa los datos. Así el mismo C se compila para el Pico y para la computadora de CI, donde corre el test de paridad contra Python con los *golden vectors* (ADR-018, ADR-021). Esos archivos de prueba son datos sintéticos, y sus extensiones (`.csv`, `.npz`, `.bin`) están excluidas en `.gitignore`: al crear la carpeta de tests hay que agregarle una excepción.
+
 ```mermaid
 flowchart TB
     subgraph INSOLE["Plantilla (per-pie)"]
@@ -62,7 +64,7 @@ Muestreo **exacto y periódico** pese a la actividad del radio (el jitter arruin
 
 La **cintura emite el beacon** periódico **por WiFi** a las plantillas —es el enlace que hay que alinear a nivel de muestra, y no cambia entre mínima y máxima—; cada muestra lleva **timestamp + seq**; la **corrección de drift** (regresión lineal) corre en la **capa de aplicación** (portable WiFi↔BLE). El **backbone es el único que sincroniza**; el **emparejado de zancadas por IC usa el reloj ya sincronizado** — no sincroniza ni compensa drift (ver Vista 1 §5).
 
-**Dos requisitos de ADR-061.** (1) Las tres placas apagan el ahorro de energía del WiFi apenas lo levantan, con `cyw43_wifi_pm(&cyw43_state, CYW43_NONE_PM)`: el driver del CYW43 lo deja prendido por defecto (modo PM2), y una plantilla en ahorro recibe los beacons con decenas o cientos de milisegundos de atraso. (2) Cada plantilla reporta, por el canal confiable, los beacons que recibió —número, la cuenta de la cintura que traen y su propia cuenta al recibirlos— y las correcciones que aplica; el host los guarda para poder rehacer y medir la sincronización. Dónde se toma la hora del beacon en la cintura se decide al implementar (CP-28).
+**Tres requisitos de ADR-061.** (1) Las tres placas apagan el ahorro de energía del WiFi apenas lo levantan, con `cyw43_wifi_pm(&cyw43_state, CYW43_NONE_PM)`: el driver del CYW43 lo deja prendido por defecto (modo PM2), y una plantilla en ahorro recibe los beacons con decenas o cientos de milisegundos de atraso. (2) Cada plantilla reporta, por el canal confiable, los beacons que recibió —número, la cuenta de la cintura que traen y su propia cuenta al recibirlos— y las correcciones que aplica; el host los guarda para poder rehacer y medir la sincronización. (3) La cintura escribe la hora en el beacon **en el último paso antes de entregarlo a la pila de red** (la llamada de envío de lwIP), no cuando decide mandarlo; lo que demore la radio después se mide con el registro de (2) (ADR-061 punto 3).
 
 ## 5. Inferencia on-device — [ADR-020 / SPEC-08]
 

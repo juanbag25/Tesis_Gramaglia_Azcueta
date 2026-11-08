@@ -6,7 +6,8 @@
 -- ADR-044 (particionado), ADR-046 (identidad de las series) y ADR-047 (grants y RLS), con
 -- los ajustes de ADR-049 (fin de sesion), ADR-053 (artefactos), ADR-055 (crudo), ADR-056 (hora)
 -- y los de la revision previa a implementar: ADR-059 (alta de pacientes, feedback por tipo de
--- detector, vinculo sesion-modelo, canal de estado) y ADR-061 (registro de la sincronizacion).
+-- detector, vinculo sesion-modelo, canal de estado), ADR-061 (registro de la sincronizacion),
+-- ADR-062 (calibracion de los FSR por sesion) y ADR-063 (tipo de sujeto y pie de referencia).
 -- Todavia no se corrio contra una base: se valida al crear la migracion base.
 -- Cuando se cree la base, este contenido pasa a ser la migracion base
 -- (src/db/supabase/migrations/<timestamp>_baseline.sql) y el esquema cambia SOLO con
@@ -37,9 +38,15 @@ create table patients (
   external_code text unique,            -- codigo anonimo, no PII directa (ADR-032)
   birth_year int,
   sex text,
-  affected_side text check (affected_side in ('left','right','none')),
+  -- Tipo de sujeto y lado afectado (ADR-063): los carga la interfaz al dar de alta y se pueden
+  -- corregir. healthy = voluntario sano (prueba); affected = paciente, con su lado afectado.
+  cohort text not null check (cohort in ('healthy','affected')),
+  affected_side text check (affected_side in ('left','right')),
   clinical_notes jsonb,
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  constraint patients_affected_side_ck check (
+    (cohort = 'affected' and affected_side is not null)
+    or (cohort = 'healthy' and affected_side is null))
 );
 
 create table devices (
@@ -72,6 +79,15 @@ create table sessions (
   -- nueva; true = arranca en N y produce EXACTAMENTE UNA version nueva al cerrar (parent_version=N).
   -- Es lo que habilita la comparacion pareada con y sin adaptacion.
   adaptation_enabled boolean not null default true,
+  -- Pie de referencia del emparejado de zancadas (ADR-063, SPEC-05): el lado afectado del
+  -- paciente; en los sanos, el izquierdo. El host lo copia al abrir la sesion, para que una
+  -- sesion ya grabada no cambie si despues se corrige el dato del paciente.
+  reference_foot text not null check (reference_foot in ('left','right')),
+  -- Calibracion de los FSR de la sesion (ADR-062), en cuentas del ADC: por pie, el cero (sentado,
+  -- pies en el aire) y la carga de pie (parado) de cada FSR y de F_total, los umbrales F_on/F_off
+  -- que salen de ahi y los porcentajes usados. La mide la fase 5; el host la escribe al crear la
+  -- fila (fase 7).
+  fsr_calibration jsonb,
   -- started_at: inicio de la sesion (fase 7 del pipeline, ADR-043 rev). Cada fila de las series
   -- lo copia como session_started_at, que es la clave de particion (ADR-044): no cambia nunca.
   started_at timestamptz not null default now(),
@@ -265,11 +281,14 @@ $$;
 -- host no podria crear pacientes. Crea el paciente y el acceso 'owner' de quien la llama en un
 -- solo paso. Esta en public porque el host la llama por la Data API (RPC).
 -- ============================================================
+-- p_cohort y p_affected_side son lo que pide la interfaz al dar de alta (ADR-063); el CHECK de
+-- patients rechaza un afectado sin lado o un sano con lado.
 create or replace function public.create_patient(
   p_external_code text,
+  p_cohort text,
+  p_affected_side text default null,
   p_birth_year int default null,
   p_sex text default null,
-  p_affected_side text default null,
   p_clinical_notes jsonb default null
 )
 returns uuid
@@ -283,8 +302,8 @@ begin
   if (select auth.uid()) is null then
     raise exception 'create_patient: hace falta un usuario autenticado';
   end if;
-  insert into public.patients (external_code, birth_year, sex, affected_side, clinical_notes)
-  values (p_external_code, p_birth_year, p_sex, p_affected_side, p_clinical_notes)
+  insert into public.patients (external_code, cohort, affected_side, birth_year, sex, clinical_notes)
+  values (p_external_code, p_cohort, p_affected_side, p_birth_year, p_sex, p_clinical_notes)
   returning id into v_id;
   insert into public.patient_access (user_id, patient_id, role)
   values ((select auth.uid()), v_id, 'owner');
@@ -555,8 +574,8 @@ revoke all on function private.secure_partitions() from public, anon, authentica
 grant usage on schema private to authenticated;
 grant execute on function private.accessible_patient_ids() to authenticated;
 -- Las funciones de Postgres se crean ejecutables por PUBLIC: se cierra y se abre solo al host.
-revoke all on function public.create_patient(text, int, text, text, jsonb) from public, anon;
-grant execute on function public.create_patient(text, int, text, text, jsonb) to authenticated;
+revoke all on function public.create_patient(text, text, text, int, text, jsonb) from public, anon;
+grant execute on function public.create_patient(text, text, text, int, text, jsonb) to authenticated;
 
 -- ============================================================
 -- RLS en TODAS las tablas expuestas (ADR-032 + ADR-047)

@@ -32,7 +32,7 @@
 
 **Salida.** Evento `{ tipo: IC|TO|MS, t_evento (µs), pie, stride_seq, confianza, flags }` → (1) buffer local (features + segmentación de fases + ZUPT) y (2) envío a la **cintura** (fusión bilateral / double support, emparejado de zancadas, timing de feedback). `stride_seq` es el número de la zancada a la que pertenece el evento: el IC abre una zancada nueva y el MS y el TO de ese apoyo llevan su número (SPEC-02; ADR-046). Persistido en `gait_events` (`type ∈ {IC,TO,MS}`, con sus `flags`), colgado de su zancada en `strides`.
 
-**Parámetros calibrables (por paciente, en la calibración/baseline).** `F_on`, `F_off` (en cuentas; ya no pueden derivarse del peso corporal porque no hay curva de fuerza —ADR-058—: cuándo y con qué se fijan está en **CP-35**), `W`, `t_ref`, `h_ms`, y el mapeo **FSR → región** (antepié / retropié), que sale de la config de posiciones del catálogo. Se versionan junto con el `feature_set_version`.
+**Parámetros calibrables.** `F_on` y `F_off` se fijan **en cada sesión**, por pie y sobre `F_total` en cuentas, con las **dos poses guiadas por la interfaz** de ADR-062 (sentado con los pies en el aire → cero; parado quieto → carga de pie): `F_on = cero + 0,15 × (carga − cero)` y `F_off = cero + 0,10 × (carga − cero)`, valores de arranque que se ajustan en el piloto. Se guardan con la sesión (`sessions.fsr_calibration`); si el micro detecta los eventos (captura operativa o edge), el host se los manda antes de `arm()` (SPEC-11). `W`, `t_ref`, `h_ms` y el mapeo **FSR → región** (antepié / retropié), que sale de la config de posiciones del catálogo, se versionan junto con el `feature_set_version`.
 
 **Nota sobre la definición de MS (honestidad terminológica).** En la literatura clásica (Perry), *mid-stance* es un evento **cinemático**: la tibia queda vertical sobre el pie apoyado. Lo que detecta esta spec es el **cruce de carga** retropié→antepié, que en marcha sana cae cerca de ese instante pero en marcha hemipléjica **puede divergir** —y suele hacerlo tarde, o no ocurrir. Se elige la definición de carga porque (a) es la que el FSR entrega de forma robusta, (b) es el instante funcionalmente relevante para el déficit de push-off, y (c) mantiene la misma arquitectura de detección que IC/TO (FSR primario + confirmación IMU). La confirmación por pie-plano del IMU ancla el evento al mid-stance cinemático cuando ambos coinciden; la **divergencia entre ambos es informativa** y queda como candidata de feature a futuro.
 
@@ -123,6 +123,7 @@
 - **Estática** ("dejar quieto", post warm-up 2-3 min, sin vibración): bias de giro (promedio), offset de accel (nivelado).
 - **Runtime:** re-zero del bias de giro durante el ***stance*** (detectado por FSR) → reduce deriva; sinérgico con el ZUPT.
 - **Anatómica:** pose **pie-plano** en la sesión → alinea el vertical con la gravedad (roll/pitch anatómicos); heading por dirección de marcha (opcional).
+- **Las poses de la sesión (ADR-062).** La calibración estática y la anatómica se hacen en las **dos poses que guía la interfaz** en la fase 5, que sirven a la vez para los FSR: **pose 1, sentado con los pies en el aire (~5 s)** → bias de giro (y el cero de los FSR); **pose 2, parado quieto con el pie plano (~5 s)** → vector gravedad y alineación anatómica (y la carga de pie de los FSR). La interfaz muestra la instrucción, espera el indicador de quietud (SPEC-11) y repite la pose si hubo movimiento. Cierra CP-31.
 
 **Consumidores.** ZUPT/stride length (SPEC-03), foot pitch en IC/TO, ROM pitch/roll, LDLJ, mean angular velocity (bloques F/G).
 
@@ -152,7 +153,7 @@
 - **Plantilla (per-pie):** buffer de las features por-pie → **variabilidad** (bloque B: CoV de stride/stance/swing/cadence) y **Force Symmetry Index consecutivo** (feature 21).
 - **Cintura (bilateral):** buffer de features por-pie de **ambos** pies → **Symmetry Index** (feature 20) estabilizado sobre la ventana.
 
-**Identidad (ADR-046).** Cada entrada del buffer es una zancada identificada por su `stride_seq` (SPEC-02). En la **cintura**, al emparejar una zancada izquierda con una derecha —por IC, sobre el reloj ya sincronizado (ADR-004)—, se numera el **ciclo bilateral** con **`cycle_seq`**, un contador que arranca en `arm()`. El vector bilateral sale con ese número y con el par de `stride_seq` que cerró el ciclo, y los scores evaluados sobre ese ciclo se identifican con el mismo número.
+**Identidad (ADR-046).** Cada entrada del buffer es una zancada identificada por su `stride_seq` (SPEC-02). En la **cintura**, al emparejar una zancada izquierda con una derecha —por IC, sobre el reloj ya sincronizado (ADR-004)—, se numera el **ciclo bilateral** con **`cycle_seq`**, un contador que arranca en `arm()`. El vector bilateral sale con ese número y con el par de `stride_seq` que cerró el ciclo, y los scores evaluados sobre ese ciclo se identifican con el mismo número. El emparejado toma un **pie de referencia** fijo por sesión: el **lado afectado** del paciente y, en los voluntarios sanos, el izquierdo; lo carga la interfaz al dar de alta a la persona y se copia en `sessions.reference_foot` (ADR-063). La regla completa —qué pasa si el otro pie no tocó o tocó dos veces, y qué valor queda en las features— está en CP-36.
 
 **Ventana.** Deslizante de N zancadas (estándar para CoV; coincide con el marco "≥10 zancadas"). *Alternativa:* EWMA (menos memoria, adaptación continua) — no elegida por ahora (la ventana fija es más interpretable para CoV).
 
@@ -318,7 +319,7 @@ Solapamiento (hop) configurable (p. ej. 50 %). **N y hop versionados con `featur
 
 ### Segmentación (común a las tres)
 
-Cada feature se calcula **por zancada**, sobre el segmento entre `IC(n)` e `IC(n+1)` del **mismo pie de referencia** (fijar cuál en la config y mantenerlo: cambiar de pie de referencia cambia la fase, no el valor del IHR, pero sí la comparabilidad de las series).
+Cada feature se calcula **por zancada**, sobre el segmento entre `IC(n)` e `IC(n+1)` del **mismo pie de referencia** (el de la sesión, `sessions.reference_foot`: el lado afectado o, en los sanos, el izquierdo — ADR-063; mantenerlo fijo importa porque cambiar de pie de referencia cambia la fase, no el valor del IHR, pero sí la comparabilidad de las series).
 
 **Dependencia dura con la calidad del IC.** Si `IC(n)` o `IC(n+1)` vienen con **baja confianza** (SPEC-01), el segmento no es una zancada exacta: la ventana deja de ser un período y la energía se desparrama entre bins (*spectral leakage*), lo que **se lee como asimetría aunque no la haya**. **Recomendación: descartar la zancada** para #45, o emitirla marcada, y dejar la elección como parámetro. #46 y #47 son mucho menos sensibles (no dependen de que la ventana sea un período exacto).
 
@@ -412,7 +413,8 @@ Cada feature se calcula **por zancada**, sobre el segmento entre `IC(n)` e `IC(n
 |---|---|---|
 | `wipe_raw_buffers` | Limpia el ring buffer de crudo de las dos plantillas | 3 (sólo si cambió el paciente) |
 | `provision(models[], feedback_config, feature_set, adaptation_enabled)` | Recibe **cada** artefacto de la lista con el protocolo de OTA (ADR-052) y lo escribe al slot libre de **su** par A/B: es el **sobre** de ADR-053, con la **cabecera `patient_id` + versión** y la **huella SHA-256**; conmuta atómicamente; carga la config y el set activo (lista de ids — ADR-054). La lista puede venir **vacía**: un paciente nuevo todavía no tiene modelo y las capturas no lo necesitan (ADR-057, ADR-059) | 3 |
-| `calibrate()` | Rutina estática de SPEC-04; devuelve OK/error y un indicador en vivo de quieto/movimiento | 5 |
+| `calibrate(pose)` | Una por cada pose que guía la interfaz (ADR-062): `seated_feet_up` (bias de giro) y `standing` (gravedad y alineación anatómica) — SPEC-04. Devuelve OK/error, un indicador en vivo de quieto/movimiento y el **promedio de cada FSR** en la pose, con el que el host calcula el cero, la carga de pie y los umbrales | 5 |
+| `set_step_thresholds(left, right)` | Carga `F_on`/`F_off` de cada pie (en cuentas) en las plantillas. Sólo si el micro detecta los eventos (captura operativa o edge); en la exploratoria los pasos se detectan en Python con los mismos valores, leídos de la sesión | 5 |
 | `arm(session_id, patient_id, mode)` | Verifica precondiciones, habilita el scoring y **reinicia los contadores** `stride_seq` (plantillas) y `cycle_seq` (cintura) — ADR-046 | 6 |
 | `close()` | Devuelve el estado adaptado (μ, Σ) de cada modelo de clase L si `adaptation_enabled`, empaquetado en el mismo sobre (ADR-053); deja de scorear | 8 |
 | Intercambio de hora | Responde con su `t_device`, leído al recibir el pedido; el host arma con eso la recta a UTC (ADR-056) | siempre, cada ~10 s |
@@ -431,6 +433,6 @@ Cada feature se calcula **por zancada**, sobre el segmento entre `IC(n)` e `IC(n
 
 **Mecánica a implementar.** Máquina de estados en la cintura (`IDLE` → `PROVISIONED` → `CALIBRATED` → `ARMED` → `RUNNING`); cargador del sobre de ADR-053 (verifica identificador, huella, `patient_id` y `feature_set_version`); publicación del canal de estado; propagación de `wipe_raw_buffers` a las plantillas por el canal confiable; empaquetado de μ/Σ en el mismo sobre para `close()`; respuesta al intercambio de hora (ADR-056).
 
-**Referencias.** ADR-043 rev (decisión y pipeline completo), Vista 4 §4.1 y §4.2, `../pipeline_sesion.mermaid`, SPEC-04 (calibración), SPEC-08 (slots y runtime), ADR-012 (OTA A/B), ADR-032 (borrado al reasignar), CP-25 (warm-up), **ADR-049** (bordes: cortes, reinicios y cierre sucio), CP-31 (postura de calibración), **ADR-050 a 054 y 056** (mensajes, enlace BLE, protocolo de OTA, sobre de los artefactos, set activo y hora).
+**Referencias.** ADR-043 rev (decisión y pipeline completo), Vista 4 §4.1 y §4.2, `../pipeline_sesion.mermaid`, SPEC-04 (calibración), SPEC-08 (slots y runtime), ADR-012 (OTA A/B), ADR-032 (borrado al reasignar), CP-25 (warm-up), **ADR-049** (bordes: cortes, reinicios y cierre sucio), **ADR-062** (las dos poses de calibración y los umbrales del detector), **ADR-050 a 054 y 056** (mensajes, enlace BLE, protocolo de OTA, sobre de los artefactos, set activo y hora).
 
 ---

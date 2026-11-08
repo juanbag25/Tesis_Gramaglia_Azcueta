@@ -74,6 +74,8 @@
 | 059 | Ajustes del esquema y los contratos (revisión previa a implementar) | `create_patient()` para el alta; `feedback_source` por tipo de detector; `session_models`, `models.source_session_id` y `sessions.feedback_config_id`; tabla `device_status` para el canal de estado; `provision()` con lista de modelos; `devices.hw_uid`. Extiende ADR-047 | aceptada |
 | 060 | Zancadas de calibración | ~200 por pie (antes ~100), en tandas; alcanza con un vector de ~20 features. Método del umbral de Mahalanobis → CP-37 | aceptada |
 | 061 | Registro de la sincronización y WiFi sin ahorro | Cada plantilla reporta los beacons recibidos y sus correcciones, y el host los guarda (`raw_blobs.kind = 'sync'`); las tres placas apagan el ahorro de energía del CYW43, que viene prendido por defecto (verificado) | aceptada |
+| 062 | Umbrales del detector de pasos | Dos poses guiadas por la interfaz en cada sesión (sentado con los pies en el aire; parado): cero y carga de pie de cada FSR; `F_on` = cero + 15 % y `F_off` = cero + 10 % de la diferencia, ajustables en el piloto; se guardan con la sesión. Cierra CP-31 | aceptada |
+| 063 | Tipo de sujeto y pie de referencia | La interfaz registra sano (prueba) o afectado y el lado afectado; el pie de referencia del emparejado es el afectado (en los sanos, el izquierdo) y se copia en la sesión | aceptada |
 
 ---
 
@@ -630,6 +632,8 @@ Campos del registry: `inference_target ∈ {hub, host, worker}`, `retrain_target
 **Consecuencias.** **Refina ADR-018** (su punto 4: se **descartan** el C-compartido y el codegen como escalación; quedan disciplina numérica + tolerancias + monitoreo round-trip). **Resuelve CP-12** (mecanismo de modularidad: catálogo declarativo + set activo versionado; la *selección* data-driven de qué se prende sigue en el backlog #12). Ubicación: `src/firmware/shared/` (catálogo + definición en C) + espejo en el worker (Python) + tests de paridad en CI. Detalle: **Vista 3, Parte B**.
 
 *(Formato fijado el 2026-10-17 por ADR-054: TOML, con una tabla de C generada para el firmware.)*
+
+*(Nota del 2026-11-08, al cerrar CP-38: para que el test de paridad pueda correr el C en la computadora de CI —que no tiene el ADC, el DMA ni la radio del Pico—, las funciones de features del firmware se escriben **puras**: reciben números (las muestras de la ventana, los eventos) y devuelven números, sin leer sensores ni tocar periféricos. La lectura del hardware queda en otra capa, que les pasa los datos. Es una regla de codificación, no una decisión nueva: la estrategia de paridad sigue siendo la de este ADR y la de ADR-018. Ver Vista 2 §1.)*
 
 **Fuentes.**
 - Golden/round-trip parity tests con tolerancia + eliminación de train/serve skew — dswok (train/serve skew); Nubank (guía); Confluent (eliminación).
@@ -1457,7 +1461,7 @@ La secuencia de 8 estados de arriba se detalla acá; el diagrama vive en `../arq
 | 2 | Configuración | Paciente, modo (`exploratory`/`operational`/`edge`) y `adaptation_enabled` | operador |
 | 3 | Provisioning | Se baja de la DB la versión activa del modelo + `feedback_config` + set activo, y **se escribe a flash** (slot A/B, checksum, estampado con `patient_id` + versión). Si el paciente cambió, además se limpian los ring buffers de crudo de las dos plantillas | seg |
 | 4 | Gate térmico | Espera el remanente, ya descontado lo consumido en 1-3 | resto |
-| 5 | Calibración | Poses (postura → CP-31); bias de giro, offset de accel, alineación anatómica | decenas de seg |
+| 5 | Calibración | Poses (dos poses guiadas → ADR-062); bias de giro, offset de accel, alineación anatómica | decenas de seg |
 | 6 | Verificación | Modelo en flash = paciente de la sesión · calibración OK · dos plantillas conectadas · sincronización dentro de presupuesto · batería suficiente. **Sin esto no arranca** | instantáneo |
 | 7 | Sesión | Fila en `sessions`; grabación/scoring según el modo; adaptación en RAM si está habilitada | la sesión |
 | 8 | Cierre | Se sella `ended_at`; si hubo adaptación el micro sube el estado final y el host lo versiona (N+1). **El flash no se toca** | seg |
@@ -2039,13 +2043,15 @@ Dato relevado el 2026-10-17: el bootrom del RP2350 maneja **tablas de particione
 **Qué cambia en las métricas.**
 - **No cambian:** las de tiempo (bloques A y B, y #15 contact time y #17 time-to-peak dentro del C), las del IMU (F, G, H) y double/single support. Cuentas y fuerza crecen juntas —una es función creciente de la otra—, así que el instante de un pico o de un cruce de umbral es el mismo.
 - **Cambian de unidad** —siguen sirviendo para detectar desvíos del propio paciente, pero no se pueden comparar con valores en N de la literatura ni entre pacientes—: #12 pico, #13 media, #14 integral y #16 pendiente de carga. Además la relación no es lineal: con carga alta el divisor se aplana y las diferencias se comprimen.
-- **Se sesgan las comparaciones entre sensores distintos:** el cruce de MS (`F_ante ≥ F_post`, SPEC-01), #19 (punta contra talón) y la simetría izquierda–derecha de las features de fuerza (#20, #40); y, cuando se prendan, COP_ML y #18. Dos FSR dan cuentas distintas para la misma fuerza. Una mitigación posible —normalizar cada sensor con dos poses quietas al inicio de la sesión— queda propuesta en **CP-35**.
+- **Se sesgan las comparaciones entre sensores distintos:** el cruce de MS (`F_ante ≥ F_post`, SPEC-01), #19 (punta contra talón) y la simetría izquierda–derecha de las features de fuerza (#20, #40); y, cuando se prendan, COP_ML y #18. Dos FSR dan cuentas distintas para la misma fuerza. Una mitigación posible —normalizar cada sensor por su carga de pie, medida en las poses de ADR-062— queda propuesta en **CP-35**.
 - **El baseline personalizado absorbe los sesgos constantes:** el modelo aprende la marcha del paciente medida con esos sensores. **Regla nueva:** si se cambia un FSR o una plantilla, el baseline del paciente se reconstruye.
-- **Umbrales del detector:** `F_on` y `F_off` (SPEC-01) se expresan en cuentas y ya no pueden derivarse del peso corporal → **CP-35**.
+- **Umbrales del detector:** `F_on` y `F_off` (SPEC-01) se expresan en cuentas y ya no pueden derivarse del peso corporal → se fijan con dos poses guiadas en cada sesión (**ADR-062**).
 - **Salidas clínicas que necesitan fuerza** (asimetría de carga WBA, porcentaje del peso, mapas de presión en unidades) no están disponibles (CP-22).
 - **Saturación:** en el piloto hay que verificar que ningún FSR sature (la señal se aplana arriba); depende de la resistencia del divisor (`esquema_alimentacion.md` §4).
 
 **Consecuencias.** Cambian SPEC-01 (entradas y parámetros), la Vista 1 §4 (qué llevan los casilleros), la Vista 3 (§5 y el bloque C de la Parte A), `calibracion_baseline.mermaid` y `pinout_pico2.md`; notas en ADR-042 y ADR-055. Cierra el hueco 3 de la revisión del 2026-10-17. Si más adelante se miden las curvas, un ADR nuevo define cómo se aplican, sin tocar lo ya grabado.
+
+**Trabajo futuro (Juan, 2026-11-08).** En algún momento se debería medir la curva fuerza–cuentas de cada sensor y pasar las features de fuerza a newtons; por ahora no. Como el crudo queda en cuentas, la conversión se podrá aplicar después a las sesiones ya grabadas. Figura en la lista de trabajo futuro del cronograma (`docs/cronograma.md` §4).
 
 **Apéndice conceptual (en llano).** El micro no mide newtons: mide una tensión y la convierte en un número de 0 a 4095, las "cuentas". Para saber a cuántos newtons corresponde cada número habría que cargar cada sensor con pesos conocidos y armar su curva. Sin esa curva, los números siguen sirviendo para lo que hace el sistema —comparar la marcha del paciente con su propia marcha normal, medida con los mismos sensores—, pero no para decir "pisó con 600 N" ni para comparar dos sensores distintos como si fueran iguales. Lo que depende sólo de *cuándo* pasa algo —cuándo apoya, cuándo despega, cuándo llega al pico— no cambia.
 
@@ -2122,13 +2128,63 @@ Dato relevado el 2026-10-17: el bootrom del RP2350 maneja **tablas de particione
 **Decisión.**
 1. **Registro de la sincronización.** Cada plantilla manda, por el canal confiable y en lotes, una fila por beacon recibido —número de beacon, la cuenta de la cintura que trae y su propia cuenta al recibirlo— y, cada vez que cambia, la corrección que aplica (desfase, deriva y desde qué instante). Es un mensaje más de `mensajes.proto` (ADR-050), que la cintura reenvía por `estado` (ADR-051). El host lo guarda en Parquet por tramos, junto al crudo de esa plantilla, como `raw_blobs.kind = 'sync'` (ADR-055).
 2. **Sin ahorro de energía en el WiFi.** Las tres placas llaman a `cyw43_wifi_pm(&cyw43_state, CYW43_NONE_PM)` después de levantar el WiFi. El consumo extra ya estaba asumido por ADR-035 y se mide en CP-09.
-3. **Queda para la implementación (anotado en CP-28):** dónde se toma la hora del beacon en la cintura. Si se toma antes de que la radio lo transmita, su demora —la radio se comparte con el BLE— entra como error: se cancela entre los dos pies, que reciben el mismo mensaje, pero no entre la cintura y las plantillas.
+3. **Dónde se toma la hora del beacon en la cintura** *(precisado el mismo 2026-11-08: Juan pidió adoptar la propuesta en vez de dejarlo para la implementación)*.
+   - La cintura arma el beacon y le escribe su hora **en el último paso antes de entregarlo a la pila de red** (la llamada de envío de lwIP), no cuando decide mandarlo: así queda afuera la demora del propio programa. Lo que tarde la radio después —por ejemplo, porque está atendiendo al BLE— el programa no lo ve, y entra como error.
+   - **Entre los dos pies ese error se cancela:** reciben el mismo mensaje en el mismo instante. **Entre la cintura y las plantillas, no:** importa para cruzar el movimiento del tronco con los pasos (bloque I, hoy apagado por alcance).
+   - **Se mide con el registro del punto 1, sin hardware extra.** Comparar cuándo recibió cada pie el *mismo* beacon da el error de la recepción sola: es el principio de RBS, que compara dos receptores del mismo mensaje sin usar la hora del emisor. Comparar cada pie contra la hora que trae el beacon da el error total. La diferencia entre las dos dispersiones es la demora variable de la cintura. Se puede calcular con los datos de cualquier sesión; conviene mirarlo en el piloto.
+   - **Si esa demora resulta grande,** el análisis offline puede volver a sincronizar los dos pies sólo con sus horas de recepción (RBS), sin la hora de la cintura. La parte *constante* de la demora —un corrimiento fijo entre la cintura y las plantillas— no se puede medir así: hace falta una referencia externa, como el pulso cableado de CP-28, que sigue diferido a la máxima.
 
-**Consecuencias.** Cambian `src/db/schema.sql` (`raw_blobs.kind`), la Vista 1 §4 y §5, la Vista 2 §4 y la Vista 4 §1.4; notas en ADR-004, ADR-055 y CP-28. Cierra el hueco 6 de la revisión del 2026-10-17, salvo el punto 3, que es de implementación.
+**Consecuencias.** Cambian `src/db/schema.sql` (`raw_blobs.kind`), la Vista 1 §4 y §5, la Vista 2 §4 y la Vista 4 §1.4; notas en ADR-004, ADR-055 y CP-28. Cierra el hueco 6 de la revisión del 2026-10-17. La precisión absoluta de la sincronización sigue en CP-28, diferida a la máxima.
 
 **Apéndice conceptual (en llano).** Para que los dos pies compartan la hora, la cintura grita "¡son las tanto!" por WiFi y cada plantilla ajusta su reloj. Hasta ahora cada plantilla ajustaba y tiraba el papel: si después se descubría que el ajuste estaba mal, no había cómo rehacerlo. Ahora guarda el papel —cuándo oyó cada grito y qué ajuste hizo—, que ocupa casi nada. El ahorro de energía era otro problema: una plantilla que dormita escucha los gritos con atraso, y el kit del Pico viene con ese modo prendido; hay que apagarlo en el código.
 
 **Referencia.** ADR-004, ADR-035, ADR-050, ADR-051, ADR-055, ADR-056; CP-09, CP-28. Fuente: [cyw43-driver — `src/cyw43.h` y `src/cyw43_ctrl.c`](https://github.com/georgerobotics/cyw43-driver).
+
+---
+
+## ADR-062 — Umbrales del detector de pasos: dos poses guiadas por la interfaz en cada sesión (resuelve CP-31 y la parte de umbrales de CP-35)
+**Estado:** aceptada (2026-11-08) — **Decisión: en cada sesión, en la fase de calibración, la interfaz (la app de la laptop en la mínima, el celular en la máxima) guía dos poses quietas de unos 5 s —sentado con los pies en el aire y parado con el peso repartido—. De ahí salen el cero y la carga de pie de cada FSR y los umbrales del detector de pasos: `F_on` = cero + 15 % de la diferencia y `F_off` = cero + 10 %, valores de arranque que se ajustan en el piloto. Todo se guarda con la sesión. Precisa SPEC-01, SPEC-04 y SPEC-11.**
+
+**Contexto.** SPEC-01 decía que los umbrales `F_on` (desde dónde el pie "toca") y `F_off` (debajo de cuánto "despegó") se calibran por paciente, "derivados del peso corporal y de la curva fuerza-resistencia por-FSR", pero nunca se escribió cuándo, con qué medición ni dónde se guardan. Con los FSR en cuentas y sin curva (ADR-058), partir del peso ya no se puede. CP-31 había anotado el problema de la postura: parado sirve para el IMU, pero no para el cero de los FSR, que necesita el pie sin carga. La plantilla va siempre en la misma zapatilla (Juan, 2026-11-08), así que la presión de base no cambia por cambiar de calzado; sí cambia con el ajuste de los cordones, con el pie de cada persona y con la deriva de los sensores.
+
+**Opciones evaluadas.**
+- **A — Dos poses guiadas en cada sesión (elegida).** *Pros:* mide el cero y la carga de ese día, con esa persona; no necesita detectar pasos para calibrar —rompe el círculo "para calibrar los umbrales hay que detectar pasos"—; sirve también para la calibración del IMU. *Contras:* suma unos 10-20 s a la calibración.
+- **B — Umbrales fijos para todos.** *Pros:* cero trabajo. *Contras:* ignora el peso de cada persona y la deriva; con alguien liviano, el apoyo podría no cruzar el umbral.
+- **C — Calibrar una sola vez por persona.** *Pros:* menos pasos por sesión. *Contras:* la deriva de los FSR y el ajuste del calzado cambian de una sesión a otra.
+
+**Decisión.**
+1. **Dos poses, guiadas por la interfaz,** en la fase 5 del pipeline (Vista 4 §4.1), con el indicador de quietud que ya prevé SPEC-11:
+   - **Pose 1 — sentado, con los pies en el aire, unos 5 s:** el **cero** de cada FSR (lo que marca sin carga) y el bias del giro.
+   - **Pose 2 — parado quieto, con el peso repartido y el pie plano, unos 5 s:** la **carga de pie** de cada FSR, más el vector gravedad y la alineación anatómica del IMU (SPEC-04).
+
+   La interfaz muestra la instrucción, espera que la persona esté quieta y repite la pose si se movió.
+2. **Umbrales por pie, sobre `F_total` en cuentas:** `F_on = cero + 0,15 × (carga − cero)` y `F_off = cero + 0,10 × (carga − cero)`. Juan subió los valores propuestos (10 % y 5 %) en 5 puntos cada uno; se ajustan en el piloto. Ejemplo: si el talón marca 200 sin carga y 2.200 parado, el pie toca al pasar de 500 y despega al bajar de 400.
+3. **Se guardan con la sesión** (`sessions.fsr_calibration`): el cero y la carga de cada FSR y los umbrales calculados, para que el análisis offline use exactamente los mismos valores y la sesión se pueda reprocesar.
+4. **Quién calcula:** la interfaz, con el promedio de cada FSR en cada pose que devuelve el micro. En la parte central del cronograma los pasos se detectan en Python, que lee los umbrales de la sesión; si el micro detecta los eventos (captura operativa o edge), la interfaz se los manda antes de armar la sesión.
+5. **Queda abierta (CP-35)** la normalización de cada FSR por su carga de pie para comparar sensores distintos.
+
+**Consecuencias.** Cierra **CP-31** y la parte de umbrales de **CP-35**. Cambian SPEC-01 (parámetros), SPEC-04 (calibración), SPEC-11 (`calibrate()` y un comando para los umbrales), la Vista 4 §4.1 (fase 5), la Vista 3 §5, `pipeline_sesion.mermaid`, `calibracion_baseline.mermaid` y `src/db/schema.sql` (`sessions.fsr_calibration`).
+
+**Apéndice conceptual (en llano).** El detector de pasos decide que el pie tocó el piso cuando la suma de los sensores pasa un umbral. Para poner bien ese umbral hacen falta dos números: cuánto marcan los sensores sin peso (el "cero") y cuánto marcan con la persona parada (la "carga de pie"). El umbral se pone a una fracción del camino entre uno y otro: bastante arriba para que el ruido no lo dispare, bastante abajo para no perder un apoyo débil. Como el cero cambia con el ajuste de la zapatilla y los sensores se corren con el tiempo, se mide en cada sesión.
+
+**Referencia.** ADR-015, ADR-017, ADR-043 rev, ADR-058; SPEC-01, SPEC-04, SPEC-11; CP-31, CP-35.
+
+---
+
+## ADR-063 — Tipo de sujeto y lado afectado en la interfaz; pie de referencia del emparejado
+**Estado:** aceptada (2026-11-08) — **Decisión: al registrar a una persona, la interfaz pide si es un sujeto sano (prueba) o afectado y, si es afectado, el lado afectado. El pie de referencia para emparejar zancadas izquierda–derecha es el lado afectado; en los sanos, el izquierdo. La base lo guarda en el paciente y lo copia en cada sesión.**
+
+**Contexto.** CP-36 propuso emparejar las zancadas con un pie de referencia fijo por sesión. `patients.affected_side` existía (`left`/`right`/`none`), pero nada obligaba a cargarlo ni distinguía un voluntario sano de un paciente. Juan pidió el 2026-11-08 que se cargue por la interfaz.
+
+**Decisión.**
+1. **En la interfaz** (laptop en la mínima; app en la máxima), al dar de alta a una persona: **sano (prueba)** o **afectado**; si es afectado, **lado afectado** (izquierdo o derecho). Se puede corregir después.
+2. **En la base:** `patients.cohort ∈ {healthy, affected}` y `patients.affected_side ∈ {left, right}`, obligatorio sólo si es afectado (lo garantiza un CHECK). `create_patient()` (ADR-059) recibe los dos datos.
+3. **Pie de referencia:** el lado afectado; en los sanos, el izquierdo. Se copia en `sessions.reference_foot` al abrir la sesión, para que una sesión ya grabada no cambie si después se corrige el dato del paciente. Es el mismo pie de referencia que usa SPEC-10 para las features de tronco.
+4. **Queda abierto (CP-36):** qué valor queda en las features cuando una zancada no tiene par, es ambigua o viene después de una pausa.
+
+**Consecuencias.** Cambian `src/db/schema.sql` (`patients.cohort`, `sessions.reference_foot`, `create_patient()`), el ER, la Vista 4 (§1.1, §4, §4.1), SPEC-05 y SPEC-10. Separar sanos de afectados también ordena el dataset: los voluntarios sanos con anomalías inducidas y los pacientes quedan distinguidos en la base.
+
+**Referencia.** ADR-046, ADR-059; SPEC-05, SPEC-10; CP-36.
 
 ---
 

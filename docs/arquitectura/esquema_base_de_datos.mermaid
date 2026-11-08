@@ -27,7 +27,8 @@ erDiagram
         uuid id PK
         text external_code
         int birth_year
-        text affected_side
+        text cohort "healthy o affected (ADR-063)"
+        text affected_side "left o right, solo si es affected"
         jsonb clinical_notes
     }
     PATIENT_ACCESS {
@@ -48,6 +49,8 @@ erDiagram
         text mode "exploratory|operational|edge"
         text feature_set_version
         boolean adaptation_enabled
+        text reference_foot "pie de referencia del emparejado (ADR-063)"
+        jsonb fsr_calibration "cero, carga de pie y umbrales de los FSR (ADR-062)"
         timestamptz started_at "se copia como session_started_at"
         timestamptz ended_at
         text end_reason "normal|link_lost|insole_lost|reboot|unclean"
