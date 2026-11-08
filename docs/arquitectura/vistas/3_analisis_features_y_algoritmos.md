@@ -47,6 +47,8 @@ Placement por defecto: casi todo es **per-pie (plantilla)**; lo **bilateral** (c
 
 *(Instanciación del bloque C — **ADR-038**: **#12, #13 y #14 se instancian por FSR × sub-fase del apoyo** (carga `[IC,MS]` / propulsión `[MS,TO]`, SPEC-02) → con 2 FSR, cada una da 4 instancias; con 4 FSR, 8. **#15** (contact time por región) no se parte; **#16** (loading rate) queda con **dominio explícito** en la sub-fase de carga; **#17** (time-to-peak) sigue medido desde IC. Relevante para el conteo real del vector y para la modularidad — la instanciación no crea entradas nuevas de catálogo.)*
 
+*(Unidades — **ADR-058**: por ahora los FSR se trabajan en **cuentas del ADC**, sin curva de fuerza. #15 y #17 no cambian, porque dependen de cuándo pasa algo; #12, #13, #14 y #16 quedan en cuentas: sirven para comparar al paciente consigo mismo, no con valores en newtons. Las comparaciones entre sensores distintos —#19, la simetría izquierda–derecha de estas features y el cruce de MS— quedan sesgadas por la diferencia de sensibilidad entre piezas: mitigación propuesta en CP-35.)*
+
 ### Bloque D — Simetría / ratio *(diferencial de ACV)*
 
 | # | Feature | Cálculo | Entrada/Dependencia | Dónde | Fase |
@@ -142,7 +144,7 @@ El marco teórico daba por perdidas las features de tronco/lower-back de Brasili
 | **Mahalanobis** (+ **sensor de drift**) | **L** | cintura | cintura (EMA de μ, Σ) | vector de features/zancada | KB; **<100 µs**; umbral = percentil 99 de calibración | C propio / **CMSIS-DSP** (álgebra) |
 | **Isolation Forest** | **E** | cintura (árboles en C) | worker (periódico, buffer circular) | vector de features | 50-100 árboles; decenas de KB; cientos de µs | **scikit-learn** (train); inferencia on-device (tablas de splits) |
 | **Autoencoder denso** | **E** | cintura (int8) | worker | vector de features (~25) | arq. 25-12-6-12-25; **10-50 KB**; ~ms | **TF/Keras** + **TFLite/LiteRT** (PTQ int8) + **TFLite Micro** (ADR-022) |
-| **LSTM autoencoder** | **E/H/W** | según entre (#11) | worker | señal cruda ~100×8 canales | mayor footprint; **decenas de ms** | TF/Keras + TFLite/LiteRT; ref. ejecutable en host |
+| **LSTM autoencoder** | **E/H/W** | según entre (#11) | worker | señal cruda ~100 muestras × 11 canales por pie (ADR-042) | mayor footprint; **decenas de ms** | TF/Keras + TFLite/LiteRT; ref. ejecutable en host |
 | **One-Class SVM** *(candidato, ADR-029)* | **E/W** | worker (benchmark; **no** RT) | worker | vector de features | kernel RBF; costoso en int8 | **scikit-learn** |
 | **GMM / z-score multivariado** *(candidato, ADR-029)* | **L/E** | cintura | cintura / worker | vector de features | KB; generaliza Mahalanobis (multimodal) | scikit-learn / CMSIS-DSP |
 | **VAE (autoencoder variacional)** *(candidato, ADR-029)* | **E/H** | según entre | worker | vector de features / crudo | similar al AE denso + muestreo latente | TF/Keras + TFLite |
@@ -154,7 +156,7 @@ El marco teórico daba por perdidas las features de tronco/lower-back de Brasili
 - El anteproyecto **§6** mencionaba **SST-AD, SVR, Random Forest**: **descartados por ADR-030** al cerrar CP-11. Se adopta la lista del **§4.3** (coincide con este stack) más los candidatos de ADR-029. *SST-AD no está definido en ninguna fuente del corpus; SVR/RF eran referencias bibliográficas, no elecciones.* El registry sigue siendo model-agnostic: sumar un candidato es declarar su clase.
 - **Sustitución OC-SVM → Mahalanobis (ADR-029):** el **One-Class SVM personalizado** es el que ancla la evidencia (Toth, AUC 0,967, "exactamente el pipeline"), pero el **detector one-class en tiempo real es Mahalanobis** por costo/latencia edge (<100 µs, auto-adaptación dato a dato). El OC-SVM queda como **candidato E/W = benchmark offline** (worker, no RT). **GMM/z-score** (multimodal) y **VAE** (rama AE) entran como candidatos declarables de baja prioridad; **CNN+Transformer** (EdgeSense) se descarta por footprint.
 - **Fuera del stack de detección (ADR-029):** **Random Survival Forest / COX / SHAP** (pronóstico de recuperación con variables clínicas) son otra tarea → módulo aparte a futuro; **LASSO** es **selección de features** → backlog #12.
-- **Calibración/baseline (Vista 3):** ~100 zancadas de marcha normal → ajuste inicial de μ/Σ (Mahalanobis) y del baseline de los demás. Es el **entrenamiento inicial personalizado** y, a la vez, una **captura operativa** (el micro ya calcula sus features → skew-free; ADR-005 rev c).
+- **Calibración/baseline (Vista 3):** ~200 zancadas por pie de marcha normal (ADR-060) → ajuste inicial de μ/Σ (Mahalanobis) y del baseline de los demás, que calcula el worker (ADR-057). Es el **entrenamiento inicial personalizado** y, a la vez, una **captura operativa** (el micro ya calcula sus features → skew-free; ADR-005 rev c).
 
 ---
 
@@ -166,7 +168,7 @@ Backlog ordenado por dependencia. **#1–#10 resueltos** (cada uno con su ADR/SP
 2. **Segmentación de fases** (stance/swing) *(resuelto → SPEC-02)* — deriva de IC/TO; alimenta LDLJ (swing), mean ang. vel. (swing) y ZUPT (stance).
 3. **Stride length / ZUPT** *(resuelto → ADR-016 / SPEC-03)* — doble integración + ZUPT por stance del FSR; ZUPT simple como base, EKF/MSDI futuro.
 4. **Buffer/ventana de zancadas** (≥10) *(resuelto → SPEC-05)* — ring buffer per-pie + bilateral; CoV incremental (Welford); flag de warm-up.
-5. **Orientación (fusión IMU)** *(resuelto → ADR-017 / SPEC-04)* — Madgwick vía **Fusion** (C) / `imufusion` (Python); desbloquea ZUPT y el bloque F.
+5. **Orientación (fusión IMU)** *(resuelto → ADR-017 / SPEC-04)* — Madgwick vía **Fusion** (C), en el micro; el worker no re-procesa IMU (ADR-042); desbloquea ZUPT y el bloque F.
 6. **COP_ML** *(resuelto → SPEC-06; **diferido** en el set 2-FSR por ADR-023)* — coordenadas de FSR (config) + línea media/ancho (calibración); requiere FSR medial-lateral.
 7. **FFT/DSP on-device** *(resuelto → ADR-019 / SPEC-07: **CMSIS-DSP** float32, `arm_rfft_fast_f32`, ventana Hann N=256)* — bloque H (spectral entropy, dominant freq, power en bandas) + filtros/decimación FIR + álgebra (Mahalanobis).
 8. **Runtime de inferencia int8** *(resuelto → ADR-020 / SPEC-08: **TFLite Micro + CMSIS-NN** para las NN int8; Mahalanobis en CMSIS-DSP; Isolation Forest por árboles en C)* — ejecución de los modelos on-device.

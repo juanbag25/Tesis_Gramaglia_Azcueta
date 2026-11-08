@@ -29,7 +29,7 @@
 | 014 | Adquisición / muestreo | ADC HW-paced + DMA, sobremuestreo 1 kHz → decimación a 100 Hz; IMU en tick maestro | aceptada |
 | 015 | Detección de eventos IC/TO | Fusión FSR + IMU; en la plantilla (per-pie); resuelve CP-03 | aceptada |
 | 016 | Largo de zancada (stride length) | Doble integración + ZUPT (stance por FSR), por zancada; EKF/MSDI futuro | aceptada |
-| 017 | Módulo IMU (orientación/gravedad/calibración) | Módulo compartido; Fusion/Madgwick (C+Python); calibración estática + re-zero en stance | aceptada |
+| 017 | Módulo IMU (orientación/gravedad/calibración) | Módulo compartido; Fusion/Madgwick en C (el espejo en Python dejó de hacer falta — ADR-042); calibración estática + re-zero en stance | aceptada |
 | 018 | Paridad de features PC↔micro | Tests de paridad en CI + entrenar con features del micro (de captura operativa) + tolerancias (anti train/serve skew) | aceptada (acl. 2026-07-19) |
 | 019 | DSP on-device (FFT/PSD) | CMSIS-DSP (float32); `arm_rfft_fast_f32`; resuelve la fila DSP del stack | aceptada |
 | 020 | Runtime de inferencia int8 | TFLite Micro + CMSIS-NN (NN on-device); Mahalanobis en CMSIS-DSP; IF por árboles en C | aceptada |
@@ -55,7 +55,7 @@
 | 040 | Bloque I (tronco): definido y ubicado, diferido | I1/I2/I3 → **#45/#46/#47**; el cómputo de tronco se asigna al **core 1 de la cintura** (V2), pero el bloque queda **OFF en el set activo** — se prende cambiando el `feature_set_version`. **SPEC-10** deja las recomendaciones. Principio explicitado por Juan: el catálogo es una **biblioteca de features disponibles**, no una lista de obligaciones. Incluye **apéndice conceptual** (armónicos, cómo se fija el fundamental con la ventana, por qué la asignación par/impar no depende del paciente) | aceptada |
 | 041 | Alcance de FSR: hasta 4 (CP-08) | **Máximo de diseño = 4 FSR** por plantilla; la mínima sigue con **2** (punta+talón). El 3º entra en ADC2/GP28 y el **4º obliga a mux analógico**: con GP29 midiendo VSYS quedan sólo 3 ADC libres, y sacrificar VSYS choca con el corte por baja tensión de ADR-035. **Formato de paquete fijado en 4 slots** (400 B/s extra, despreciable) para no versionar el protocolo con hardware sellado. Cierra CP-08 | aceptada |
 | 042 | Definición de "crudo" y frontera del IMU | **Crudo = post-AHRS**: `lin_accel` + ω calibrada + `pitch/roll/yaw` + FSR, a 100 Hz. El AHRS corre en el micro; el worker **consume y no re-procesa IMU**. Paquete 29→35 B (+orientación, ~7 KB/s); **39 B / ~7,8 KB/s** sumando `t_device` en `uint64` (punto 6, cierra CP-27). Congela Madgwick/`β` para lo ya capturado (riesgo aceptado). **Corrige SPEC-03** (elimina el "quitar gravedad", que si no metía ~4,9 m de error por zancada) | aceptada |
-| 043 | Ciclo de vida de la sesión (multi-paciente + clase L) | La sesión es una **transacción comandada por la interfaz**: check-out del estado L → provisioning → calibración → **gate READY** → running → check-in. **`adaptation_enabled` por sesión** (una versión nueva por sesión adaptada; habilita la comparación con/sin adaptación). Guardas: estampa de `patient_id` en flash + FK compuesta en la base. **Cierra la contradicción del respaldo de clase L**. **Rev:** pipeline de 8 fases, **gate térmico por temperatura del IMU** (el warm-up corre en paralelo al setup), **la DB manda** sobre el flash (copia descartable) y **canal de estado** separado del stream. Cierra CP-24; abre CP-25/CP-31 | aceptada (rev) |
+| 043 | Ciclo de vida de la sesión (multi-paciente + clase L) | La sesión es una **transacción comandada por la interfaz**: provisioning (con limpieza de los buffers de crudo si cambió el paciente) → calibración → **gate READY** → running → check-in, donde sube el estado L adaptado. *(La versión original subía el estado L en un check-out al cambiar de paciente; la rev lo pasó al check-in.)* **`adaptation_enabled` por sesión** (una versión nueva por sesión adaptada; habilita la comparación con/sin adaptación). Guardas: estampa de `patient_id` en flash + FK compuesta en la base. **Cierra la contradicción del respaldo de clase L**. **Rev:** pipeline de 9 fases (0 a 8), **gate térmico por temperatura del IMU** (el warm-up corre en paralelo al setup), **la DB manda** sobre el flash (copia descartable) y **canal de estado** separado del stream. Cierra CP-24; abre CP-25/CP-31 | aceptada (rev) |
 | 044 | Series temporales sin TimescaleDB (CP-26) | **Particionado nativo** de Postgres 17 + `pg_partman` (particiones mensuales creadas por adelantado) + `pg_cron` (mantenimiento diario). Clave de partición = **inicio de la sesión** (la sesión queda entera en una partición, el reenvío no duplica, las FK entre series comparten el valor). Timescale estaba deprecado en Supabase y su edición Apache no tenía continuous aggregates ni compresión. Revisa ADR-007 (capa de series) y reemplaza el punto 3 de ADR-031. Cierra CP-26; abre CP-32 | aceptada |
 | 045 | Migraciones versionadas (CP-23) | **CLI de Supabase** en `src/db/supabase/`; cada cambio es una migración nueva que **aplica CI desde `master`**, después de probarla en una base efímera (pgTAP). `schema.sql` pasa a ser un **snapshot generado** (sin las particiones hijas). Una migración aplicada no se edita; la base remota no se toca a mano. Revisa ADR-037. Cierra CP-23 | aceptada |
 | 046 | Identidad de las series (CP-29) | **La zancada es una entidad** (`strides`) numerada en el borde: `stride_seq` (plantilla, por pie) y `cycle_seq` (cintura, ciclo bilateral), desde `arm()`. Eventos, vectores y scores se identifican con esos números y se vinculan con **FK reales**; toda fila lleva `patient_id` e inicio de sesión garantizados por una FK a `sessions`. **Ingesta idempotente** (upsert). Suma `flags`. Cierra CP-29 | aceptada |
@@ -69,13 +69,18 @@
 | 054 | Formato del catálogo (CP-34 e) | **TOML** en `shared/` + tabla de C generada; el set activo viaja como lista de ids en `provision()`. Precisa ADR-021 | aceptada |
 | 055 | Crudo en Parquet (CP-34 f) | **Un archivo por sesión, equipo y tramo** de minutos; columnas = el paquete tal cual (enteros) + escalas en los metadatos; zstd; ruta por paciente y sesión; `raw_blobs` idempotente por tramo | aceptada |
 | 056 | Base de tiempo (CP-34 g) | `t_device` = cuenta de la cintura; **el host la traduce a UTC** con una recta (desfase + deriva) ajustada cada ~10 s; guarda la recta en `sessions` y conserva `t_device` en el crudo y en `gait_events`. No es CP-28 | aceptada |
+| 057 | Arranque de un paciente nuevo | Las capturas no exigen modelo cargado: la verificación "modelo = paciente" sólo rige si la sesión puntúa (edge). El primer modelo y sus umbrales los calcula el worker con la calibración (versión 1). Precisa ADR-043 rev | aceptada |
+| 058 | FSR en cuentas del ADC | Los casilleros de FSR llevan cuentas, no fuerza; no se mide la curva de cada sensor por ahora. Las features de tiempo no cambian; las de amplitud quedan en cuentas; las comparaciones entre sensores se sesgan (mitigación en CP-35); cambiar un sensor obliga a rehacer el baseline | aceptada |
+| 059 | Ajustes del esquema y los contratos (revisión previa a implementar) | `create_patient()` para el alta; `feedback_source` por tipo de detector; `session_models`, `models.source_session_id` y `sessions.feedback_config_id`; tabla `device_status` para el canal de estado; `provision()` con lista de modelos; `devices.hw_uid`. Extiende ADR-047 | aceptada |
+| 060 | Zancadas de calibración | ~200 por pie (antes ~100), en tandas; alcanza con un vector de ~20 features. Método del umbral de Mahalanobis → CP-37 | aceptada |
+| 061 | Registro de la sincronización y WiFi sin ahorro | Cada plantilla reporta los beacons recibidos y sus correcciones, y el host los guarda (`raw_blobs.kind = 'sync'`); las tres placas apagan el ahorro de energía del CYW43, que viene prendido por defecto (verificado) | aceptada |
 
 ---
 
 ## ADR-000 — Contexto y filosofía del sistema
 **Estado:** aceptada
 
-**Contexto.** Sistema de plantillas inteligentes bilaterales para detección personalizada de anomalías de marcha post-ACV, con feedback vibrotáctil y edge inference. Hardware: 2 plantillas (Pico 2 W + MPU-6050 + 3 FSR + motor PWM) y 1 unidad de cintura (Pico 2 W + MPU-6050), muestreo 100 Hz.
+**Contexto.** Sistema de plantillas inteligentes bilaterales para detección personalizada de anomalías de marcha post-ACV, con feedback vibrotáctil y edge inference. Hardware: 2 plantillas (Pico 2 W + MPU-6050 + 3 FSR + motor PWM) y 1 unidad de cintura (Pico 2 W + MPU-6050), muestreo 100 Hz. *(Nota 2026-11-08: hoy son 2 FSR por plantilla —punta y talón—, hasta 4 en la próxima revisión del PCB — ADR-023, ADR-041.)*
 
 **Decisión / principios.**
 - **Personalización primero:** baseline por paciente (one-class), no modelo poblacional.
@@ -182,7 +187,7 @@
 - *Synchronized multi-unit IMU platform* — MDPI Electronics 9:1118.
 - *Moticon SDKs & sync* — moticon.com/solutions-integrations.
 
-**Nota (2026-10-17) — precisión de la sincronización: CP-28, diferida a la máxima.** El backbone sigue siendo el único mecanismo de sincronización y corre siempre. Lo que quedó pendiente es el **número** —cuánto error se tolera— y la **prueba de banco** que demuestra que se cumple: Juan los difirió a la máxima, y en la mínima se asume que el error no afecta las features (riesgo aceptado, registrado en CP-28). Mientras tanto, la verificación de la fase 6 (ADR-043) comprueba que la sincronización esté activa, sin umbral numérico, y el canal de estado sigue publicando el error estimado, para que haya datos cuando se retome. Traducir la hora del equipo a la hora real es otro problema: ADR-056.
+**Nota (2026-10-17) — precisión de la sincronización: CP-28, diferida a la máxima.** El backbone sigue siendo el único mecanismo de sincronización y corre siempre. Lo que quedó pendiente es el **número** —cuánto error se tolera— y la **prueba de banco** que demuestra que se cumple: Juan los difirió a la máxima, y en la mínima se asume que el error no afecta las features (riesgo aceptado, registrado en CP-28). Mientras tanto, la verificación de la fase 6 (ADR-043) comprueba que la sincronización esté activa, sin umbral numérico, y el canal de estado sigue publicando el error estimado, para que haya datos cuando se retome. Traducir la hora del equipo a la hora real es otro problema: ADR-056. *(Nota 2026-11-08: desde ADR-061 se guardan los beacons recibidos y las correcciones que aplica cada plantilla, así que la sincronización se puede medir y rehacer después; y las placas apagan el ahorro de energía del WiFi, que demoraba los beacons.)*
 
 **Apéndice conceptual (en llano) — el error de sincronización y cómo se mediría (CP-28).** *(Agregado el 2026-10-17, con la explicación que se dio al diferir CP-28.)*
 - **El beacon mantiene sincronizadas las plantillas todo el tiempo, solo.** Nadie tiene que hacer nada. CP-28 no agrega otra sincronización: es el número que responde "¿qué tan sincronizadas alcanza?", más la prueba que demuestra que el beacon lo cumple.
@@ -335,6 +340,8 @@ O sea: "el micro calcula sus features por-pie" aplica a **operativa y edge**, no
 | **H — Host** | Host (celular/laptop), tiempo real | Worker | Periódico/async | Modelos que **no entran** en la cintura pero sí en el host | Sí |
 | **W — Worker-only (offline)** | Worker (batch/offline, **no** tiempo real) | Worker | Batch | Análisis/reportes, re-scoring histórico; modelos que no entran ni en el host en tiempo real | — |
 
+*(Precisado por ADR-043 rev: la clase L también baja a la cintura en el provisioning de cada sesión, por el protocolo de OTA; lo que no tiene es reentrenamiento en el worker. El "No" de la columna se refiere a eso.)*
+
 Campos del registry: `inference_target ∈ {hub, host, worker}`, `retrain_target ∈ {micro, worker}`.
 
 **Opciones evaluadas.**
@@ -413,7 +420,7 @@ Campos del registry: `inference_target ∈ {hub, host, worker}`, `retrain_target
 ## ADR-015 — Detección de eventos de marcha (IC/TO)
 **Estado:** aceptada — **Decisión: fusión FSR-primario + confirmación IMU; detección en la plantilla (per-pie). Resuelve CP-03.**
 
-**Contexto.** La detección de IC/TO es prerequisito de casi todo (features espacio-temporales, segmentación stance/swing, ZUPT, refinamiento de sync, timing de feedback). Corre en tiempo real y debe ser robusta a marcha post-ACV (drop foot, apoyo de antepié/plano). CP-03 preguntaba **dónde** corre (plantilla vs cintura).
+**Contexto.** La detección de IC/TO es prerequisito de casi todo (features espacio-temporales, segmentación stance/swing, ZUPT, refinamiento de sync, timing de feedback). *(Nota 2026-11-08: "refinamiento de sync" se lee como emparejado de zancadas; el IC no sincroniza relojes — ADR-004.)* Corre en tiempo real y debe ser robusta a marcha post-ACV (drop foot, apoyo de antepié/plano). CP-03 preguntaba **dónde** corre (plantilla vs cintura).
 
 **Investigación (literatura/industria).**
 - **FSR/presión:** el cruce de umbral de fuerza plantar da el **instante de contacto directo** (ground truth), baja latencia; usado en embebidos en tiempo real.
@@ -570,7 +577,7 @@ Campos del registry: `inference_target ∈ {hub, host, worker}`, `retrain_target
 - **Mahalanobis (L):** álgebra lineal → **C + CMSIS-DSP**, no usa NN runtime.
 - **Autoencoder denso int8 (E):** **red neuronal** → este runtime (TFLM + CMSIS-NN).
 - **Isolation Forest:** inferencia liviana (recorrido de árboles como tablas de splits) → **on-device en C** (clase E, ADR-011 rev); no es NN → no usa este runtime.
-- **LSTM AE:** red neuronal más pesada (ventana cruda ~100×8) → correría por este runtime **si entra** en tiempo real en el M33; si no, host (H) u offline (W). A confirmar por profiling (#11).
+- **LSTM AE:** red neuronal más pesada (ventana cruda ~100×8; con el crudo post-AHRS de ADR-042, ~100×11 por pie) → correría por este runtime **si entra** en tiempo real en el M33; si no, host (H) u offline (W). A confirmar por profiling (#11).
 
 **Opciones evaluadas.**
 - **A — TFLM + CMSIS-NN (elegida).** `pico-tflmicro` (port de TFLM mantenido por Raspberry Pi) empaqueta CMSIS-NN (kernels int8 de ARM con SIMD en M33). *Pros:* calza con el pipeline TFLite→int8 y con el OTA de flatbuffers (ADR-012); **paridad automática** (TFLM sigue la spec de cuantización de TFLite → el int8 entrenado = el ejecutado); footprint chico (intérprete ~2 KB + modelo ~10-50 KB); CMSIS-NN acelera 2,6-5,4×; escala al LSTM si algún día entra. *Contra:* el port **RP2350 de `pico-tflmicro` no está mergeado** oficialmente (hay patch/fork comunitario; proyectos reales ya corren TFLM en RP2350 vía CMSIS-NN → riesgo acotado, a validar temprano); el intérprete general agrega algo de overhead vs un kernel a medida.
@@ -687,7 +694,7 @@ Campos del registry: `inference_target ∈ {hub, host, worker}`, `retrain_target
 **Justificación.** (1) No bloquea el desarrollo por esperar la placa final; (2) evita meter en los modelos features **degeneradas/sin sentido** (un COP_ML con 2 puntos antero-posteriores) que ensuciarían el baseline; (3) la modularidad de ADR-021 permite **prender las features ML en caliente** cuando llegue el hardware, sin retrabajo ni re-flasheo estructural; (4) IC/TO (SPEC-01, `F_total = Σ FSR`), stride length/ZUPT (SPEC-03) y el bloque C siguen funcionando con punta+talón.
 
 **Consecuencias.**
-- **Canales por pie hoy: 8** (accel 3 + gyro 3 + 2 FSR); el formato de paquete reserva slots para **N FSR** (CP-08).
+- **Canales por pie hoy: 8** (accel 3 + gyro 3 + 2 FSR); el formato de paquete reserva slots para **N FSR** (CP-08). *(Nota 2026-11-08: con el crudo post-AHRS son 11 canales —ADR-042— y el paquete fija 4 slots de FSR —ADR-041—. Además, el bloque I que acá figura ON pasó a OFF por alcance —ADR-040—.)*
 - **SPEC-06 (COP_ML):** marcada **diferida** (requiere FSR medial-lateral).
 - **Catálogo (Vista 3):** cada feature declara su **requerimiento de FSR/posición**; el set activo 2-FSR aplica el filtro.
 - Actualiza **CP-01** (hoy 2 FSR punta/talón; ML a futuro) y es instancia concreta de **CP-08** (modularidad de FSR).
@@ -710,7 +717,7 @@ Campos del registry: `inference_target ∈ {hub, host, worker}`, `retrain_target
 - **Plantilla → aislar el radio (rev 2026-07-20):** **core 0 = WiFi-STA + TX + motor**, **core 1 = adquisición + eventos (IC/TO) + features por-pie**. Se agrupa el *pipeline de sensado* (adquisición → eventos → features por-pie) en un núcleo y se aísla el WiFi en el otro. *(Reparto original: core 1 = adquisición sola, core 0 = WiFi-STA + features + TX + motor — ver Revisión.)*
 - **Cintura → aislar el radio:** **core 0 = radio** (WiFi-AP + BLE coexistencia, donde el SDK lo pone y es *timing-sensitive*), **core 1 = inferencia + fusión + IMU + decisión**. La inferencia (lo pesado) tiene su núcleo **lejos del radio**; la adquisición de la cintura es liviana y no necesita un core dedicado.
 
-**Justificación.** Cada dispositivo aísla **su** recurso crítico: la plantilla protege el **muestreo 100 Hz**; la cintura protege la **coexistencia del radio** y le da a la **inferencia** su propio núcleo. La coexistencia WiFi-AP+BLE (riesgo maestro §16) es **sólo de la cintura**. Poner el radio en el core 0 evita pelear con la convención del SDK.
+**Justificación.** Cada dispositivo aísla **su** recurso crítico: la plantilla protege el **muestreo 100 Hz**; la cintura protege la **coexistencia del radio** y le da a la **inferencia** su propio núcleo. La coexistencia WiFi-AP+BLE (riesgo del maestro §15) es **sólo de la cintura**. Poner el radio en el core 0 evita pelear con la convención del SDK.
 
 **Consecuencias / pendientes.**
 - **RTOS** y **rate del IMU de la cintura** (CP-17): **resueltos** — RTOS **bare-metal** en ambos (**ADR-025**); rate de la cintura **100 Hz + DMA**, con 50 Hz como fallback validable en #11 (**ADR-026**).
@@ -722,7 +729,7 @@ Originalmente la plantilla aislaba la **adquisición** (core dedicado al muestre
 
 El **verdadero** inquilino de latencia impredecible es el **WiFi** (driver CYW43), no las features. Por eso conviene **aislar el radio** —no la adquisición— también en la plantilla, agrupando el **pipeline de sensado (adquisición → eventos IC/TO → features por-pie)** en el core 1 y dejando el WiFi solo en el core 0. Beneficios: (a) muestreo y features quedan lejos del WiFi; (b) **data locality** — el crudo a 100 Hz no cruza de core; en edge cruzan sólo los resultados (~1 Hz); (c) queda un **invariante uniforme en los tres micros: core 0 = radio, core 1 = procesamiento**, que simplifica el código compartido. El cambio respecto del reparto original es **mínimo**: mover el cálculo de features del core 0 al core 1 (la radio ya estaba en el core 0).
 
-**Aclaración (anti-confusión).** "features por-pie" = las que sólo necesitan la señal de *ese* pie (bloques A/B/C/E/F/G/H). Las **features bilaterales** (simetría — bloque D — y double support) **no** se calculan en la plantilla: se calculan en la **cintura** a partir de las features por-pie + eventos de ambos pies (ADR-005; maestro §8.1). La revisión no toca eso.
+**Aclaración (anti-confusión).** "features por-pie" = las que sólo necesitan la señal de *ese* pie (bloques A/B/C/E/F/G/H). Las **features bilaterales** (simetría — bloque D — y double support) **no** se calculan en la plantilla: se calculan en la **cintura** a partir de las features por-pie + eventos de ambos pies (ADR-005; Vista 3 §1). La revisión no toca eso.
 
 **Salvedad honesta.** La simetría es de **rol**, no de **carga**: el core 0 de la cintura además sostiene la coexistencia WiFi-AP+BLE (más pesado) y su core 1 además infiere. El reparto exacto se **confirma con el profiling (#11)**; si algún caso apretara, hay palancas (mover features, bajar el rate del IMU de cintura a 50 Hz).
 
@@ -787,12 +794,12 @@ El **verdadero** inquilino de latencia impredecible es el **WiFi** (driver CYW43
 - **Severidad: 3 bandas por umbral per-paciente.** El score (sobre la ventana) se corta en **normal / leve / marcada / riesgo** con **3 umbrales calibrados sobre el baseline del paciente** (percentiles / chi-cuadrado). Extiende el umbral único del detector Mahalanobis a 3 niveles graduados.
 - **"Riesgo" co-anclado a caída.** El nivel más alto escala también por **indicadores clínicos interpretables** (asimetría/sway → Jung), no sólo por score grande.
 - **Localización: ambos pies (v1).** No se localiza *qué pie* se desvía (evita un problema de detección extra). Ambas plantillas vibran el mismo patrón. Palanca futura: detectores por-pie (las features por-pie ya existen → no es algoritmo nuevo, pero suma modelos/config).
-- **Entrega: 3 patrones por ritmo (no por intensidad fina).** El motor es un **ERM por PWM** (GP18) → discrimina bien **ritmos** (uno/dos/largo) y **ubicación**, mal la intensidad fina. Leve = 1 pulso corto; marcada = 2 pulsos; riesgo = pulso largo/triple. *(Si el motor real fuera un LRA con driver, se podrían usar patrones más crispados — a confirmar, como CP-01.)*
+- **Entrega: 3 patrones por ritmo (no por intensidad fina).** El motor es un **ERM por PWM** (GP18) → discrimina bien **ritmos** (uno/dos/largo) y **ubicación**, mal la intensidad fina. Leve = 1 pulso corto; marcada = 2 pulsos; riesgo = pulso largo/triple. *(Si el motor real fuera un LRA con driver, se podrían usar patrones más crispados — a confirmar en CP-01, que desde el 2026-11-08 incluye el tipo de motor y su tensión nominal.)*
 - **Escasez.** Histéresis (sostenido, no una zancada suelta) + **período refractario** (cooldown) + **fading** opcional (bajar la frecuencia a medida que el paciente mejora — evita dependencia).
 
 **Justificación.** Encaja con lo ya decidido (model-agnostic, ADR-011 rev; usa el buffer de zancadas de SPEC-05; corre en la cintura, ADR-005/013). La ventana prioriza eficacia (menos falsos positivos) y la escasez prioriza usabilidad (menos carga cognitiva, Iwata). El propósito "monitorear+advertir" es honesto con el alcance de la tesis y con lo que el hardware simple puede sostener.
 
-**Consecuencias.** Nuevo campo **`feedback_source`** en el registry/config. **Config per-paciente en la DB** (feedback_source, umbrales T1/T2/T3, N de ventana, intensidad, patrones habilitados, refractario) → detalle en **Vista 4**. Detalle de patrones y lógica → **SPEC-09**. **Empírico diferido** (exploratorio, ligado a #12 y al protocolo de calibración): qué modelo, largo de ventana, agregación (persistencia vs features ventaneadas) y valores de umbral. **Seguridad (CP-04):** validar que el patrón "riesgo" **no sobresalte/desestabilice**. Cierra **CP-10**.
+**Consecuencias.** Nuevo campo **`feedback_source`** en el registry/config. **Config per-paciente en la DB** (feedback_source, umbrales T1/T2/T3, N de ventana, intensidad, patrones habilitados, refractario) → detalle en **Vista 4**. Detalle de patrones y lógica → **SPEC-09**. **Empírico diferido** (exploratorio, ligado a #12 y al protocolo de calibración): qué modelo, largo de ventana, agregación (persistencia vs features ventaneadas) y valores de umbral. **Seguridad (CP-04):** validar que el patrón "riesgo" **no sobresalte/desestabilice**. Cierra **CP-10**. *(Nota 2026-11-08: CP-04 es la seguridad de los datos y está resuelta; esta validación pasó a CP-33 —protocolo de captura— como requisito para el comité, CP-18. Además, por ADR-059, `feedback_source` guarda el tipo de detector y se usa siempre su versión vigente.)*
 
 **Apéndice conceptual (en llano).**
 - **Monitor vs corrector.** No le decimos al paciente *cómo* caminar en cada paso; le avisamos que su marcha viene rara. Detección + alerta, no entrenamiento paso a paso.
@@ -1345,7 +1352,7 @@ SPEC-04 define el módulo IMU como una cadena de cuatro pasos — `driver I²C �
 2. **El AHRS corre en el micro.** El worker consume el crudo y **no re-procesa IMU**. `imufusion` deja de ser necesario para re-extraer features del IMU; la cláusula condicional de SPEC-04 se acota en consecuencia.
 3. **Formato de paquete:** se suman `pitch roll yaw` como 3× int16. **29 → 35 B por muestra**, ~**7 KB/s** entre las dos plantillas (contra ~5,8 actuales). Mismo orden de costo que los 4 slots de FSR de ADR-041, absorbible por BLE.
 4. **SPEC-03 se corrige:** su paso 2 (*"quitar gravedad: restar `g` en el frame global"*) **se elimina**; el paso 1 (rotar al frame global con la orientación) se mantiene.
-5. **La calibración es irreversible por diseño.** No se persisten parámetros de calibración: no habría cómo re-aplicarlos y guardarlos sólo crearía la tentación de hacerlo.
+5. **La calibración es irreversible por diseño.** No se persisten parámetros de calibración: no habría cómo re-aplicarlos y guardarlos sólo crearía la tentación de hacerlo. *(Precisado el 2026-11-08 por ADR-058: los FSR viajan en cuentas del ADC, sin curva de fuerza; esta regla vale para el IMU.)*
 6. **`t_device` pasa a `uint64` (µs) — cierra CP-27.** En `uint32` el contador da la vuelta a los **71,6 min**, y ADR-035 deja el equipo despierto ~10 h (~8 vueltas por encendido): eso desordena el emparejado entre pies y rompe la regresión de drift de ADR-004. Con 8 B no da la vuelta en 584.000 años; el `seq` sigue en `uint32` (497 días a 100 Hz). Son +4 B por muestra: sumados al punto 3, el paquete pasa de **29 a 39 B** (~**7,8 KB/s** entre las dos plantillas). *(Punto agregado el 2026-10-11: se decidió en la misma revisión del 2026-08-22 y quedó en Vista 1 §4 y en el changelog, pero no se había escrito acá.)*
 
 **Justificación.** La fase exploratoria calcula features off-device, así que el crudo tiene que alcanzar para **todo el catálogo**: el bloque F depende de la orientación (#26-29), el G de `lin_accel` y `ω` (#32-34), el H de ventanas de ambos (#35-38, #41) y SPEC-03 de las dos cosas. Con los 9 canales, todo se computa **igual en la plantilla y en el worker**, que es la propiedad que se buscaba.
@@ -1456,6 +1463,8 @@ La secuencia de 8 estados de arriba se detalla acá; el diagrama vive en `../arq
 | 8 | Cierre | Se sella `ended_at`; si hubo adaptación el micro sube el estado final y el host lo versiona (N+1). **El flash no se toca** | seg |
 
 *(Nota 2026-10-17: el presupuesto de sincronización de la fase 6 —CP-28— quedó diferido a la máxima; mientras tanto, la fase 6 verifica que la sincronización esté activa, sin umbral numérico.)*
+
+*(Precisado el 2026-11-08 por ADR-057: "modelo en flash = paciente" se exige sólo si la sesión puntúa en la cintura (edge); las capturas arrancan sin modelo, y el primer modelo lo calcula el worker con la calibración. ADR-059 agrega la trazabilidad sesión ↔ modelo que pide la comparación con y sin adaptación.)*
 
 **Autoridad del modelo: la DB manda.** Lo que se flashea es **siempre** la última versión de la base; no hay reconciliación. El flash es una **copia de trabajo descartable** y la DB es la única fuente de verdad del modelo — mismo criterio que ADR-037 para el esquema y ADR-039 para las decisiones.
 
@@ -1622,6 +1631,8 @@ Dos efectos a tener presentes:
    | `service_role` | todo (el worker; saltea la RLS por diseño — ADR-032) |
 
    Borrar queda para `service_role`: es raro, es sensible y nunca lo hace el cliente.
+
+   *(Precisado el 2026-11-08 por ADR-059: el alta de pacientes va por la función `public.create_patient()`, que crea el paciente y su acceso `owner` en un paso; `authenticated` no tiene INSERT directo sobre `patients`.)*
 2. **RLS en todas las tablas expuestas**, incluidas `devices`, `model_deployments` y `firmware_images`. Las tablas con datos de pacientes filtran con `patient_id in (select private.accessible_patient_ids())`; las demás tienen políticas propias (`firmware_images`: sólo lectura; `model_deployments`: los despliegues de modelos que el usuario puede ver).
 3. **Funciones de las políticas en `private`**, un esquema no expuesto: `private.accessible_patient_ids()` reemplaza a `public.has_patient_access()`. Es `security definer`, con `search_path` vacío, y sólo `authenticated` puede ejecutarla.
 4. **Particiones cerradas:** sin grants para `anon` ni `authenticated`, y con RLS habilitado y sin políticas, así que sólo `service_role` y el dueño llegan a ellas directo. Todo acceso pasa por la tabla madre. Una rutina, `private.secure_partitions()`, las cierra después de cada mantenimiento de `pg_partman` (ADR-044).
@@ -1821,7 +1832,7 @@ Dato relevado el 2026-10-17: el bootrom del RP2350 maneja **tablas de particione
    3. **Acuses:** cada N pedazos o cada T segundos, el receptor informa hasta qué posición tiene todo completo. Si se corta, el emisor retoma desde ahí y no reenvía lo que ya llegó.
    4. **Verificación:** al terminar, el receptor calcula la huella SHA-256 de lo que **quedó escrito en la flash**, así también se verifica la escritura, y la compara con la anunciada. Si no coincide, se descarta. El RP2350 tiene un acelerador de SHA-256 por hardware (`pico_sha256` en el SDK).
    5. **Conmutación:** recién entonces se usa lo nuevo (puntos 3 y 4).
-3. **Modelos.** El artefacto se escribe en el slot libre (el A/B de ADR-012) y pasa a activo de forma atómica; el anterior queda como último bueno conocido.
+3. **Modelos.** El artefacto se escribe en el slot libre (el A/B de ADR-012) y pasa a activo de forma atómica; el anterior queda como último bueno conocido. *(Precisado el 2026-11-08 por ADR-059: con varios modelos por sesión, cada uno tiene su propio par de slots.)*
 4. **Firmware.** La imagen se escribe en la partición inactiva del par A/B del bootrom y el equipo se reinicia. La imagen nueva arranca **a prueba**: corre un autotest —la radio levanta, los sensores responden, hay enlace con el host o con la cintura— y recién entonces se confirma con `explicit_buy`. Si no se confirma, el chip vuelve a la imagen anterior. **A verificar en el datasheet del RP2350 (capítulo del bootrom) antes de implementar:** cómo se marca una imagen a prueba, qué dispara la vuelta atrás y en cuánto tiempo.
 5. **Firmware de las plantillas (*store-and-forward*).** La cintura recibe la imagen completa, la verifica y recién entonces se la pasa a la plantilla con el mismo protocolo. Si se corta el WiFi, retoma desde su propia copia sin volver a pedírsela al host.
 6. **Sólo fuera de sesión.** El OTA corre en reposo o en el provisioning (fase 3 de ADR-043), nunca con la sesión armada.
@@ -1927,7 +1938,7 @@ Dato relevado el 2026-10-17: el bootrom del RP2350 maneja **tablas de particione
 **Decisión.**
 1. **Tramos:** un archivo cada pocos minutos, por sesión y por equipo. La duración es un parámetro; el arranque sugerido es 5 min, unas 30.000 filas por equipo.
 2. **Columnas = los campos del paquete de 39 B tal como llegaron**, sin convertir: `device_id`, `seq`, `t_device`, `ax ay az`, `gx gy gz`, `pitch roll yaw` y `fsr1` a `fsr4`, como enteros. El archivo queda bit a bit igual a lo que produjo el micro, que es lo que necesitan los tests de paridad (ADR-018).
-3. **Metadatos del archivo** (los que Parquet guarda en su pie): versión del formato, `session_id`, equipo, versión de firmware, **escalas** para pasar cada columna a unidades físicas, número de tramo y rango de `seq`. Las escalas se fijan en el contrato de la muestra (`shared/`) al implementar el firmware. *(Los parámetros de calibración no se guardan: la calibración es irreversible por diseño — Vista 4 §1.)*
+3. **Metadatos del archivo** (los que Parquet guarda en su pie): versión del formato, `session_id`, equipo, versión de firmware, **escalas** para pasar cada columna a unidades físicas, número de tramo y rango de `seq`. Las escalas se fijan en el contrato de la muestra (`shared/`) al implementar el firmware. *(Los parámetros de calibración no se guardan: la calibración es irreversible por diseño — Vista 4 §1.)* *(Precisado el 2026-11-08: las columnas de FSR no llevan escala física porque viajan en cuentas del ADC —ADR-058—, y `raw_blobs.kind` distingue las muestras del registro de la sincronización —ADR-061—.)*
 4. **Compresión zstd**, con un *row group* por archivo.
 5. **Ruta:** `raw/{patient_id}/{session_id}/{equipo}/{tramo}.parquet`. Con el paciente primero, las políticas del storage pueden usar la misma regla que la base (`private.accessible_patient_ids()`, ADR-047).
 6. **Registro.** Cada archivo es una fila de `raw_blobs` con su número de tramo (`chunk_index`), la cantidad de muestras, el rango temporal y la huella SHA-256. La terna `(session_id, device_id, chunk_index)` es única: volver a subir un tramo no duplica (ingesta idempotente, como en ADR-046).
@@ -1984,6 +1995,140 @@ Dato relevado el 2026-10-17: el bootrom del RP2350 maneja **tablas de particione
 - **Por qué no las otras.** Decirle la hora una sola vez no corrige la deriva (unos 0,1 s en 8 h), y el aviso mismo llega con la demora de un viaje por BLE. Guardar sólo el tiempo desde el inicio no alcanza: la base pide fecha y hora.
 
 **Referencia.** CP-34; ADR-004 (sincronización), ADR-042 (`t_device`), ADR-049 (reinicios), ADR-051 (`control`), ADR-055 (Parquet); CP-28, CP-33. Fuente del método: [NTP — RFC 5905 (desfase y retardo por ida y vuelta)](https://www.rfc-editor.org/rfc/rfc5905).
+
+---
+
+## ADR-057 — Arranque de un paciente nuevo: las capturas no exigen modelo y el primer modelo lo calcula el worker
+**Estado:** aceptada (2026-11-08) — **Decisión: la verificación "modelo en flash = paciente" se exige sólo cuando la sesión puntúa la marcha en la cintura (modo edge); las capturas arrancan sin modelo. El primer modelo de un paciente —μ y Σ de Mahalanobis— y los umbrales de su feedback los calcula el worker con los datos de la sesión de calibración, y quedan como versión 1. Precisa ADR-043 rev y SPEC-11.**
+
+**Contexto.** La revisión previa a implementar (2026-10-17) encontró un círculo: la fase 6 del pipeline (ADR-043 rev, Vista 4 §4.1) y la regla 2 de SPEC-11 exigían, en toda sesión, que el modelo grabado en la cintura fuera del paciente elegido. Pero un paciente nuevo todavía no tiene modelo: sale justamente de sus primeras sesiones (la exploratoria y la de calibración). Tal como estaba escrito, la primera sesión de cualquier paciente no podía arrancar. Tampoco estaba dicho quién calcula ese primer modelo: Mahalanobis es de clase L —se adapta solo en la cintura—, pero el primer cálculo no es una adaptación sino un ajuste desde cero.
+
+**Opciones evaluadas.**
+- **A — Exigir el modelo sólo si la sesión puntúa; el primer modelo lo calcula el worker (elegida).** *Pros:* la regla protege exactamente lo que tiene que proteger —no puntuar a un paciente con el modelo de otro— y no traba las capturas, que no puntúan; el worker ya tiene los datos y calcula también los umbrales T1–T3, que salen de la distribución de scores de la calibración. *Contras:* el gate deja de ser incondicional.
+- **B — Un modelo "vacío" estampado con el paciente para pasar el gate.** *Pros:* no cambia la regla. *Contras:* es un truco que llena el registry de versiones que no son modelos.
+- **C — Que la cintura calcule μ y Σ durante la calibración y los suba al cierre.** *Pros:* no necesita el worker. *Contras:* los umbrales del feedback igual necesitan la distribución de scores, que es un cálculo offline, y mezcla el ajuste inicial con la adaptación online.
+
+**Decisión.**
+1. La verificación de paciente (fase 6; regla 2 de SPEC-11) se exige sólo si la sesión va a puntuar en la cintura (modo `edge`). En las capturas (`exploratory`, `operational`) el provisioning puede no llevar modelo y la sesión arranca igual.
+2. El primer modelo y los umbrales T1–T3 de `feedback_config` los calcula el worker con las features de la sesión de calibración y se registran como **versión 1**, con `models.source_session_id` = esa sesión (ADR-059). Si el modelo se va a desplegar en la cintura, esas features tienen que ser las del micro (captura operativa, ADR-018); para los experimentos offline alcanzan las de Python.
+3. Desde la versión 1 rige el ciclo de ADR-043 rev sin cambios.
+
+**Consecuencias.** Cambian SPEC-11 (regla 2 y `provision`), la Vista 4 §4.1 (fases 3 y 6) y `pipeline_sesion.mermaid`. Cierra el hueco 1 de la revisión del 2026-10-17 (`docs/cronograma.md` §3).
+
+**Apéndice conceptual (en llano).** El control de "modelo = paciente" existe para que nunca se compare la marcha de una persona contra la marcha normal aprendida de otra. Esa comparación sólo ocurre cuando el equipo puntúa en vivo. Mientras graba —que es lo que hace en las primeras sesiones de un paciente— no compara nada, así que no necesita modelo. El primer modelo se arma después, en la laptop, con las zancadas de la calibración.
+
+**Referencia.** ADR-043 rev, ADR-018, ADR-059; SPEC-11; Vista 4 §4.1; revisión del 2026-10-17.
+
+---
+
+## ADR-058 — FSR en cuentas del ADC, sin curva de fuerza por ahora
+**Estado:** aceptada (2026-11-08) — **Decisión: los cuatro casilleros de FSR de la muestra llevan cuentas del ADC, no fuerza, y por ahora no se mide la curva fuerza–cuentas de cada sensor. Las features de fuerza se calculan en cuentas. Precisa ADR-041, ADR-042 y ADR-055.**
+
+**Contexto.** La muestra de 39 B (ADR-041, ADR-042) reserva cuatro casilleros `uint16` para los FSR, pero ningún documento decía qué valor llevan. ADR-055 promete guardar en el Parquet "escalas" para pasar cada columna a unidades físicas, y SPEC-01 hablaba de "fuerza calibrada". Pasar de cuentas a fuerza exige medir la curva de cada sensor con pesos conocidos: la respuesta del FSR no es lineal y cambia de una pieza a otra. Juan decidió el 2026-11-08 trabajar en cuentas y no medir las curvas por ahora.
+
+**Opciones evaluadas.**
+- **A — Cuentas del ADC, sin curva (elegida).** *Pros:* cero trabajo de banco; el crudo queda tal como lo midió el micro, así que si un día se miden las curvas, la fuerza se puede recalcular. *Contras:* las features de fuerza quedan en una unidad relativa (ver abajo).
+- **B — Medir ahora la curva de cada sensor.** *Pros:* features en newtons. *Contras:* un procedimiento de banco por sensor (pesos, soporte, repeticiones) que no entra en el cronograma.
+- **C — Fuerza estimada con la curva típica del fabricante.** *Pros:* sin banco. *Contras:* la dispersión entre piezas es grande: daría newtons con un error desconocido, peor que admitir que son cuentas.
+
+**Decisión.**
+1. `fsr1..fsr4` llevan **cuentas del ADC** (el resultado de la decimación de ADR-014). La escala exacta —por ejemplo, si va el promedio o la suma de las 10 lecturas— se fija en el contrato de la muestra al implementar (ADR-055).
+2. No se mide la curva de cada sensor por ahora. En el Parquet, las columnas de FSR no llevan escala física.
+3. Las features del bloque C (#12–#17) y las que comparan FSR (#19, #44) se definen en cuentas.
+
+**Qué cambia en las métricas.**
+- **No cambian:** las de tiempo (bloques A y B, y #15 contact time y #17 time-to-peak dentro del C), las del IMU (F, G, H) y double/single support. Cuentas y fuerza crecen juntas —una es función creciente de la otra—, así que el instante de un pico o de un cruce de umbral es el mismo.
+- **Cambian de unidad** —siguen sirviendo para detectar desvíos del propio paciente, pero no se pueden comparar con valores en N de la literatura ni entre pacientes—: #12 pico, #13 media, #14 integral y #16 pendiente de carga. Además la relación no es lineal: con carga alta el divisor se aplana y las diferencias se comprimen.
+- **Se sesgan las comparaciones entre sensores distintos:** el cruce de MS (`F_ante ≥ F_post`, SPEC-01), #19 (punta contra talón) y la simetría izquierda–derecha de las features de fuerza (#20, #40); y, cuando se prendan, COP_ML y #18. Dos FSR dan cuentas distintas para la misma fuerza. Una mitigación posible —normalizar cada sensor con dos poses quietas al inicio de la sesión— queda propuesta en **CP-35**.
+- **El baseline personalizado absorbe los sesgos constantes:** el modelo aprende la marcha del paciente medida con esos sensores. **Regla nueva:** si se cambia un FSR o una plantilla, el baseline del paciente se reconstruye.
+- **Umbrales del detector:** `F_on` y `F_off` (SPEC-01) se expresan en cuentas y ya no pueden derivarse del peso corporal → **CP-35**.
+- **Salidas clínicas que necesitan fuerza** (asimetría de carga WBA, porcentaje del peso, mapas de presión en unidades) no están disponibles (CP-22).
+- **Saturación:** en el piloto hay que verificar que ningún FSR sature (la señal se aplana arriba); depende de la resistencia del divisor (`esquema_alimentacion.md` §4).
+
+**Consecuencias.** Cambian SPEC-01 (entradas y parámetros), la Vista 1 §4 (qué llevan los casilleros), la Vista 3 (§5 y el bloque C de la Parte A), `calibracion_baseline.mermaid` y `pinout_pico2.md`; notas en ADR-042 y ADR-055. Cierra el hueco 3 de la revisión del 2026-10-17. Si más adelante se miden las curvas, un ADR nuevo define cómo se aplican, sin tocar lo ya grabado.
+
+**Apéndice conceptual (en llano).** El micro no mide newtons: mide una tensión y la convierte en un número de 0 a 4095, las "cuentas". Para saber a cuántos newtons corresponde cada número habría que cargar cada sensor con pesos conocidos y armar su curva. Sin esa curva, los números siguen sirviendo para lo que hace el sistema —comparar la marcha del paciente con su propia marcha normal, medida con los mismos sensores—, pero no para decir "pisó con 600 N" ni para comparar dos sensores distintos como si fueran iguales. Lo que depende sólo de *cuándo* pasa algo —cuándo apoya, cuándo despega, cuándo llega al pico— no cambia.
+
+**Referencia.** ADR-014, ADR-041, ADR-042, ADR-055; SPEC-01; CP-22, CP-31, CP-35; `esquema_alimentacion.md`.
+
+---
+
+## ADR-059 — Ajustes del esquema y de los contratos tras la revisión previa a implementar
+**Estado:** aceptada (2026-11-08) — **Decisión: seis ajustes que confirmó Juan: (1) alta de pacientes por la función `create_patient()`; (2) `feedback_source` nombra el tipo de detector y se usa su versión vigente; (3) quedan anotados los modelos provisionados en cada sesión y la sesión que produjo cada versión; (4) el canal de estado se guarda en `device_status`; (5) `provision()` acepta una lista de modelos, cada uno con su par de slots A/B; (6) cada placa se identifica por un ID físico (`devices.hw_uid`). Extiende ADR-047 y precisa ADR-027, ADR-043 rev, ADR-052 y SPEC-11.**
+
+**Contexto.** La revisión del 2026-10-17 encontró errores y faltantes en `schema.sql` y en el contrato de SPEC-11. Mientras la base no exista, `schema.sql` es el diseño y se edita a mano (ADR-045): corregirlos ahora es gratis.
+
+**Decisión.**
+1. **Alta de pacientes.** La política de `patients` exige que el paciente ya figure en `patient_access` del usuario, pero esa tabla sólo la escribe `service_role` y exige que el paciente exista: con el esquema anterior, el host —que escribe con el usuario del investigador (ADR-032)— no podía crear pacientes, aunque ADR-047 decía que sí. Se agrega **`public.create_patient()`**, una función `security definer` que crea el paciente y el acceso `owner` de quien la llama en un solo paso. Sólo la ejecuta `authenticated`, que pierde el INSERT directo sobre `patients`.
+2. **`feedback_source` por tipo de detector.** Apuntaba a una versión puntual del modelo (FK a `models.id`), pero cada sesión adaptada crea una versión nueva (ADR-043 rev), así que la config quedaba apuntando a la versión de la sesión anterior. Pasa a ser texto con el `algo` (`'mahalanobis'`, …), como lo definía ADR-027 ("qué detector"). La versión vigente de cada detector es la única con `status = 'active'` (índice único parcial), y hay una sola config vigente por paciente.
+3. **Trazabilidad sesión ↔ modelo.** `session_models` anota qué modelos se provisionaron en cada sesión; `models.source_session_id`, qué sesión produjo cada versión (la de calibración para la versión 1 —ADR-057—, la adaptada para la N+1); y `sessions.feedback_config_id`, qué config de feedback se usó. Sin eso no se pueden armar la comparación con y sin adaptación ni la trayectoria del baseline, que son la razón de ser de ADR-043.
+4. **El canal de estado se guarda.** Batería, temperatura del IMU, uptime, paquetes perdidos y error de sincronización de cada equipo (ADR-043 rev, Vista 4 §4.2) van a la tabla **`device_status`**, particionada como las series (ADR-044), con RLS y escritura idempotente. Antes se mostraban en pantalla y se perdían, y son la única evidencia de la calidad de cada captura.
+5. **`provision()` con varios modelos.** El comando acepta una lista de artefactos —por ejemplo, Mahalanobis como sensor de drift más el detector del feedback—; cada modelo tiene su propio par de slots A/B en la flash, y `close()` devuelve el estado de cada modelo de clase L.
+6. **ID físico de cada placa.** `devices.hw_uid` (por ejemplo, el ID único del RP2350), que el micro reporta al conectar: es lo que le dice al host qué fila es la unidad conectada.
+
+**Consecuencias.** Cambian `src/db/schema.sql`, el ER, la Vista 4 (§1.1, §2, §4.1, §4.2, §4.3), SPEC-11, la Vista 2 §8, el maestro §11 y `src/db/README.md`. Los permisos del storage (buckets del crudo, los modelos y el firmware) siguen pendientes y se escriben con la migración base. Cierra los huecos 4, 5 y 10 de la revisión del 2026-10-17.
+
+**Referencia.** ADR-027, ADR-032, ADR-043 rev, ADR-044, ADR-045, ADR-047, ADR-052, ADR-057; SPEC-11; Vista 4.
+
+---
+
+## ADR-060 — La calibración pasa a 200 zancadas por pie
+**Estado:** aceptada (2026-11-08) — **Decisión: la sesión de calibración junta unas 200 zancadas de marcha normal por pie (antes ~100), que pueden hacerse en tandas descartando giros y arranques. El método del umbral de Mahalanobis queda abierto (CP-37).**
+
+**Contexto.** Mahalanobis (ADR-029) aprende de la calibración el promedio de cada feature y cómo varían juntas (la covarianza), y después mide qué tan lejos cae cada zancada nueva. La revisión del 2026-10-17 advirtió que, con ~100 zancadas y unas 40-50 features por pie, esa estimación es inestable. Juan pidió verificar la cuenta y prefirió, por ahora, resolverlo con más zancadas.
+
+**La cuenta (verificada el 2026-11-08).** Cuando la media y la covarianza se estiman con *n* zancadas, una zancada normal nueva sale en promedio más lejos de lo que debería, por un factor de aproximadamente (n−1)/(n−p−2), con *p* el número de features. Una simulación con datos normales sintéticos (300 repeticiones por caso) da:
+
+| p (features) | n (zancadas) | Distancia de una zancada normal, contra lo ideal | Falsas alarmas con el umbral χ² del 99 % (lo ideal: 1 %) |
+|---|---|---|---|
+| 20 | 100 | ×1,28 | 10 % |
+| 20 | 150 | ×1,17 | 5,6 % |
+| 20 | 200 | ×1,12 | 3,8 % |
+| 45 | 100 | ×1,88 | 70 % |
+| 45 | 200 | ×1,31 | 20 % |
+| 45 | 450 | ×1,12 | 5,1 % |
+
+**Opciones evaluadas.**
+- **A — Subir a 200 zancadas (elegida).** *Pros:* simple; con ~20 features deja el error chico. *Contras:* unos 4 minutos de marcha; con las 45 features completas no alcanza.
+- **B — Quedarse en 100 y corregir con matemática** (menos features, *shrinkage* de la covarianza, umbral corregido). *Pros:* no alarga la sesión. *Contras:* más decisiones metodológicas; Juan prefirió por ahora más datos.
+- **C — Subir a ~450.** *Pros:* sirve aun con 45 features. *Contras:* demasiado para un paciente post-ACV.
+
+**Decisión.**
+1. La calibración junta **~200 zancadas por pie** de marcha normal y estable. Pueden hacerse en tandas (por ejemplo, 4 de 50), descartando los giros y las primeras y últimas zancadas de cada tanda.
+2. Alcanza si el vector que entra a Mahalanobis tiene unas 20 features, que es lo que se espera de la selección ya prevista (#12, *sweet spot* de 15-25). Con las 45 completas haría falta más del doble de zancadas.
+3. El método del umbral —χ² teórico, percentil empírico de la calibración o la corrección exacta de Hotelling— queda en **CP-37**: con 200 zancadas y 20 features el χ² todavía da ~4 % de falsas alarmas contra el 1 % nominal.
+
+**Consecuencias.** Cambian la Vista 3 §5, el maestro §8, SPEC-05, SPEC-09, el satélite de análisis, `calibracion_baseline.mermaid`, `fundamento_dft_ihr.md` y el protocolo (CP-33). Cierra el hueco 7 de la revisión del 2026-10-17, salvo el umbral (CP-37).
+
+**Apéndice conceptual (en llano).** Mahalanobis aprende dos cosas de la calibración: el promedio de cada feature y cómo se mueven juntas (si cuando una sube, la otra también). La segunda es la difícil: con 45 features hay unas mil relaciones de a pares para estimar, y con pocas zancadas muchas salen por azar. En la práctica, el detector "se cree" que la marcha normal es más estrecha de lo que es, y marca como raras zancadas que son normales: con 100 zancadas y 45 features, siete de cada diez. Más zancadas lo corrigen, y menos features también; las dos cosas juntas son las que lo dejan bien.
+
+**Referencia.** ADR-029, ADR-011 rev; SPEC-05, SPEC-09; Vista 3 §3 y §5; CP-33, CP-37; backlog #12.
+
+---
+
+## ADR-061 — Sincronización: se guardan los beacons y se apaga el ahorro de energía del WiFi
+**Estado:** aceptada (2026-11-08) — **Decisión: (1) cada plantilla reporta cuándo recibió cada beacon y las correcciones de reloj que aplica, y el host lo guarda con la sesión, para poder rehacer y medir la sincronización después; (2) las tres placas apagan el ahorro de energía del WiFi al arrancar. Complementa ADR-004 y ADR-056; no resuelve CP-28.**
+
+**Contexto.**
+- **El dato original se perdía.** Cada plantilla pasa sus marcas de tiempo a la cuenta de la cintura antes de mandarlas (ADR-004, ADR-056), y nada guardaba su hora propia ni los beacons. ADR-056 conserva el original para la traducción a UTC —"conservar lo original para poder recalcular lo derivado"—, pero no para la sincronización entre plantillas. Con CP-28 diferida a la máxima, si en la mínima aparecían asimetrías raras y la sospechosa era la sincronización, no había con qué recalcularla ni medirla.
+- **El ahorro de energía demora los beacons.** Una estación WiFi en modo ahorro duerme entre beacons del AP, y el AP le retiene los mensajes para todos —como el beacon de sincronización— hasta que despierta: decenas o cientos de milisegundos de demora variable. ADR-035 ya decidió que en la mínima no hay gestión de energía, pero el driver del CYW43 que usa el Pico SDK la prende por defecto. **Verificado el 2026-11-08 en `cyw43-driver`:** `cyw43_wifi_set_up()` llama a `cyw43_wifi_pm(self, CYW43_DEFAULT_PM)` al levantar la primera interfaz (estación o AP), y `CYW43_DEFAULT_PM` es `CYW43_PERFORMANCE_PM` = `cyw43_pm_value(CYW43_PM2_POWERSAVE_MODE, 200, 1, 1, 10)`: ahorro PM2, que vuelve a dormir tras 200 ms sin tráfico.
+- **Chequeo previo, a pedido de Juan:** ninguna rama ni otra sesión lo había decidido. Lo más cercano es la discusión de CP-28 del 2026-10-17 —medir el error con un pulso cableado y estimarlo por la dispersión de los beacons—, que trata de *medir* la precisión y quedó diferida.
+
+**Opciones evaluadas (punto 1).**
+- **A — Guardar los beacons recibidos y las correcciones aplicadas (elegida).** *Pros:* pocos datos (una fila por beacon); permite rehacer la sincronización offline, medir su error y probar otro método sobre datos ya capturados. *Contras:* un mensaje más y un archivo más por sesión.
+- **B — Guardar además la hora propia de cada muestra.** *Pros:* lo más completo. *Contras:* +8 B por muestra (47 B) para un dato que A permite reconstruir.
+- **C — No guardar nada (lo que había).** *Contras:* el riesgo aceptado de CP-28 se vuelve irrecuperable.
+
+**Decisión.**
+1. **Registro de la sincronización.** Cada plantilla manda, por el canal confiable y en lotes, una fila por beacon recibido —número de beacon, la cuenta de la cintura que trae y su propia cuenta al recibirlo— y, cada vez que cambia, la corrección que aplica (desfase, deriva y desde qué instante). Es un mensaje más de `mensajes.proto` (ADR-050), que la cintura reenvía por `estado` (ADR-051). El host lo guarda en Parquet por tramos, junto al crudo de esa plantilla, como `raw_blobs.kind = 'sync'` (ADR-055).
+2. **Sin ahorro de energía en el WiFi.** Las tres placas llaman a `cyw43_wifi_pm(&cyw43_state, CYW43_NONE_PM)` después de levantar el WiFi. El consumo extra ya estaba asumido por ADR-035 y se mide en CP-09.
+3. **Queda para la implementación (anotado en CP-28):** dónde se toma la hora del beacon en la cintura. Si se toma antes de que la radio lo transmita, su demora —la radio se comparte con el BLE— entra como error: se cancela entre los dos pies, que reciben el mismo mensaje, pero no entre la cintura y las plantillas.
+
+**Consecuencias.** Cambian `src/db/schema.sql` (`raw_blobs.kind`), la Vista 1 §4 y §5, la Vista 2 §4 y la Vista 4 §1.4; notas en ADR-004, ADR-055 y CP-28. Cierra el hueco 6 de la revisión del 2026-10-17, salvo el punto 3, que es de implementación.
+
+**Apéndice conceptual (en llano).** Para que los dos pies compartan la hora, la cintura grita "¡son las tanto!" por WiFi y cada plantilla ajusta su reloj. Hasta ahora cada plantilla ajustaba y tiraba el papel: si después se descubría que el ajuste estaba mal, no había cómo rehacerlo. Ahora guarda el papel —cuándo oyó cada grito y qué ajuste hizo—, que ocupa casi nada. El ahorro de energía era otro problema: una plantilla que dormita escucha los gritos con atraso, y el kit del Pico viene con ese modo prendido; hay que apagarlo en el código.
+
+**Referencia.** ADR-004, ADR-035, ADR-050, ADR-051, ADR-055, ADR-056; CP-09, CP-28. Fuente: [cyw43-driver — `src/cyw43.h` y `src/cyw43_ctrl.c`](https://github.com/georgerobotics/cyw43-driver).
 
 ---
 

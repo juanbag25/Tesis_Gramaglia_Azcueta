@@ -18,6 +18,10 @@ erDiagram
     DEVICES ||--o{ MODEL_DEPLOYMENTS : "aloja"
     MODELS ||--o{ MODEL_DEPLOYMENTS : "se_despliega"
     MODELS ||--o{ RETRAIN_JOBS : "entra_sale"
+    SESSIONS ||--o{ SESSION_MODELS : "provisiona"
+    MODELS ||--o{ SESSION_MODELS : "corre_en"
+    SESSIONS ||--o{ DEVICE_STATUS : "canal de estado"
+    FEEDBACK_CONFIG ||--o{ SESSIONS : "usada_en"
 
     PATIENTS {
         uuid id PK
@@ -34,6 +38,7 @@ erDiagram
     DEVICES {
         uuid id PK
         text role "insole_left|insole_right|waist"
+        text hw_uid "ID unico de la placa (ADR-059)"
         text hw_revision
         text firmware_version
     }
@@ -50,11 +55,13 @@ erDiagram
         bigint clock_t0_device "recta t_device a UTC (ADR-056)"
         timestamptz clock_t0_utc
         double clock_drift_ppm
+        uuid feedback_config_id FK "config usada (ADR-059)"
     }
     RAW_BLOBS {
         uuid id PK
         uuid session_id FK
         uuid device_id FK
+        text kind "samples|sync (ADR-061)"
         int chunk_index "tramo (ADR-055)"
         text storage_url "parquet"
         bigint n_samples
@@ -134,7 +141,25 @@ erDiagram
         text artifact_format "envelope_v1 (ADR-053)"
         text checksum "SHA-256 del sobre"
         jsonb metrics
-        text status
+        text status "una sola active por paciente y algo"
+        uuid source_session_id FK "sesion que la produjo (ADR-059)"
+    }
+    SESSION_MODELS {
+        uuid session_id PK, FK
+        uuid model_id PK, FK
+    }
+    DEVICE_STATUS {
+        uuid session_id PK, FK
+        text device_role PK "insole_left|insole_right|waist"
+        bigint t_device PK
+        timestamptz session_started_at PK "particion mensual"
+        uuid patient_id FK
+        timestamptz time
+        int battery_mv
+        real imu_temp_c
+        int uptime_s
+        int packets_lost
+        real sync_error_us
     }
     MODEL_DEPLOYMENTS {
         uuid id PK
@@ -161,7 +186,7 @@ erDiagram
     FEEDBACK_CONFIG {
         uuid id PK
         uuid patient_id FK
-        uuid feedback_source FK
+        text feedback_source "tipo de detector (ADR-059)"
         int window_strides
         double threshold_mild
         double threshold_marked

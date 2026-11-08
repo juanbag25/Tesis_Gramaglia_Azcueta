@@ -22,7 +22,7 @@ Esta arquitectura se documenta en **cuatro vistas** a distinto nivel de abstracc
 
 **Regla de layering:** cada algoritmo/feature se **define una vez en la Vista 3** (fórmula, parámetros, versionado) y se **ejecuta en la Vista 2** (firmware) y en el worker.
 
-> **Dónde vive qué.** Las **cuatro vistas** son la fuente canónica de su dominio. El **esquema ejecutable** de la base es `src/db/schema.sql` (ADR-037). El **qué y el porqué de cada decisión** están en `../decisiones/bitacora_decisiones.md`, que tiene su propio índice. Lo que queda abierto, en `../cuestiones_pendientes.md`. Este documento **no mantiene una segunda copia de nada de eso**: si una sección de acá y una vista discrepan, **manda la vista**.
+> **Dónde vive qué.** Las **cuatro vistas** son la fuente canónica de su dominio. El **esquema** de la base se define por migraciones (`src/db/supabase/migrations/`) y se lee en `src/db/schema.sql` (ADR-045, que revisa ADR-037). El **qué y el porqué de cada decisión** están en `../decisiones/bitacora_decisiones.md`, que tiene su propio índice. Lo que queda abierto, en `../cuestiones_pendientes.md`. Este documento **no mantiene una segunda copia de nada de eso**: si una sección de acá y una vista discrepan, **manda la vista**.
 
 ---
 
@@ -32,7 +32,7 @@ El sistema captura la marcha de un paciente mediante **dos plantillas instrument
 
 La arquitectura se define en **dos horizontes**: un **objetivo de mínima** (entorno controlado, con una laptop cerca, orientado a capturar dataset y entrenar/evaluar algoritmos) y un **objetivo de máxima** (uso diario continuo, con un celular reemplazando a la laptop y un backend de reentrenamiento en la nube). Todo lo que se construye para la mínima está diseñado para **escalar sin reescrituras estructurales** hacia la máxima; los puntos donde la mínima y la máxima difieren están explícitamente aislados detrás de interfaces.
 
-Este documento fija las decisiones de arquitectura, su justificación, y el detalle de implementación (topología, protocolos, sincronización, pipeline de datos, modelos, ciclo de vida, base de datos y seguridad). El **roadmap de implementación** se aborda en un documento aparte, una vez validada esta arquitectura.
+Este documento fija las decisiones de arquitectura, su justificación, y el detalle de implementación (topología, protocolos, sincronización, pipeline de datos, modelos, ciclo de vida, base de datos y seguridad). El **roadmap de implementación** y el calendario hasta la entrega están en un documento aparte: `../cronograma.md`.
 
 ---
 
@@ -124,7 +124,7 @@ flowchart LR
 
 **Plantillas ↔ cintura: WiFi, cintura como Access Point** [ADR-001]. Estrella de un solo salto, sin infraestructura externa, con la fusión donde los datos ya convergen. Enlace permanente: no cambia entre mínima y máxima.
 
-**Cintura ↔ host: BLE desde la mínima** [ADR-002]. La cintura expone un servidor GATT; el host (laptop o celular) es el central. Se adopta BLE desde el inicio porque el firmware de la cintura queda **idéntico** en ambos horizontes, se enfrenta **temprano** el riesgo de coexistencia, y el caudal entra con margen: ~7,8 KB/s en uso y ~11,7 KB/s en las capturas, con el crudo de la cintura (ADR-048), a validar junto con la coexistencia.
+**Cintura ↔ host: BLE desde la mínima** [ADR-002]. La cintura expone un servidor GATT; el host (laptop o celular) es el central. Se adopta BLE desde el inicio porque el firmware de la cintura queda **idéntico** en ambos horizontes, se enfrenta **temprano** el riesgo de coexistencia, y el caudal entra con margen: el pico son las capturas, ~11,7 KB/s con el crudo de las dos plantillas y de la cintura (ADR-048), a validar junto con la coexistencia; en edge viajan sólo zancadas, features y scores (~0,5 KB/s, ADR-049) y los snippets ante anomalía.
 
 **Modelo de conectividad tipo auriculares** [ADR-028]. Los micros **nunca se conectan a WiFi de internet**: el único WiFi es el enlace privado plantillas↔cintura. El host tiene internet y empuja a Supabase; el OTA va por BLE. Sin provisioning de redes. Pairing cintura↔host sin botón: gesto de sacudida + passkey fijo + bond list multi-host.
 
@@ -179,7 +179,7 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 
 **Mahalanobis cumple doble función:** detector en vivo de clase L (<100 µs, primero a implementar) **y sensor de drift** que dispara el reentrenamiento de las clases E/H/W.
 
-**Personalización primero:** el baseline es por paciente, definido en una sesión de calibración (~100 zancadas). La evidencia lo sostiene: one-class personalizado AUC≈0,97 vs ~55 % de un modelo global.
+**Personalización primero:** el baseline es por paciente, definido en una sesión de calibración (~200 zancadas por pie — ADR-060), con el que el worker calcula la versión 1 del modelo (ADR-057). La evidencia lo sostiene: one-class personalizado AUC≈0,97 vs ~55 % de un modelo global.
 
 > **Detalle** (catálogo de features, tabla de algoritmos, estrategia progresiva de evaluación, calibración): **Vista 3** y `vistas/3_analisis_features_y_algoritmos.md`.
 
@@ -193,7 +193,7 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 
 **Despliegue OTA A/B desde el inicio** [ADR-012, ADR-052], por BLE desde el host, con un protocolo propio que retoma tras un corte y verifica la huella SHA-256: pesos (el sobre del artefacto —ADR-053— a un slot de flash, con conmutación atómica) y **firmware completo** (particiones A/B del bootrom del RP2350, sin bootloader propio: la imagen nueva arranca a prueba y, si no se confirma, vuelve la anterior). El riesgo de brickeo se mitiga con A/B + huella + arranque a prueba, y con una prueba obligatoria antes de sellar las plantillas.
 
-**Versionado y respaldo:** los modelos **E/H/W** quedan en la DB (fila en `models` + artefacto en storage) con versión, métricas y linaje, y la anterior se conserva como *last-known-good*. Los de clase **L** no viajan por OTA: su estado adaptado sube en el **check-in** de cada sesión y se versiona igual. **La DB es la fuente de verdad** y el flash del micro una copia de trabajo que se reescribe en cada provisioning [ADR-043 rev]. > **Detalle:** Vista 4 §4.1.
+**Versionado y respaldo:** los modelos **E/H/W** quedan en la DB (fila en `models` + artefacto en storage) con versión, métricas y linaje, y la anterior se conserva como *last-known-good*. Los de clase **L** no los produce el worker: su estado adaptado sube en el **check-in** de cada sesión y se versiona igual, y en el provisioning de la sesión siguiente vuelve a bajar a la cintura por el mismo protocolo de OTA. **La DB es la fuente de verdad** y el flash del micro una copia de trabajo que se reescribe en cada provisioning [ADR-043 rev]. > **Detalle:** Vista 4 §4.1.
 
 > **Detalle:** mecánica de firmware → **Vista 2 §8**; lado backend y registry → **Vista 4 §6**; ciclo conceptual → **Vista 3 §6** y `ciclo_de_vida_modelos.mermaid`.
 
@@ -220,7 +220,7 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 | Capa | Tabla | Qué guarda |
 |---|---|---|
 | Metadata | `patients` | Paciente con `external_code` anónimo + PII mínima (año de nacimiento, sexo, lado afectado) |
-| Metadata | `devices` | Cada micro: rol (`insole_left`/`insole_right`/`waist`), revisión de HW, versión de firmware |
+| Metadata | `devices` | Cada micro: rol (`insole_left`/`insole_right`/`waist`), ID único de la placa, revisión de HW, versión de firmware |
 | Metadata | `sessions` | Sesión de captura: paciente, **fase** (`exploratory`/`operational`/`edge` — ADR-005 rev c), `feature_set_version`, entorno, set de dispositivos, `host_type` (sólo trazabilidad — ADR-034) |
 | Seguridad | `patient_access` | Pertenencia `user → patient → rol`; es la base de las políticas RLS (ADR-032) |
 | Blobs | `raw_blobs` | Crudo continuo en Parquet (referencia a object storage) |
@@ -229,13 +229,15 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 | Series | `gait_events` | Eventos **IC/TO/MS** de cada zancada, con confianza y `flags` |
 | Series | `feature_vectors` | Un vector de features por zancada (por pie) o por ciclo bilateral (`cycle_seq`), en `jsonb` + `feature_set_version` + **`features_source`** (`device`/`offline` — ADR-036) |
 | Series | `anomaly_scores` | Score por unidad evaluada y por modelo, umbral, flag de anomalía y métrica de drift |
+| Series | `device_status` | El canal de estado de cada equipo, cada 1-2 s: batería, temperatura del IMU, uptime, pérdidas, error de sincronización (ADR-059) |
 | Registry | `models` | Clase L/E/H/W, `inference_target`, `retrain_target`, versión, linaje, métricas, artefacto |
 | Registry | `model_deployments` | Qué modelo corre en qué micro; `active` / `rolled_back` |
+| Registry | `session_models` | Qué modelos se provisionaron en cada sesión (ADR-059) |
 | Registry | `firmware_images` | Imágenes de firmware para el OTA A/B |
 | Registry | `retrain_jobs` | Orquestación del reentrenamiento (`drift` / `schedule` / `manual`) |
-| Config | `feedback_config` | Política de feedback vibrotáctil per-paciente: `feedback_source`, bandas T1/T2/T3, N de ventana, intensidad, refractario, histéresis (ADR-027 / SPEC-09) |
+| Config | `feedback_config` | Política de feedback vibrotáctil per-paciente: `feedback_source` (tipo de detector, versión vigente — ADR-059), bandas T1/T2/T3, N de ventana, intensidad, refractario, histéresis (ADR-027 / SPEC-09) |
 
-**Decisiones de esquema ya reflejadas en el DDL:** `feature_vectors.features` como **`jsonb`** (ADR-031) · **RLS estricto** por paciente vía `patient_access`, con `service_role` para el worker (ADR-032) · `sessions.host_type` (ADR-034) · **fase de captura de tres valores + origen de las features por fila** (ADR-036) · `gait_events.type ∈ {IC,TO,MS}` (ADR-038) · **series particionadas por mes de inicio de sesión** (ADR-044) · **migraciones + snapshot** (ADR-045) · **zancada como entidad, FK reales e ingesta idempotente** (ADR-046) · **grants explícitos y RLS en todas las tablas** (ADR-047).
+**Decisiones de esquema ya reflejadas en el DDL:** `feature_vectors.features` como **`jsonb`** (ADR-031) · **RLS estricto** por paciente vía `patient_access`, con `service_role` para el worker (ADR-032) · `sessions.host_type` (ADR-034) · **fase de captura de tres valores + origen de las features por fila** (ADR-036) · `gait_events.type ∈ {IC,TO,MS}` (ADR-038) · **series particionadas por mes de inicio de sesión** (ADR-044) · **migraciones + snapshot** (ADR-045) · **zancada como entidad, FK reales e ingesta idempotente** (ADR-046) · **grants explícitos y RLS en todas las tablas** (ADR-047) · **alta de pacientes por función, feedback por tipo de detector, vínculo sesión ↔ modelo y canal de estado guardado** (ADR-059) · **registro de la sincronización** (`raw_blobs.kind`, ADR-061).
 
 **Pendiente:** las **columnas generadas `STORED`** e índices de expresión sobre las features calientes del dashboard (ADR-031) no se pueden fijar hasta congelar el `feature_set_version` y saber qué grafica el dashboard (**CP-20**).
 
@@ -281,13 +283,13 @@ Para saber *qué* se decidió: el índice de la bitácora. Para saber *por qué*
 |---|---|---|
 | Coexistencia WiFi-AP + BLE en el CYW43439 | Paquetes caídos / desconexiones en la cintura | Enfrentarla desde la mínima; tuning de intervalos; priorización; pruebas de carga tempranas |
 | Precisión de sincronización insuficiente | Errores en features bilaterales | Backbone con beacon + corrección de drift; **validación empírica de la precisión** contra una referencia común; subir la cadencia del beacon si hace falta. *(El emparejado por IC **no** es fallback: usa el reloj ya sincronizado y no compensa drift — ADR-004.)* |
-| Detección de IC poco fiable en marcha muy patológica | Segmentación/emparejado ruidoso | Detección por umbral de FSR (robusta), degradación a reloj solo, IC como refinamiento no crítico |
+| Detección de IC poco fiable en marcha muy patológica | Segmentación/emparejado ruidoso | Detección por umbral de FSR (robusta) con confirmación IMU; los eventos dudosos se emiten con baja confianza y `flags` en vez de descartarse (SPEC-01). El IC no participa de la sincronización (ADR-004): si falla, se resiente la segmentación, no el reloj |
 | ML on-device excede recursos del RP2350 | Inferencia lenta / no cabe | Cuantización int8 (TFLite Micro); si un modelo no entra, pasa a **clase H (host)** por config (`inference_target`), con runtime espejo. **Nunca al worker para tiempo real** (ADR-011 rev / ADR-013); la clase W queda para análisis offline |
-| Brickeo por OTA de firmware | Dispositivo inutilizable | Bootloader A/B, checksum, watchdog, modo recuperación, last-known-good |
+| Brickeo por OTA de firmware | Dispositivo inutilizable | A/B del bootrom del RP2350 con arranque a prueba (sin bootloader propio), huella SHA-256, last-known-good y la prueba obligatoria antes de sellar una plantilla (ADR-052) |
 | Crecimiento de crudo en uso diario | Costo de almacenamiento | Retención tiered + crudo sólo por anomalía |
 | Train/serve skew (features PC vs micro) | Modelo degradado en producción | Tests de paridad C↔Python en CI + entrenar con features del micro (ADR-018) |
 | Datos de salud | Privacidad/compliance | Cifrado en tránsito/reposo, **RLS estricto** por paciente vía `patient_access` (ADR-032), anonimización, consentimiento (nivel formal → CP-18) |
-| **Port de `pico-tflmicro` a RP2350 no mergeado** | Cae el runtime de inferencia elegido (SPEC-08) y parte del pipeline de ADR-022 | Validación de banco **temprana** (compilar el fork y correr un modelo int8 de juguete, sin depender del firmware del proyecto); **fallback documentado: CMSIS-NN directo** (ADR-020, opción C) — viable porque el AE denso es chico. **CP-21** |
+| **`pico-tflmicro` en RP2350 sin validar en banco** (el mantenedor lo confirmó en el issue #18, cerrado el 27/12/2024, pero el README sólo nombra el RP2040) | Cae el runtime de inferencia elegido (SPEC-08) y parte del pipeline de ADR-022 | Validación de banco **temprana** (compilar el fork y correr un modelo int8 de juguete, sin depender del firmware del proyecto); **fallback documentado: CMSIS-NN directo** (ADR-020, opción C) — viable porque el AE denso es chico. **CP-21** |
 | Cambio de esquema con datos ya capturados | Pérdida o corrupción de datos de pacientes | **Migraciones versionadas** que CI prueba sobre una base efímera antes de aplicarlas; una migración aplicada no se edita y la base remota no se toca a mano (ADR-045) |
 | Exposición de datos por la Data API (tablas o particiones sin RLS) | Fuga de datos de salud | **Grants explícitos**, RLS en todas las tablas, particiones cerradas y tests pgTAP en CI (ADR-047) |
 
@@ -301,4 +303,4 @@ Se llevan en un **registro vivo aparte**, que es la única fuente de verdad: **`
 
 ---
 
-*Próximo paso (documento aparte): roadmap de implementación por fases para alcanzar esta arquitectura.*
+*Próximo paso: el roadmap de implementación por fases y el calendario hasta la entrega (1/3/2027) están en `../cronograma.md`.*

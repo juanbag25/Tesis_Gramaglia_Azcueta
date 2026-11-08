@@ -379,7 +379,7 @@ Como `stride_speed` (#7) ya está en el catálogo, la mitigación natural es **r
 
 ### 9.7 Lo que la personalización ya resuelve
 
-El sistema es **one-class personalizado**: el baseline se construye con la calibración del propio paciente (~100 zancadas). Todo lo que sea **constante para ese paciente** —colocación del cinturón, altura, el $n$ elegido, un sesgo sistemático del método de remuestreo— se absorbe en el baseline y desaparece del score.
+El sistema es **one-class personalizado**: el baseline se construye con la calibración del propio paciente (~200 zancadas por pie — ADR-060). Todo lo que sea **constante para ese paciente** —colocación del cinturón, altura, el $n$ elegido, un sesgo sistemático del método de remuestreo— se absorbe en el baseline y desaparece del score.
 
 Lo único que **no** se absorbe es lo que varía **dentro** del mismo paciente entre sesiones. De la lista de arriba, eso es esencialmente la velocidad (§9.6).
 

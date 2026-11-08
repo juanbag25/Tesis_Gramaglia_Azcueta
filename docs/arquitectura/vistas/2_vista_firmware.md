@@ -10,7 +10,7 @@
 
 Dos firmwares en **C/C++ con el Pico SDK** [ADR-010], con **código compartido** en `src/firmware/shared/`: el formato de la muestra, los mensajes (`mensajes.proto`, del que nanopb genera el C — ADR-050), la **definición de features** (catálogo `features.toml` con su tabla de C generada — ADR-021/054), la sincronización y el protocolo OTA (ADR-052). La tabla de servicios BLE (`.gatt`) vive en el firmware de la cintura (ADR-051).
 
-- **Plantilla (insole):** adquiere a 100 Hz, detecta IC/TO, calcula **features por-pie**, mantiene un buffer de crudo y acciona el **motor PWM**.
+- **Plantilla (insole):** adquiere a 100 Hz, detecta IC/TO/MS, calcula **features por-pie**, mantiene un buffer de crudo y acciona el **motor PWM**.
 - **Cintura (waist):** **AP WiFi**, **maestro de sync** (beacon), **fusión bilateral**, **inferencia + decisión de feedback**, **uplink BLE**; en las capturas, además, **sube su propio crudo** del tronco (ADR-048).
 
 ```mermaid
@@ -37,7 +37,7 @@ flowchart TB
     TXI --> RX
     FB -- "comando (WiFi)" --> MO
     BE -- "beacon (WiFi)" --> TS
-    UP -. "OTA A/B por BLE" .-> INSOLE
+    UP -. "OTA A/B: llega por BLE a la cintura y sigue por TCP (store-and-forward)" .-> INSOLE
 ```
 
 ## 2. Adquisición determinística (100 Hz) — [ADR-014]
@@ -52,7 +52,7 @@ Muestreo **exacto y periódico** pese a la actividad del radio (el jitter arruin
 
 ## 3. Detección de eventos y ejecución de features
 
-- **IC/TO/MS** (núcleo del firmware): fusión **FSR-primario + confirmación IMU**, per-pie — **SPEC-01** (ADR-015 para IC/TO; **ADR-038** para **mid-stance**, detectado como cruce de carga retropié→antepié). Alimenta features espacio-temporales, segmentación, ZUPT, refinamiento de sync y timing del feedback. **Segmentación stance/swing + sub-fases del apoyo** (carga `[IC,MS]` / propulsión `[MS,TO]`)**:** SPEC-02. **Cada IC abre una zancada y la numera** (`stride_seq`, por pie, desde `arm()`); MS y TO llevan el número de su IC. Es la identidad con la que se guarda todo lo que deriva de esa zancada (ADR-046).
+- **IC/TO/MS** (núcleo del firmware): fusión **FSR-primario + confirmación IMU**, per-pie — **SPEC-01** (ADR-015 para IC/TO; **ADR-038** para **mid-stance**, detectado como cruce de carga retropié→antepié). Alimenta features espacio-temporales, segmentación, ZUPT, emparejado de zancadas (sobre el reloj ya sincronizado: el IC no sincroniza — ADR-004) y timing del feedback. **Segmentación stance/swing + sub-fases del apoyo** (carga `[IC,MS]` / propulsión `[MS,TO]`)**:** SPEC-02. **Cada IC abre una zancada y la numera** (`stride_seq`, por pie, desde `arm()`); MS y TO llevan el número de su IC. Es la identidad con la que se guarda todo lo que deriva de esa zancada (ADR-046).
 - **Módulo de features por-pie (ejecución):** el firmware **implementa** las features desde el **catálogo compartido** (definición única, ADR-021); su definición canónica vive en la Vista 3. Corre en **captura operativa y edge** (no en la exploratoria — ADR-005 rev c). Aplica el **set activo** vigente (perfil **2-FSR**: bloque E + #18 **OFF**, ADR-023).
 - **Dependencias de cómputo:** módulo IMU (orientación/gravedad — SPEC-04), buffer de N zancadas (SPEC-05), stride length/ZUPT (SPEC-03), COP_ML (SPEC-06, **diferido**), FFT/DSP con **CMSIS-DSP** (SPEC-07, ADR-019).
 - **Fusión bilateral (cintura):** simetría (bloque D) y **double support** desde los **eventos alineados** por el backbone de sync — no necesita el crudo de ambos pies co-localizado. Al emparejar una zancada izquierda con una derecha, la cintura numera el **ciclo bilateral** (`cycle_seq`, desde `arm()`): el vector bilateral y los scores se identifican con ese número (ADR-046, SPEC-05).
@@ -61,6 +61,8 @@ Muestreo **exacto y periódico** pese a la actividad del radio (el jitter arruin
 ## 4. Sincronización (implementación) — [ADR-004]
 
 La **cintura emite el beacon** periódico **por WiFi** a las plantillas —es el enlace que hay que alinear a nivel de muestra, y no cambia entre mínima y máxima—; cada muestra lleva **timestamp + seq**; la **corrección de drift** (regresión lineal) corre en la **capa de aplicación** (portable WiFi↔BLE). El **backbone es el único que sincroniza**; el **emparejado de zancadas por IC usa el reloj ya sincronizado** — no sincroniza ni compensa drift (ver Vista 1 §5).
+
+**Dos requisitos de ADR-061.** (1) Las tres placas apagan el ahorro de energía del WiFi apenas lo levantan, con `cyw43_wifi_pm(&cyw43_state, CYW43_NONE_PM)`: el driver del CYW43 lo deja prendido por defecto (modo PM2), y una plantilla en ahorro recibe los beacons con decenas o cientos de milisegundos de atraso. (2) Cada plantilla reporta, por el canal confiable, los beacons que recibió —número, la cuenta de la cintura que traen y su propia cuenta al recibirlos— y las correcciones que aplica; el host los guarda para poder rehacer y medir la sincronización. Dónde se toma la hora del beacon en la cintura se decide al implementar (CP-28).
 
 ## 5. Inferencia on-device — [ADR-020 / SPEC-08]
 
@@ -85,7 +87,7 @@ Cada plantilla mantiene un **ring buffer** de crudo; en **edge**, ante una anoma
 
 **OTA completo desde el inicio**, por **BLE** desde el host (característica `ota`, ADR-051), esquema **A/B**, con un **protocolo propio de cinco pasos** (ADR-052): aviso (tipo, tamaño, SHA-256, versión y paciente) → pedazos con su posición → acuses que permiten retomar tras un corte → SHA-256 de lo que quedó escrito en flash → conmutación. Corre sólo fuera de sesión (en reposo o en el provisioning).
 
-- **Pesos (modelos):** el artefacto viaja en el **sobre** de ADR-053 —cabecera fija con la estampa, contenido según el modelo (Mahalanobis = μ + Σ⁻¹; AE/LSTM = **flatbuffer int8** de TFLite Micro; Isolation Forest = tablas de árboles) y huella SHA-256 al final— a un **slot** de flash; huella verificada → **conmutación atómica** → el anterior queda **last-known-good** para rollback. La cintura vuelve a verificar la huella cada vez que carga el modelo.
+- **Pesos (modelos):** el artefacto viaja en el **sobre** de ADR-053 —cabecera fija con la estampa, contenido según el modelo (Mahalanobis = μ + Σ⁻¹; AE/LSTM = **flatbuffer int8** de TFLite Micro; Isolation Forest = tablas de árboles) y huella SHA-256 al final— a un **slot** de flash; huella verificada → **conmutación atómica** → el anterior queda **last-known-good** para rollback. Cada modelo tiene su propio par de slots: `provision()` puede traer varios —por ejemplo, Mahalanobis como sensor de drift más el detector del feedback— o ninguno, si el paciente todavía no tiene modelo (ADR-057, ADR-059). La cintura vuelve a verificar la huella cada vez que carga el modelo.
 - **Estampa de paciente (ADR-043 rev).** Todo artefacto en flash lleva **`patient_id` + versión** en su cabecera, y la cintura **se niega a scorear** si no coincide con el paciente de la sesión abierta. Sin esto, el par A/B —que existe para *rollback de versión*— se contamina al rotar pacientes y un rollback cargaría el baseline de otra persona.
 - **El flash es una copia de trabajo.** Se reescribe desde la DB en el **provisioning** de cada sesión: la DB manda y no hay reconciliación. Su única función propia es que un **reset a mitad de sesión** recargue el modelo sin depender del host — el estado adaptado de clase L vive en RAM y sólo sube en el check-in.
 - **Firmware:** **particiones A/B del bootrom del RP2350**, sin bootloader propio (ADR-052). La imagen nueva se escribe en la partición inactiva y arranca **a prueba**: tras un autotest (radio, sensores, enlace) se confirma con `explicit_buy`; si no se confirma, el chip vuelve a la anterior. La semántica exacta del arranque a prueba se verifica en el datasheet antes de implementar. Las plantillas reciben su firmware de la cintura por TCP, que primero guarda y verifica la imagen completa (*store-and-forward*). Flash: dos firmwares + los slots de modelo y, en la cintura, el lugar para la imagen de una plantilla en tránsito.
@@ -98,7 +100,7 @@ Cada plantilla mantiene un **ring buffer** de crudo; en **edge**, ante una anoma
 - **Plantilla** (WiFi-STA sólo, **sin BLE/coexistencia**, **no infiere**): **core 0 = WiFi-STA + TX + motor**; **core 1 = adquisición (100 Hz duro) + eventos IC/TO + features por-pie**. Se agrupa el *pipeline de sensado* en el core 1 (data locality: el crudo a 100 Hz no cruza de core) y se aísla el WiFi —el inquilino de latencia impredecible— en el core 0. *(Las features **bilaterales** —simetría, double support— no se calculan acá: van en la cintura, ADR-005.)*
 - **Cintura** (acota el radio + la inferencia): **core 0 = radio** (WiFi-AP + BLE, **coexistencia**, donde lo pone el SDK); **core 1 = inferencia + fusión bilateral + IMU + decisión** (+ **features de tronco** cuando se prenda el bloque I — ADR-040/SPEC-10). La **coexistencia** WiFi-AP+BLE (riesgo maestro §15) es **sólo de la cintura**. El **IMU se lee por DMA** (ADR-026) para no competir con la inferencia del core 1.
 
-**Canal de estado (ADR-043 rev).** Además del stream de 100 Hz, la cintura publica cada **1-2 s**: batería, **temperatura de los tres IMU** (sensor integrado del MPU-6050 — destraba el gate térmico del pipeline y sirve como señal de calidad del dato durante la sesión), **uptime** (una caída delata un reset silencioso), contadores de **pérdida de paquetes** derivados del `seq`, y **error de sincronización** estimado. A demanda —al conectar y **tras todo reset**— reporta el **paciente y la versión de modelo que tiene en flash**. Detalle: Vista 4 §4.2.
+**Canal de estado (ADR-043 rev).** Además del stream de 100 Hz, la cintura publica cada **1-2 s**: batería, **temperatura de los tres IMU** (sensor integrado del MPU-6050 — destraba el gate térmico del pipeline y sirve como señal de calidad del dato durante la sesión), **uptime** (una caída delata un reset silencioso), contadores de **pérdida de paquetes** derivados del `seq`, y **error de sincronización** estimado. A demanda —al conectar y **tras todo reset**— reporta el **paciente y la versión de modelo que tiene en flash**, y el **ID único de la placa** (ADR-059). El host guarda el canal de estado en `device_status` (ADR-059). Detalle: Vista 4 §4.2.
 
 **Comunicación entre cores:** FIFO de hardware (`multicore_fifo_*`) / `queue_t` con spinlocks (Pico SDK).
 

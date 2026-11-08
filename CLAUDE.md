@@ -6,14 +6,14 @@
 
 ## Qué es este proyecto (en una línea)
 
-Sistema de **plantillas inteligentes bilaterales** para **detección personalizada de anomalías de marcha en pacientes post-ACV**, con **feedback vibrotáctil en tiempo real** e **inferencia en el borde (edge)**. Tesis de maestría (ITBA).
+Sistema de **plantillas inteligentes bilaterales** para **detección personalizada de anomalías de marcha en pacientes post-ACV**, con **feedback vibrotáctil en tiempo real** e **inferencia en el borde (edge)**. Proyecto Final de Carrera de Bioingeniería (ITBA, 16.30), al que el repo llama "la tesis". **Entrega: 1 de marzo de 2027** (`docs/cronograma.md`).
 
-**Estado actual:** arquitectura **cerrada** en 4 vistas consolidadas; **diseño detallado terminado**. Decisiones en **ADR-000 a 056**; specs de firmware **SPEC-01 a SPEC-11**. El backlog de investigación **#1–#10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) requieren firmware y dataset. El **esquema de la base está diseñado** (`src/db/schema.sql`: Postgres 17 con series particionadas, zancada como entidad, grants explícitos — ADR-044 a 047) y se crea como **migraciones** al implementar la base (ADR-045). Los **contratos de interfaz** entre firmware, host, worker y base también están definidos (ADR-050 a 056). **Firmware, worker y base todavía no existen.** Próximo paso: **roadmap de implementación por fases** e iniciar `src/`.
+**Estado actual:** arquitectura **cerrada** en 4 vistas consolidadas; **diseño detallado terminado**. Decisiones en **ADR-000 a 061**; specs de firmware **SPEC-01 a SPEC-11**. El backlog de investigación **#1–#10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) requieren firmware y dataset. El **esquema de la base está diseñado** (`src/db/schema.sql`: Postgres 17 con series particionadas, zancada como entidad, grants explícitos — ADR-044 a 047) y se crea como **migraciones** al implementar la base (ADR-045). Los **contratos de interfaz** entre firmware, host, worker y base también están definidos (ADR-050 a 056). **Firmware, worker y base todavía no existen.** Próximo paso: ejecutar el **cronograma** (`docs/cronograma.md`, propuesta del 2026-11-08): cerrar las decisiones de diseño que quedan, presentar el protocolo al comité de ética e iniciar `src/`.
 
 ## Orden de lectura recomendado (onboarding)
 
 1. `docs/Anteproyecto_Tesis.pdf` — el anteproyecto oficial (problema, objetivos mínima/máxima, metodología). Define la tesis.
-2. `docs/objetivos.md` — objetivos consolidados y filosofía.
+2. `docs/objetivos.md` — objetivos consolidados y filosofía. `docs/cronograma.md` — calendario hasta la entrega, qué está hecho, qué falta y qué entra.
 3. `docs/arquitectura/Arquitectura_Sistema_Marcha.md` — **índice + overview** del sistema. Da la foto completa en una lectura y enlaza las **4 vistas** en `docs/arquitectura/vistas/` (1 sistema · 2 firmware · 3 datos-ml · 4 backend), donde vive el detalle.
 4. `docs/decisiones/bitacora_decisiones.md` — por qué cada decisión, con opciones y pros/cons (ADRs). **Tiene índice al inicio.**
 5. `docs/investigacion/resumen_investigacion.md` + `features_anomaly_detection_stroke.md` + `docs/marco_teorico/marco_teorico_documento_de_trabajo.md` — la evidencia que fundamenta el diseño.
@@ -37,7 +37,7 @@ Tres reglas de fuente única, todas producto de la auditoría de consistencia de
 
 ## Resumen de la arquitectura (lo mínimo que un agente debe saber)
 
-- **Hardware:** 2 plantillas (Raspberry Pi Pico 2 W + MPU-6050 + FSR + motor vibrador PWM) + 1 unidad de cintura (Pico 2 W + MPU-6050 a ~L4-L5). Muestreo **100 Hz**. **FSR: 2 hoy** (punta ADC0/GP26, talón ADC1/GP27); **máximo de diseño 4**, con medial y lateral en la próxima revisión del PCB — lo que **exige mux analógico**, porque GP29 mide VSYS y quedan sólo 3 ADC libres (**ADR-041**).
+- **Hardware:** 2 plantillas (Raspberry Pi Pico 2 W + MPU-6050 + FSR + motor vibrador PWM) + 1 unidad de cintura (Pico 2 W + MPU-6050 a ~L4-L5). Muestreo **100 Hz**. **FSR: 2 hoy** (punta ADC0/GP26, talón ADC1/GP27; en cuentas del ADC, sin curva de fuerza — ADR-058); **máximo de diseño 4**, con medial y lateral en la próxima revisión del PCB — lo que **exige mux analógico**, porque GP29 mide VSYS y quedan sólo 3 ADC libres (**ADR-041**).
 - **Topología:** plantillas ↔ cintura por **WiFi** (cintura = **Access Point**); cintura ↔ host por **BLE** (desde la mínima). La cintura es el **hub de fusión y decisión**. Los micros **nunca se conectan a WiFi de internet** (modelo tipo auriculares BLE).
 - **Transporte:** canal rápido-tolerante (**UDP** / notificaciones GATT) para el stream + canal confiable (**TCP** / writes con ACK) para control y modelos. Paquete de muestra (39 B) con **4 slots fijos de FSR** (ADR-041) y el IMU **post-AHRS** — `lin_accel` sin gravedad + giro + **orientación** (pitch/roll/yaw) — más `t_device` en **uint64** (ADR-042; en uint32 daba la vuelta a los 71,6 min).
 - **Sincronización:** backbone de reloj (**timestamp + secuencia por muestra + beacon periódico + corrección de drift**) en capa de aplicación. **Es el único mecanismo de sincronización:** el emparejado de zancadas por IC **usa** el reloj ya sincronizado, no lo sincroniza ni es un fallback. La **precisión** (CP-28) quedó **diferida a la máxima**: en la mínima se asume que no afecta. La hora UTC no es sincronización: la pone el host (ADR-056).
@@ -62,6 +62,7 @@ tesis/
 ├── README.md                  # descripción humana + setup
 ├── docs/
 │   ├── objetivos.md
+│   ├── cronograma.md          # calendario y alcance hasta la entrega (1/3/2027)
 │   ├── cuestiones_pendientes.md  # registro vivo de cuestiones abiertas (única fuente de verdad)
 │   ├── Anteproyecto_Tesis.pdf    # anteproyecto oficial (define la tesis)
 │   ├── descripcion_proyecto.md   # HISTÓRICO, previo a la arquitectura: no se actualiza (ante discrepancia, manda la arquitectura)
@@ -183,9 +184,9 @@ El autor ve `CONFLICT (content): Merge conflict in <archivo>`. Vos resolvés **e
 
 ## Cuestiones pendientes
 
-El registro vivo está en **`docs/cuestiones_pendientes.md`** — **única fuente de verdad, y este archivo no la duplica**. Al 2026-10-17 hay **12 abiertas** y **22 resueltas**. Copiar la lista acá fue justamente lo que la desactualizó antes: vale la misma regla que ADR-037 (esquema) y ADR-039 (decisiones) — *una sola fuente, varios consumidores*.
+El registro vivo está en **`docs/cuestiones_pendientes.md`** — **única fuente de verdad, y este archivo no la duplica**. Al 2026-11-08 hay **16 abiertas** y **22 resueltas**. Copiar la lista acá fue justamente lo que la desactualizó antes: vale la misma regla que ADR-037 (esquema) y ADR-039 (decisiones) — *una sola fuente, varios consumidores*.
 
-**La única que amerita alerta en el onboarding:** **CP-21** (port de `pico-tflmicro` a RP2350) es la **única cuestión abierta que puede voltear una decisión ya tomada** (ADR-020/SPEC-08): el port oficial no está mergeado para RP2350. Se descarta con una prueba de banco aislada, sin necesidad del firmware del proyecto, y conviene hacerla **antes** de escribir firmware que dependa de SPEC-08.
+**La única que amerita alerta en el onboarding:** **CP-21** (port de `pico-tflmicro` a RP2350) es la **única cuestión abierta que puede voltear una decisión ya tomada** (ADR-020/SPEC-08). El mantenedor de `pico-tflmicro` confirmó en el issue #18 (cerrado el 27/12/2024) que corre en RP2350, pero el README sigue nombrando sólo el RP2040. Se descarta con una prueba de banco aislada, sin necesidad del firmware del proyecto, y conviene hacerla **antes** de escribir firmware que dependa de SPEC-08.
 
 **Con fecha límite propia:** la base tiene que **existir como migraciones antes de la primera captura** (ADR-045), porque después los cambios de esquema dejan de ser gratis. Está diseñada (ADR-044 a 047; CP-23, CP-26 y CP-29 se resolvieron el 2026-10-17) pero todavía no creada.
 

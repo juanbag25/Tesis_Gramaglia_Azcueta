@@ -39,9 +39,10 @@ sequenceDiagram
     rect rgb(238,243,255)
     Note over UI,SB: FASE 3 - PROVISIONING (en paralelo con el warm-up)
     UI->>UI: comparar paciente elegido vs. el que reporta el flash
-    UI->>SB: pedir version activa del modelo del paciente
-    SB-->>UI: modelo (mu + Sigma^-1) + feedback_config + set activo
-    UI->>CI: escribir a flash (slot A/B, checksum, estampado patient_id + version)
+    UI->>SB: pedir las versiones vigentes de los modelos del paciente
+    SB-->>UI: modelos (p. ej. mu + Sigma^-1) + feedback_config + set activo
+    Note over UI,SB: paciente nuevo: todavia no hay modelo, la lista va vacia (ADR-057)
+    UI->>CI: escribir a flash (un par de slots A/B por modelo, checksum, estampado patient_id + version - ADR-059)
     alt el paciente cambio
         CI->>MI: limpiar ring buffers de crudo (ADR-032)
     end
@@ -59,13 +60,14 @@ sequenceDiagram
     UI->>OP: instruccion de pose (postura -> CP-31)
     MI-->>UI: indicador en vivo quieto / se movio
     MI->>MI: bias de giro, offset de accel, alineacion anatomica
+    CI->>CI: bias de giro y offset de accel de la IMU de la cintura
     CI-->>UI: calibracion OK
     end
 
     rect rgb(238,252,243)
     Note over UI,MI: FASE 6 - VERIFICACION (GATE DURO)
     UI->>CI: verificar precondiciones
-    Note over UI,CI: modelo en flash = paciente de la sesion<br/>calibracion OK<br/>dos plantillas conectadas<br/>sincronizacion activa (umbral: CP-28, diferida)<br/>bateria suficiente
+    Note over UI,CI: modelo en flash = paciente de la sesion (solo si la sesion puntua, modo edge - ADR-057)<br/>calibracion OK<br/>dos plantillas conectadas<br/>sincronizacion activa (umbral: CP-28, diferida)<br/>bateria suficiente
     alt falla alguna
         UI-->>OP: indica cual y NO deja arrancar
     end
@@ -81,7 +83,7 @@ sequenceDiagram
     end
     CI-->>MI: comando de feedback (ADR-027)
     CI-->>UI: canal de estado (1-2 s): bateria, temperatura, uptime,<br/>perdida de paquetes, error de sync
-    UI->>SB: persistir crudo / features / scores
+    UI->>SB: persistir crudo / features / scores / canal de estado (device_status - ADR-059) / registro de sync (ADR-061)
     end
 
     rect rgb(255,247,238)

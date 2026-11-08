@@ -4,7 +4,9 @@
 --
 -- ESTADO DE ESTE ARCHIVO (ADR-045). Es la ULTIMA version escrita a mano: el diseno de
 -- ADR-044 (particionado), ADR-046 (identidad de las series) y ADR-047 (grants y RLS), con
--- los ajustes de ADR-049 (fin de sesion), ADR-053 (artefactos), ADR-055 (crudo) y ADR-056 (hora).
+-- los ajustes de ADR-049 (fin de sesion), ADR-053 (artefactos), ADR-055 (crudo), ADR-056 (hora)
+-- y los de la revision previa a implementar: ADR-059 (alta de pacientes, feedback por tipo de
+-- detector, vinculo sesion-modelo, canal de estado) y ADR-061 (registro de la sincronizacion).
 -- Todavia no se corrio contra una base: se valida al crear la migracion base.
 -- Cuando se cree la base, este contenido pasa a ser la migracion base
 -- (src/db/supabase/migrations/<timestamp>_baseline.sql) y el esquema cambia SOLO con
@@ -43,6 +45,9 @@ create table patients (
 create table devices (
   id uuid primary key default gen_random_uuid(),
   role text check (role in ('insole_left','insole_right','waist')),
+  -- Identificador unico de la placa (p. ej. el ID unico del RP2350), que el micro reporta al
+  -- conectar: es lo que le dice al host que fila es la unidad conectada (ADR-059).
+  hw_uid text unique,
   hw_revision text,
   firmware_version text,
   created_at timestamptz default now()
@@ -83,6 +88,9 @@ create table sessions (
   clock_t0_utc timestamptz,
   clock_drift_ppm double precision,
   clock_fit_rmse_us real,               -- residuo del ajuste: calidad de la conversion
+  -- Config de feedback que se provisiono en la sesion (ADR-059). La FK se agrega despues de crear
+  -- feedback_config. Los modelos provisionados van en session_models.
+  feedback_config_id uuid,
   notes text,
   -- Ancla de las FK compuestas de las series (ADR-046): una fila no puede declarar el paciente
   -- ni la fecha de otra sesion.
@@ -105,19 +113,21 @@ create table patient_access (
 -- ============================================================
 -- Un archivo Parquet por sesion, equipo y tramo de unos minutos (ADR-055), en
 -- raw/{patient_id}/{session_id}/{equipo}/{tramo}.parquet. Volver a subir un tramo no duplica:
--- (session_id, device_id, chunk_index) es unica.
+-- (session_id, device_id, kind, chunk_index) es unica. kind distingue las muestras del registro
+-- de la sincronizacion (beacons recibidos y correcciones aplicadas por cada plantilla — ADR-061).
 create table raw_blobs (
   id uuid primary key default gen_random_uuid(),
   session_id uuid not null references sessions(id),
   device_id uuid not null references devices(id),
-  chunk_index int not null,             -- numero de tramo dentro de la sesion y el equipo
+  kind text not null default 'samples' check (kind in ('samples','sync')),
+  chunk_index int not null,             -- numero de tramo dentro de la sesion, el equipo y el tipo
   storage_url text,                     -- object storage (Parquet)
   format text default 'parquet',
   start_time timestamptz,
   end_time timestamptz,
   n_samples bigint,
   checksum text,                        -- SHA-256 del archivo
-  constraint raw_blobs_chunk_uq unique (session_id, device_id, chunk_index)
+  constraint raw_blobs_chunk_uq unique (session_id, device_id, kind, chunk_index)
 );
 
 -- ============================================================
@@ -142,6 +152,9 @@ create table models (
   checksum text,                             -- SHA-256 del sobre: la misma huella en registry, OTA y flash
   metrics jsonb,                             -- {auc, threshold, ...}
   status text check (status in ('active','shadow','archived','rolled_back')),
+  -- Sesion que produjo esta version (ADR-059): la de calibracion para la version 1 (ADR-057) o la
+  -- sesion adaptada para la N+1 (ADR-043 rev). Null si la entreno el worker con varias sesiones.
+  source_session_id uuid references sessions(id),
   created_at timestamptz default now(),
   deployed_at timestamptz,
   -- Una version por (paciente, algoritmo): con una version nueva por sesion adaptada
@@ -152,6 +165,10 @@ create table models (
   constraint models_id_patient_uq unique (id, patient_id)
 );
 
+-- "La version vigente" de cada detector de un paciente es la unica con status 'active' (ADR-059):
+-- es la que se provisiona y la que usa el feedback.
+create unique index models_active_uq on models (patient_id, algo) where status = 'active';
+
 create table model_deployments (
   id uuid primary key default gen_random_uuid(),
   model_id uuid references models(id),
@@ -159,6 +176,16 @@ create table model_deployments (
   deployed_at timestamptz default now(),
   status text check (status in ('active','rolled_back')),
   rolled_back_at timestamptz
+);
+
+-- Que modelos se provisionaron en cada sesion (ADR-059). provision() puede llevar varios (p. ej.
+-- Mahalanobis como sensor de drift + el detector del feedback). Junto con models.source_session_id
+-- es lo que permite saber con que version corrio cada sesion y que sesion produjo cada version:
+-- la base de la comparacion con y sin adaptacion (ADR-043 rev).
+create table session_models (
+  session_id uuid not null references sessions(id),
+  model_id uuid not null references models(id),
+  primary key (session_id, model_id)
 );
 
 create table firmware_images (
@@ -191,7 +218,10 @@ create table retrain_jobs (
 create table feedback_config (
   id uuid primary key default gen_random_uuid(),
   patient_id uuid not null references patients(id),
-  feedback_source uuid references models(id),   -- que detector alimenta la decision (model-agnostic)
+  -- Que tipo de detector alimenta la decision ('mahalanobis', 'dense_ae'...): se usa siempre la
+  -- version vigente de ese algo para el paciente (ADR-059). No apunta a una version puntual,
+  -- porque cada sesion adaptada crea una nueva (ADR-043 rev).
+  feedback_source text not null,
   window_strides int,                           -- N de la ventana de zancadas (SPEC-05)
   threshold_mild double precision,              -- T1 banda leve
   threshold_marked double precision,            -- T2 banda marcada
@@ -203,6 +233,13 @@ create table feedback_config (
   active boolean default true,
   created_at timestamptz default now()
 );
+
+-- Una sola config vigente por paciente (ADR-059).
+create unique index feedback_config_active_uq on feedback_config (patient_id) where active;
+
+-- FK de sessions.feedback_config_id: feedback_config se crea despues de sessions (ADR-059).
+alter table sessions
+  add constraint sessions_feedback_config_fk foreign key (feedback_config_id) references feedback_config(id);
 
 -- ============================================================
 -- Funcion de las politicas (ADR-047). Vive en private, fuera de la Data API, y devuelve los
@@ -220,6 +257,39 @@ as $$
   select pa.patient_id
   from public.patient_access pa
   where pa.user_id = (select auth.uid());
+$$;
+
+-- ============================================================
+-- Alta de pacientes (ADR-059). La politica de patients exige que el paciente ya figure en
+-- patient_access del usuario, y patient_access solo la escribe service_role: sin esta funcion el
+-- host no podria crear pacientes. Crea el paciente y el acceso 'owner' de quien la llama en un
+-- solo paso. Esta en public porque el host la llama por la Data API (RPC).
+-- ============================================================
+create or replace function public.create_patient(
+  p_external_code text,
+  p_birth_year int default null,
+  p_sex text default null,
+  p_affected_side text default null,
+  p_clinical_notes jsonb default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_id uuid;
+begin
+  if (select auth.uid()) is null then
+    raise exception 'create_patient: hace falta un usuario autenticado';
+  end if;
+  insert into public.patients (external_code, birth_year, sex, affected_side, clinical_notes)
+  values (p_external_code, p_birth_year, p_sex, p_affected_side, p_clinical_notes)
+  returning id into v_id;
+  insert into public.patient_access (user_id, patient_id, role)
+  values ((select auth.uid()), v_id, 'owner');
+  return v_id;
+end;
 $$;
 
 -- ============================================================
@@ -357,6 +427,27 @@ create table anomaly_raw_snippets (
     references sessions (id, patient_id, started_at)
 );
 
+-- Canal de estado guardado (ADR-059): cada 1-2 s, por equipo, lo que publica la cintura (ADR-043
+-- rev). Es la evidencia de la calidad de cada captura: explica despues una sesion rara (un IMU que
+-- se calento, un tramo con perdidas, un reset) y da datos para CP-25 y CP-28. Particionada como
+-- las series (ADR-044); el host escribe con upsert sobre la clave.
+create table device_status (
+  session_id          uuid        not null,
+  patient_id          uuid        not null,
+  session_started_at  timestamptz not null,
+  device_role         text        not null check (device_role in ('insole_left','insole_right','waist')),
+  t_device            bigint      not null,                -- cuenta de la cintura (us) del reporte
+  time                timestamptz not null,                -- el mismo instante en UTC (ADR-056)
+  battery_mv          int,                                 -- tension de la celda (VSYS)
+  imu_temp_c          real,                                -- sensor de temperatura del MPU-6050
+  uptime_s            int,                                 -- una caida delata un reset
+  packets_lost        int,                                 -- acumulado de la sesion, derivado del seq
+  sync_error_us       real,                                -- error estimado de la sincronizacion (plantillas)
+  primary key (session_id, device_role, t_device, session_started_at),
+  foreign key (session_id, patient_id, session_started_at)
+    references sessions (id, patient_id, started_at)
+) partition by range (session_started_at);
+
 -- ============================================================
 -- Indices (en las tablas particionadas se propagan solos a cada particion)
 -- ============================================================
@@ -365,6 +456,7 @@ create index on strides              (patient_id, session_started_at);
 create index on gait_events          (patient_id, session_started_at);
 create index on feature_vectors      (patient_id, session_started_at);
 create index on anomaly_scores       (patient_id, session_started_at);
+create index on device_status        (patient_id, session_started_at);
 create index on anomaly_raw_snippets (patient_id);
 create index on sessions             (patient_id, started_at desc);
 -- Pares de paridad device/offline de una sesion (ADR-036).
@@ -401,6 +493,13 @@ select partman.create_parent(
   p_interval     := '1 month',
   p_premake      := 4
 );
+select partman.create_parent(
+  p_parent_table := 'public.device_status',
+  p_control      := 'session_started_at',
+  p_type         := 'range',
+  p_interval     := '1 month',
+  p_premake      := 4
+);
 
 -- Cierra las particiones hijas (ADR-047): RLS habilitado y sin grants para los roles de la API.
 -- Todo acceso pasa por la tabla madre, que es la que tiene las politicas: una particion nombrada
@@ -420,7 +519,7 @@ begin
     join pg_catalog.pg_class madre on madre.oid = i.inhparent
     join pg_catalog.pg_namespace n on n.oid = madre.relnamespace
     where n.nspname = 'public'
-      and madre.relname in ('strides', 'gait_events', 'feature_vectors', 'anomaly_scores')
+      and madre.relname in ('strides', 'gait_events', 'feature_vectors', 'anomaly_scores', 'device_status')
   loop
     execute format('alter table %s enable row level security', part);
     execute format('revoke all on table %s from anon, authenticated', part);
@@ -437,22 +536,27 @@ $$;
 -- Sobre las tablas particionadas, el grant es sobre la madre: las particiones no lo heredan.
 -- ============================================================
 grant select, insert, update on
-  patients, sessions, devices, models, model_deployments, feedback_config,
-  strides, gait_events, feature_vectors, anomaly_scores
+  sessions, devices, models, model_deployments, feedback_config,
+  strides, gait_events, feature_vectors, anomaly_scores, device_status
   to authenticated;
-grant select, insert on raw_blobs, anomaly_raw_snippets, retrain_jobs to authenticated;
+-- patients: el alta va por public.create_patient() (ADR-059), no por INSERT directo.
+grant select, update on patients to authenticated;
+grant select, insert on raw_blobs, anomaly_raw_snippets, retrain_jobs, session_models to authenticated;
 grant select on firmware_images, patient_access to authenticated;
 
 grant select, insert, update, delete on
   patients, devices, sessions, patient_access, raw_blobs, anomaly_raw_snippets,
-  models, model_deployments, firmware_images, retrain_jobs, feedback_config,
-  strides, gait_events, feature_vectors, anomaly_scores
+  models, model_deployments, session_models, firmware_images, retrain_jobs, feedback_config,
+  strides, gait_events, feature_vectors, anomaly_scores, device_status
   to service_role;
 
 revoke all on function private.accessible_patient_ids() from public, anon;
 revoke all on function private.secure_partitions() from public, anon, authenticated;
 grant usage on schema private to authenticated;
 grant execute on function private.accessible_patient_ids() to authenticated;
+-- Las funciones de Postgres se crean ejecutables por PUBLIC: se cierra y se abre solo al host.
+revoke all on function public.create_patient(text, int, text, text, jsonb) from public, anon;
+grant execute on function public.create_patient(text, int, text, text, jsonb) to authenticated;
 
 -- ============================================================
 -- RLS en TODAS las tablas expuestas (ADR-032 + ADR-047)
@@ -472,6 +576,8 @@ alter table strides              enable row level security;
 alter table gait_events          enable row level security;
 alter table feature_vectors      enable row level security;
 alter table anomaly_scores       enable row level security;
+alter table device_status        enable row level security;
+alter table session_models       enable row level security;
 
 -- Datos de pacientes: filtro directo por patient_id (indexado).
 create policy p_patients on patients
@@ -501,8 +607,14 @@ create policy p_anomaly_scores on anomaly_scores
 create policy p_anomaly_raw_snippets on anomaly_raw_snippets
   for all to authenticated using (patient_id in (select private.accessible_patient_ids()));
 
--- raw_blobs llega al paciente por la sesion, que ya filtra con su propia RLS.
+create policy p_device_status on device_status
+  for all to authenticated using (patient_id in (select private.accessible_patient_ids()));
+
+-- raw_blobs y session_models llegan al paciente por la sesion, que ya filtra con su propia RLS.
 create policy p_raw_blobs on raw_blobs
+  for all to authenticated using (session_id in (select s.id from public.sessions s));
+
+create policy p_session_models on session_models
   for all to authenticated using (session_id in (select s.id from public.sessions s));
 
 -- models: los globales (patient_id nulo) se leen; se escriben solo los de pacientes propios.

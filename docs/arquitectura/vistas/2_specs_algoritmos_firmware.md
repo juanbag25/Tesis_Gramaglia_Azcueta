@@ -12,14 +12,14 @@
 
 **Decisión:** ADR-015 (IC/TO) · **ADR-038 (MS)**. **Placement:** plantilla (per-pie). **Estado:** definido (a implementar).
 
-**Objetivo.** Detectar en tiempo real, por pie, el **Initial Contact (IC)**, el **Toe-Off (TO)** y el **Mid-Stance (MS)**, robusto a marcha patológica (drop foot, apoyo de antepié/plano, ausencia de transferencia de carga). Es la **función núcleo** del firmware: su salida alimenta las features espacio-temporales, la segmentación de fases (stance/swing y sub-fases del apoyo), el ZUPT, el refinamiento de sync y el timing del feedback.
+**Objetivo.** Detectar en tiempo real, por pie, el **Initial Contact (IC)**, el **Toe-Off (TO)** y el **Mid-Stance (MS)**, robusto a marcha patológica (drop foot, apoyo de antepié/plano, ausencia de transferencia de carga). Es la **función núcleo** del firmware: su salida alimenta las features espacio-temporales, la segmentación de fases (stance/swing y sub-fases del apoyo), el ZUPT, el emparejado de zancadas izquierda↔derecha en la cintura y el timing del feedback. *(El emparejado usa el reloj ya sincronizado por el backbone: el IC no sincroniza relojes — ADR-004.)*
 
-**Entradas.** FSR (fuerza calibrada, 100 Hz) + IMU (gyro + accel, 100 Hz), todos con `timestamp` (µs) + `seq`. Hoy hay **2 FSR: punta (`F_ante`) y talón (`F_post`)** — ADR-023; el número es configurable (CP-08). Se definen `F_total = Σ FSRᵢ`, y `F_ante` / `F_post` como la suma de los FSR asignados a antepié y retropié en el catálogo (con 2 FSR, uno cada uno).
+**Entradas.** FSR en **cuentas del ADC** (100 Hz; sin curva de fuerza por ahora — ADR-058) + IMU (gyro + accel, 100 Hz), todos con `timestamp` (µs) + `seq`. Hoy hay **2 FSR: punta (`F_ante`) y talón (`F_post`)** — ADR-023; el número es configurable (CP-08). Se definen `F_total = Σ FSRᵢ`, y `F_ante` / `F_post` como la suma de los FSR asignados a antepié y retropié en el catálogo (con 2 FSR, uno cada uno).
 
 **Definición robusta (clave para ACV).**
 - **IC = onset de carga:** `F_total` cruza **hacia arriba** el umbral `F_on` — el primer instante de carga, **sin importar la región** (no "talón primero"). Cubre apoyo de antepié/plano y *drop foot*.
 - **TO = fin de carga:** `F_total` cruza **hacia abajo** el umbral `F_off` y se mantiene por debajo.
-- **MS = transferencia de carga retropié→antepié:** primer instante dentro de `[IC, TO]` en que `F_ante ≥ F_post` (cruce de las dos curvas). Es una definición **de carga**, no cinemática: marca el momento funcional en que el peso pasa al antepié, que es el que importa para el déficit de propulsión (ver *Nota sobre la definición*).
+- **MS = transferencia de carga retropié→antepié:** primer instante dentro de `[IC, TO]` en que `F_ante ≥ F_post` (cruce de las dos curvas). Es una definición **de carga**, no cinemática: marca el momento funcional en que el peso pasa al antepié, que es el que importa para el déficit de propulsión (ver *Nota sobre la definición*). *Con los FSR en cuentas, comparar dos sensores distintos está sesgado por la diferencia de sensibilidad entre piezas (ADR-058); la normalización propuesta está en CP-35.*
 
 **Robustez / anti-falsos.**
 - **Histéresis:** `F_off < F_on` (evita rebotes alrededor del umbral). Para MS, banda `±h_ms` alrededor del cruce, para no disparar con oscilaciones cerca de la igualdad.
@@ -30,9 +30,9 @@
 
 **Latencia.** El **cruce de FSR emite el evento de inmediato**; la confirmación IMU **anota confianza sin bloquear** la emisión. **Criterio:** el evento tiene que estar disponible dentro de la **misma zancada**, porque lo consumen el ZUPT (SPEC-03), el buffer de zancadas (SPEC-05) y la fusión bilateral de la cintura. *No* es una latencia de lazo cerrado: ADR-027 derogó el objetivo "<50 ms" al hacer el feedback **terminal por ventana**.
 
-**Salida.** Evento `{ tipo: IC|TO|MS, t_evento (µs), pie, stride_seq, confianza, flags }` → (1) buffer local (features + segmentación de fases + ZUPT) y (2) envío a la **cintura** (fusión bilateral / double support, refinamiento de sync, timing de feedback). `stride_seq` es el número de la zancada a la que pertenece el evento: el IC abre una zancada nueva y el MS y el TO de ese apoyo llevan su número (SPEC-02; ADR-046). Persistido en `gait_events` (`type ∈ {IC,TO,MS}`, con sus `flags`), colgado de su zancada en `strides`.
+**Salida.** Evento `{ tipo: IC|TO|MS, t_evento (µs), pie, stride_seq, confianza, flags }` → (1) buffer local (features + segmentación de fases + ZUPT) y (2) envío a la **cintura** (fusión bilateral / double support, emparejado de zancadas, timing de feedback). `stride_seq` es el número de la zancada a la que pertenece el evento: el IC abre una zancada nueva y el MS y el TO de ese apoyo llevan su número (SPEC-02; ADR-046). Persistido en `gait_events` (`type ∈ {IC,TO,MS}`, con sus `flags`), colgado de su zancada en `strides`.
 
-**Parámetros calibrables (por paciente, en la calibración/baseline).** `F_on`, `F_off` (derivados del peso corporal y de la curva fuerza-resistencia por-FSR), `W`, `t_ref`, `h_ms`, y el mapeo **FSR → región** (antepié / retropié), que sale de la config de posiciones del catálogo. Se versionan junto con el `feature_set_version`.
+**Parámetros calibrables (por paciente, en la calibración/baseline).** `F_on`, `F_off` (en cuentas; ya no pueden derivarse del peso corporal porque no hay curva de fuerza —ADR-058—: cuándo y con qué se fijan está en **CP-35**), `W`, `t_ref`, `h_ms`, y el mapeo **FSR → región** (antepié / retropié), que sale de la config de posiciones del catálogo. Se versionan junto con el `feature_set_version`.
 
 **Nota sobre la definición de MS (honestidad terminológica).** En la literatura clásica (Perry), *mid-stance* es un evento **cinemático**: la tibia queda vertical sobre el pie apoyado. Lo que detecta esta spec es el **cruce de carga** retropié→antepié, que en marcha sana cae cerca de ese instante pero en marcha hemipléjica **puede divergir** —y suele hacerlo tarde, o no ocurrir. Se elige la definición de carga porque (a) es la que el FSR entrega de forma robusta, (b) es el instante funcionalmente relevante para el déficit de push-off, y (c) mantiene la misma arquitectura de detección que IC/TO (FSR primario + confirmación IMU). La confirmación por pie-plano del IMU ancla el evento al mid-stance cinemático cuando ambos coinciden; la **divergencia entre ambos es informativa** y queda como candidata de feature a futuro.
 
@@ -107,7 +107,7 @@
 
 ## SPEC-04 — Módulo de procesamiento de IMU (reutilizable)
 
-**Decisión:** ADR-017. **Placement:** cada dispositivo con IMU (plantillas + cintura). **Estado:** definido. **Ubicación de código:** `src/firmware/shared/` (C) + espejo en el worker (`imufusion`, Python).
+**Decisión:** ADR-017. **Placement:** cada dispositivo con IMU (plantillas + cintura). **Estado:** definido. **Ubicación de código:** `src/firmware/shared/` (C). El worker no tiene espejo: consume el crudo ya procesado por esta cadena (ADR-042; ver *Frontera con el worker*).
 
 **Objetivo.** Capa reutilizable que entrega la señal del IMU **limpia y lista** para todas las features y el ZUPT, para que **nadie re-implemente** orientación ni remoción de gravedad.
 
@@ -156,7 +156,7 @@
 
 **Ventana.** Deslizante de N zancadas (estándar para CoV; coincide con el marco "≥10 zancadas"). *Alternativa:* EWMA (menos memoria, adaptación continua) — no elegida por ahora (la ventana fija es más interpretable para CoV).
 
-**Warm-up.** Hasta llenar N zancadas, las features de variabilidad **no son válidas** (baja confianza). La sesión de calibración (~100 zancadas) llena de sobra.
+**Warm-up.** Hasta llenar N zancadas, las features de variabilidad **no son válidas** (baja confianza). La sesión de calibración (~200 zancadas por pie — ADR-060) llena de sobra.
 
 **Memoria.** Mínima (N × pocos floats por pie).
 
@@ -274,7 +274,7 @@ Solapamiento (hop) configurable (p. ej. 50 %). **N y hop versionados con `featur
 **Entrada.**
 - **Score de feedback** = salida del detector designado (`feedback_source`), model-agnostic (SPEC-08).
 - **Ventana** de las últimas **N zancadas** (del ring buffer, SPEC-05).
-- **Indicadores de caída** para "riesgo": asimetría de carga (WBA) / sway (features de tronco, bloque I).
+- **Indicadores de caída** para "riesgo": asimetría de carga (WBA) / sway (features de tronco, bloque I). *Con el set activo actual no hay ninguno disponible: el sway sale de los bloques I y E, apagados (ADR-040, ADR-023), y WBA/PSV no están en el catálogo (CP-22). Hasta que se prendan, la banda "riesgo" sólo se alcanza por el umbral T3.*
 
 **Lógica (en la cintura, por zancada nueva).**
 1. **Evaluar la ventana:** agregación del score sobre las últimas N zancadas — por *persistencia* (X de las últimas Y sobre umbral) o por *score ventaneado* (features de variabilidad/simetría sobre N zancadas). Cuál, y N, = empírico.
@@ -292,13 +292,13 @@ Solapamiento (hop) configurable (p. ej. 50 %). **N y hop versionados con `featur
 
 **Parámetros (per-paciente, en DB → Vista 4).** `feedback_source`; **N** (ventana); **T1/T2/T3** (umbrales de banda, del baseline); regla de agregación/persistencia; **intensidad** (duty PWM, perceptible+cómoda); **refractario** (cooldown); patrones habilitados; umbral de los indicadores de caída.
 
-**Calibración.** Intensidad perceptible+cómoda por paciente (la percepción depende del montaje — Sanchez-Morillo); umbrales de banda desde la distribución de scores del **baseline** (~100 zancadas de marcha estable).
+**Calibración.** Intensidad perceptible+cómoda por paciente (la percepción depende del montaje — Sanchez-Morillo); umbrales de banda desde la distribución de scores del **baseline** (~200 zancadas por pie de marcha estable — ADR-060; método del umbral: CP-37).
 
-**Hardware.** Motor **ERM** vía PWM+NPN (GP18, con diodo flyback). Sin gradación fina de intensidad (usar ritmo). A confirmar si el motor real es un **LRA** (patrones más crispados con driver).
+**Hardware.** Motor **ERM** vía PWM+NPN (GP18, con diodo flyback). Sin gradación fina de intensidad (usar ritmo). A confirmar si el motor real es un **LRA** (patrones más crispados con driver) y su tensión nominal — **CP-01**.
 
 **Empírico (exploratorio).** Modelo designado, N de ventana, regla de agregación, valores de umbral e intensidad — se fijan con datos (ligado a #12 y al protocolo de calibración).
 
-**Seguridad (CP-04).** Validar que el patrón "riesgo" no sobresalte ni desestabilice.
+**Seguridad del paciente (CP-33; requisito del comité, CP-18).** Validar con voluntarios sanos, antes de usarlo con pacientes, que el patrón "riesgo" no sobresalte ni desestabilice.
 
 **Referencias.** ADR-027 (decisión); ADR-011 rev (score agnóstico); SPEC-05 (buffer de zancadas); SPEC-08 (score); papers 02 (patrones>alertas), 09 (carga cognitiva), 10 (Ma), 17 (Jung, caída).
 
@@ -394,33 +394,33 @@ Cada feature se calcula **por zancada**, sobre el segmento entre `IC(n)` e `IC(n
 
 **Decisión:** ADR-043 rev. **Placement:** cintura (orquesta) + plantillas (obedecen). **Estado:** definido (a implementar). **Depende de:** canal confiable (ADR-003), mensajes y enlace BLE (ADR-050, ADR-051), OTA y slots de flash (ADR-012, ADR-052, SPEC-08), sobre de los artefactos (ADR-053), calibración (SPEC-04), buffer de crudo (Vista 2 §7).
 
-**Objetivo.** Especificar **qué tiene que exponer y hacer el micro** para que la UI pueda orquestar el pipeline de 8 fases. La secuencia completa y la lógica de la app viven en la **Vista 4 §4.1**; acá va sólo el contrato del firmware.
+**Objetivo.** Especificar **qué tiene que exponer y hacer el micro** para que la UI pueda orquestar el pipeline de 9 fases (0 a 8). La secuencia completa y la lógica de la app viven en la **Vista 4 §4.1**; acá va sólo el contrato del firmware.
 
 **Lo que el micro expone (canal confiable, a demanda).**
 
 | Campo | Cuándo | Para qué |
 |---|---|---|
 | `patient_id` + `model_version` en flash | al conectar y **tras todo reset** | Fase 1 (comparar) y fase 6 (gate) |
-| `firmware_version`, `hw_revision` | al conectar | Trazabilidad; `devices` |
+| `hw_uid` (ID único de la placa), `firmware_version`, `hw_revision` | al conectar | Qué unidad es (`devices.hw_uid` — ADR-059) y trazabilidad |
 | plantillas asociadas + estado de enlace | al conectar y ante cambio | Fase 6 (las dos conectadas) |
 
-**Lo que el micro publica (canal de estado, cada 1-2 s).** Batería · **temperatura de los 3 IMU** · **uptime** · contadores de pérdida de paquetes por plantilla (del `seq`) · error de sincronización estimado. Sigue publicándose **con la sesión corriendo**: la temperatura es señal de calidad del dato y una caída del uptime delata un reset.
+**Lo que el micro publica (canal de estado, cada 1-2 s).** Batería · **temperatura de los 3 IMU** · **uptime** · contadores de pérdida de paquetes por plantilla (del `seq`) · error de sincronización estimado. Sigue publicándose **con la sesión corriendo**: la temperatura es señal de calidad del dato y una caída del uptime delata un reset. El host lo guarda en `device_status` (ADR-059). Por el mismo canal viaja el **registro de la sincronización** de cada plantilla —beacons recibidos y correcciones aplicadas— que el host guarda con el crudo (ADR-061).
 
 **Comandos que el micro acepta.**
 
 | Comando | Efecto | Fase |
 |---|---|---|
 | `wipe_raw_buffers` | Limpia el ring buffer de crudo de las dos plantillas | 3 (sólo si cambió el paciente) |
-| `provision(model, feedback_config, feature_set, adaptation_enabled)` | Recibe el artefacto con el protocolo de OTA (ADR-052) y lo escribe al slot libre: es el **sobre** de ADR-053, con la **cabecera `patient_id` + versión** y la **huella SHA-256**; conmuta atómicamente; carga la config y el set activo (lista de ids — ADR-054) | 3 |
+| `provision(models[], feedback_config, feature_set, adaptation_enabled)` | Recibe **cada** artefacto de la lista con el protocolo de OTA (ADR-052) y lo escribe al slot libre de **su** par A/B: es el **sobre** de ADR-053, con la **cabecera `patient_id` + versión** y la **huella SHA-256**; conmuta atómicamente; carga la config y el set activo (lista de ids — ADR-054). La lista puede venir **vacía**: un paciente nuevo todavía no tiene modelo y las capturas no lo necesitan (ADR-057, ADR-059) | 3 |
 | `calibrate()` | Rutina estática de SPEC-04; devuelve OK/error y un indicador en vivo de quieto/movimiento | 5 |
 | `arm(session_id, patient_id, mode)` | Verifica precondiciones, habilita el scoring y **reinicia los contadores** `stride_seq` (plantillas) y `cycle_seq` (cintura) — ADR-046 | 6 |
-| `close()` | Devuelve el estado adaptado (μ, Σ) si `adaptation_enabled`, empaquetado en el mismo sobre (ADR-053); deja de scorear | 8 |
+| `close()` | Devuelve el estado adaptado (μ, Σ) de cada modelo de clase L si `adaptation_enabled`, empaquetado en el mismo sobre (ADR-053); deja de scorear | 8 |
 | Intercambio de hora | Responde con su `t_device`, leído al recibir el pedido; el host arma con eso la recta a UTC (ADR-056) | siempre, cada ~10 s |
 
 **Reglas de seguridad (no negociables).**
 
 1. **Sin `arm()` no hay scoring ni feedback.** En `IDLE` el micro muestrea para el panel si se lo piden, pero **no** corre el detector ni acciona el motor.
-2. **Verificación de paciente en cada `arm()`.** Si `patient_id` de la cabecera del slot activo ≠ el de la sesión, `arm()` **falla** con código explícito. Nunca se scorea "por las dudas".
+2. **Verificación de paciente en cada `arm()` que habilite el scoring** (modo `edge`). Si el `patient_id` de la cabecera de algún slot activo ≠ el de la sesión, o no hay modelo, `arm()` **falla** con código explícito. Nunca se scorea "por las dudas". En las capturas (`exploratory`, `operational`), que no scorean en la cintura, `arm()` no exige modelo (ADR-057).
 3. **Tras un reset, el micro vuelve a `IDLE`** y re-reporta paciente y versión. Recarga el modelo de flash —por eso el flash existe— pero **no re-arma solo**: espera que el host lo re-arme. Tras un reinicio **nunca se re-arma la misma sesión**: el host abre otra (ADR-049), así que los contadores de zancadas y ciclos arrancan de cero sin chocar con los ya guardados.
 4. **El estado adaptado no se escribe a flash.** Vive en RAM; sube en `close()`. Si la sesión muere sin `close()`, se pierde: es el costo aceptado de que **la DB mande** (ADR-043 rev).
 5. **En la mínima, un corte cierra la sesión (ADR-049).** Si se pierde el enlace BLE con el host (vence el *supervision timeout*) o una plantilla (vence el heartbeat), la cintura deja de scorear y de accionar el motor y vuelve a `IDLE`; el host cierra la sesión con su motivo. Perder paquetes sueltos no es un corte (se cuenta con el `seq`). En la máxima —diferido— la cintura sostendrá la sesión y guardará lo que no pueda mandar.

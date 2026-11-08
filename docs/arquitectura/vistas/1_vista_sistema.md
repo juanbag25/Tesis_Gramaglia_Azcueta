@@ -14,7 +14,7 @@
 
 **Muestreo:** 100 Hz. **Canales por pie:** **11 hoy** — `lin_accel` XYZ (sin gravedad), giro XYZ y **orientación** pitch/roll/yaw, más **2× FSR** (ADR-042); el formato de paquete reserva **4 slots** de FSR — el máximo de diseño (ADR-041). La cintura suma su IMU como referencia de tronco/pelvis (~L4-L5): **9 canales** post-AHRS —los mismos de las plantillas, sin FSR—, que habilitan las features del bloque I y **se graban en las capturas** (ADR-048).
 
-**Pinout de referencia (plantilla).** Hoy hay **2 FSR conectados**: **ADC0/GP26 (punta)** y **ADC1/GP27 (talón)** — eje antero-posterior. El 3º/4º FSR (**medial/lateral**, para COP_ML) van a **ADC2/GP28** (+ otro) en una **etapa posterior** de la placa (**ADR-023**; CP-01/CP-08). Hasta entonces, las features de fuerza medio-lateral (bloque E + #18) quedan **definidas pero desactivadas** en el set activo.
+**Pinout de referencia (plantilla).** Hoy hay **2 FSR conectados**: **ADC0/GP26 (punta)** y **ADC1/GP27 (talón)** — eje antero-posterior. El 3º y el 4º FSR (**medial/lateral**, para COP_ML) llegan en la **próxima revisión del PCB**: el 3º va a **ADC2/GP28** y el 4º **exige un mux analógico**, porque GP29 mide VSYS y quedan sólo 3 ADC libres (**ADR-041**; CP-01). Hasta entonces, las features de fuerza medio-lateral (bloque E + #18) quedan **definidas pero desactivadas** en el set activo.
 
 | GPIO | Pin | Modo | Conectado a |
 |---|---|---|---|
@@ -22,7 +22,7 @@
 | GP21 | 27 | I²C0 SCL | IMU MPU-6050 |
 | GP26 | 31 | ADC0 | FSR 1 — **punta** (divisor) |
 | GP27 | 32 | ADC1 | FSR 2 — **talón** (divisor) |
-| GP28 | 34 | ADC2 | FSR 3 — medial/lateral (divisor) *(a futuro — ADR-023)* |
+| GP28 | 34 | ADC2 | FSR 3 — medial/lateral (divisor) *(próxima rev del PCB; el 4º, por mux — ADR-041)* |
 | GP18 | 24 | PWM | Base NPN → motor vibrador (con diodo flyback) |
 
 **Radio (coexistencia).** El CYW43439 es un único chip WiFi+BLE con **una antena** en 2.4 GHz. La cintura sostiene **WiFi-AP (a las plantillas) + BLE (al host)** en simultáneo por **coexistencia** (time-division del radio). Es un requisito permanente de la máxima, asumido desde la mínima (ver Riesgos, maestro §15).
@@ -71,7 +71,7 @@ flowchart LR
 La cintura crea su propia red WiFi (SSID propio) y actúa como **Access Point (AP)**; las dos plantillas se conectan como **estaciones (STA)**. Este enlace es **permanente**: no cambia entre mínima y máxima. La cintura es, por diseño, el punto de convergencia de ambos pies → el lugar natural de la fusión bilateral (Vista 3 / maestro §8). **Justificación:** una estrella de un solo salto minimiza complejidad, no depende de infraestructura externa (funciona en cualquier lado) y coloca la fusión donde los datos ya coinciden. [ADR-001]
 
 ### 3.2 Cintura ↔ host — BLE desde la mínima
-La cintura expone un **servidor GATT BLE**; el host (laptop en mínima, celular en máxima) es el **central**. Se adopta BLE **desde la mínima** porque: el firmware BLE de la cintura es **idéntico** mande a laptop o celular (periférico agnóstico al central → se reutiliza al 100 % en la máxima); se enfrenta **temprano** el riesgo central de la máxima (coexistencia WiFi-AP + BLE); y el caudal está **por debajo** de lo que BLE soporta: ~7,8 KB/s en uso y ~11,7 KB/s en las capturas, con el crudo de la cintura (ADR-048); el margen real, con el WiFi compartiendo la radio, se valida en banco. **Restricción de diseño:** dimensionar a las restricciones del celular desde el inicio (MTU BLE ~185 B en iOS, límites de connection-interval). **Beneficio colateral:** el uplink no ocupa el WiFi del host → la laptop conserva internet para empujar a Supabase. [ADR-002]
+La cintura expone un **servidor GATT BLE**; el host (laptop en mínima, celular en máxima) es el **central**. Se adopta BLE **desde la mínima** porque: el firmware BLE de la cintura es **idéntico** mande a laptop o celular (periférico agnóstico al central → se reutiliza al 100 % en la máxima); se enfrenta **temprano** el riesgo central de la máxima (coexistencia WiFi-AP + BLE); y el caudal está **por debajo** de lo que BLE soporta: el pico son las capturas, ~11,7 KB/s con el crudo de las dos plantillas y de la cintura (ADR-048); en edge viajan sólo zancadas, features y scores (~0,5 KB/s, ADR-049) y los snippets ante anomalía; el margen real, con el WiFi compartiendo la radio, se valida en banco. **Restricción de diseño:** dimensionar a las restricciones del celular desde el inicio (MTU BLE ~185 B en iOS, límites de connection-interval). **Beneficio colateral:** el uplink no ocupa el WiFi del host → la laptop conserva internet para empujar a Supabase. [ADR-002]
 
 ### 3.3 Modelo de conectividad (tipo auriculares BLE)
 Los micros funcionan como **auriculares Bluetooth**: **nunca se conectan a una red WiFi de internet**. El único WiFi es el enlace **privado** plantillas↔cintura (cintura = AP, sin salida a internet). La cintura habla con su **host** (compu/celu) sólo por **BLE**, y es el **host** quien tiene internet y empuja a Supabase; el **OTA** de pesos/firmware también va **por BLE** desde el host. No hay provisioning de redes de infraestructura. El emparejado plantilla↔cintura es **fijo/de fábrica**. **Pairing cintura↔host (ADR-028):** auto-advertise sin bond (primer uso) + **gesto sin botón** (sacudir la cintura ~5 s con las plantillas quietas) para re-emparejar; **passkey fijo impreso** (v1); **bond list multi-host** (reconecta el host que inicia, uno a la vez). Clear-all/pantalla → máxima; UX en la app (CP-15).
@@ -87,13 +87,13 @@ Principio: **dos canales por enlace**, uno optimizado para latencia y otro para 
 
 **Justificación.** A 100 Hz, perder una muestra ocasional es irrelevante (la próxima llega en 10 ms), mientras que la retransmisión de TCP mete *head-of-line blocking* — picos de latencia en el peor momento del stream. UDP con seq+timestamp detecta y tolera huecos sin frenar el flujo. TCP para control porque pesos/firmware exigen **todos los bytes en orden**. Sobre BLE el mismo principio: **notificaciones** (≈UDP) + **writes con ACK/indicaciones** (≈TCP).
 
-**Formato de paquete de muestra (stream):** `[device_id | seq (uint32) | t_device (uint64, µs) | ax ay az (int16, lin_accel) | gx gy gz (int16) | pitch roll yaw (int16) | fsr1 fsr2 fsr3 fsr4 (uint16)]`. En las capturas **la cintura también emite muestras** con este mismo formato —los FSR en cero— para grabar el crudo del tronco (ADR-048).
+**Formato de paquete de muestra (stream):** `[device_id | seq (uint32) | t_device (uint64, µs) | ax ay az (int16, lin_accel) | gx gy gz (int16) | pitch roll yaw (int16) | fsr1 fsr2 fsr3 fsr4 (uint16)]`. Los FSR van en **cuentas del ADC**, sin curva de fuerza (ADR-058). En las capturas **la cintura también emite muestras** con este mismo formato —los FSR en cero— para grabar el crudo del tronco (ADR-048).
 
 **Qué viaja (ADR-042).** El IMU va **post-AHRS**: aceleración lineal **sin gravedad**, giro calibrado y **orientación**. La orientación tiene que viajar porque, una vez removida la gravedad, **no se puede reconstruir** desde el dato guardado (integrar el giro solo deriva sin la referencia de vertical) — y el bloque F (#26-29) y SPEC-03 la necesitan para el cálculo off-device de la fase exploratoria. Cuesta 6 B/muestra.
 
 **`t_device` es `uint64` (CP-27).** En `uint32` de µs el contador da la vuelta a los **71,6 min**, y ADR-035 deja el equipo despierto ~10 h de corrido (~8 vueltas): eso desordena el emparejado entre pies y rompe la regresión de drift de ADR-004. Con 8 B el problema desaparece por 584.000 años, a costa de 4 B/muestra. El `seq` en `uint32` está bien: a 100 Hz tarda **497 días**.
 
-**Costo total:** 29 → **39 B/muestra** (+6 de orientación, +4 del `uint64`) ≈ **7,8 KB/s** entre las dos plantillas (contra ~5,8 antes). Mismo orden que los slots de FSR de ADR-041; BLE lo absorbe. **Cuatro slots fijos de FSR** — el máximo de diseño (**ADR-041**) — con los no poblados en cero; hoy sólo `fsr1` (punta) y `fsr2` (talón) llevan dato. El **set activo del catálogo** (ADR-021) declara cuáles son válidos, así que **el protocolo no cambia al sumar hardware**. Cuesta 4 bytes por muestra (400 B/s por pie sobre ~5 KB/s totales) y evita versionar el protocolo con plantillas ya selladas. El `seq` y `t_device` son la base de la sincronización (§5) y de la detección de pérdidas.
+**Costo total:** 29 → **39 B/muestra** (+6 de orientación, +4 del `uint64`) ≈ **7,8 KB/s** entre las dos plantillas (contra ~5,8 antes). Mismo orden que los slots de FSR de ADR-041; BLE lo absorbe. **Cuatro slots fijos de FSR** — el máximo de diseño (**ADR-041**) — con los no poblados en cero; hoy sólo `fsr1` (punta) y `fsr2` (talón) llevan dato. El **set activo del catálogo** (ADR-021) declara cuáles son válidos, así que **el protocolo no cambia al sumar hardware**. Cuesta 4 bytes por muestra (400 B/s por pie, sobre los ~7,8 KB/s de las dos plantillas) y evita versionar el protocolo con plantillas ya selladas. El `seq` y `t_device` son la base de la sincronización (§5) y de la detección de pérdidas.
 
 **Mensajes por zancada (ADR-046).** Además del stream, las plantillas mandan sus **eventos** (IC/MS/TO) y sus **vectores de features por pie** con el **`stride_seq`** de la zancada a la que pertenecen; la cintura manda el **vector bilateral** y los **scores** con el **`cycle_seq`** del ciclo. Esos números, asignados en el borde desde `arm()`, son la identidad con la que se guardan en la base: el host escribe con *upsert*, así que reenviar un lote después de un corte no duplica nada.
 
@@ -121,6 +121,7 @@ Principio: **dos canales por enlace**, uno optimizado para latencia y otro para 
 | Estado (batería, temperatura, uptime, pérdidas) | TCP | `estado` |
 | Comandos de SPEC-11 y sus respuestas | TCP | `control` |
 | Beacon de sincronización | UDP (broadcast) | — |
+| Registro de la sincronización: beacons recibidos y correcciones aplicadas (ADR-061) | TCP | `estado` |
 | Intercambio de hora (ADR-056) | — | `control` |
 | OTA (ADR-052) | TCP | `ota` |
 
@@ -134,6 +135,8 @@ La sincronización es crítica: la **simetría inter-miembro** exige relacionar 
 **Que quede claro (ADR-004):** el IC **no** sincroniza relojes ni es una "red de seguridad" ante el drift — de eso se encarga el **backbone** (corrección de drift). El IC es sólo el **marcador biomecánico de zancada**, y el emparejado izq↔der es una **consecuencia de tener el reloj sincronizado**. Un IC anómalo es **señal de anomalía** (se mide como feature); usarlo como marca temporal de zancada no entra en conflicto con medir su morfología.
 
 **Hora real (UTC) — no es sincronización (ADR-056).** El backbone deja un solo reloj dentro del equipo: todo `t_device` que llega al host está en la cuenta de la cintura. Pero esa cuenta no sabe la fecha. La traducción a UTC la hace el **host**, con una recta (desfase + deriva) que ajusta intercambiando la hora con la cintura cada ~10 s; la recta final queda en `sessions`, y el crudo y los eventos conservan `t_device` para poder rehacerla.
+
+**Registro de la sincronización (ADR-061).** Cada plantilla reporta cuándo recibió cada beacon (en su propia cuenta) y las correcciones que aplica, y el host lo guarda con el crudo. Así la sincronización se puede medir y rehacer después, aunque CP-28 esté diferida. Las tres placas apagan el ahorro de energía del WiFi, que viene prendido por defecto en el driver del CYW43 y demoraría los beacons.
 
 > El **detalle de implementación** de la sincronización (beacon en firmware, regresión de drift, formato del mensaje de referencia) vive en la **Vista 2** (firmware).
 
@@ -160,7 +163,7 @@ En una línea: **tiempo real y feedback = cintura (o host si el modelo no entra)
 | Componente | Mínima | Máxima | ¿Cambia? |
 |---|---|---|---|
 | Plantillas ↔ cintura | WiFi (AP), UDP+TCP | Ídem | **No** |
-| Sincronización | Backbone reloj (capa app, beacon por WiFi) + IC | Ídem | **No** |
+| Sincronización | Backbone de reloj (capa app, beacon por WiFi); el emparejado por IC usa ese reloj | Ídem | **No** |
 | Cintura ↔ host | **BLE** (GATT) | **BLE** (GATT) | **No** (sólo cambia el central) |
 | Host | Laptop (ingesta + worker) | Celular (ingesta + puente) | Sí (app) |
 | Worker de reentrenamiento | Laptop | **Nube** | Sí (ubicación) |

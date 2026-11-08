@@ -21,9 +21,9 @@ Reglas: una migración aplicada **no se edita** (se corrige con otra); la base r
 
 ## Diseño
 
-- **Relacional:** `patients`, `devices`, `sessions`, `patient_access`, `models`, `model_deployments`, `firmware_images`, `retrain_jobs`, `feedback_config`.
-- **Series (particionadas por mes de inicio de sesión — ADR-044):** `strides` (la zancada como entidad), `gait_events`, `feature_vectors`, `anomaly_scores`. Se identifican con los números que asigna el borde —`stride_seq` (plantilla) y `cycle_seq` (cintura)—, con FK reales e ingesta idempotente por *upsert* (ADR-046).
-- **Object storage (referenciado):** `raw_blobs` (crudo continuo en Parquet, una fila por sesión, equipo y tramo — ADR-055), `anomaly_raw_snippets` (FK a su score), artefactos de modelos (el sobre de ADR-053, `artifact_format = envelope_v1`) y firmware.
+- **Relacional:** `patients`, `devices`, `sessions`, `patient_access`, `models`, `model_deployments`, `session_models`, `firmware_images`, `retrain_jobs`, `feedback_config`. El alta de pacientes va por la función `public.create_patient()`, que crea el paciente y su acceso `owner` en un paso (ADR-059).
+- **Series (particionadas por mes de inicio de sesión — ADR-044):** `strides` (la zancada como entidad), `gait_events`, `feature_vectors`, `anomaly_scores` y `device_status` (el canal de estado — ADR-059). Se identifican con los números que asigna el borde —`stride_seq` (plantilla) y `cycle_seq` (cintura)—, con FK reales e ingesta idempotente por *upsert* (ADR-046).
+- **Object storage (referenciado):** `raw_blobs` (crudo continuo en Parquet, una fila por sesión, equipo, tipo —muestras o registro de la sincronización, ADR-061— y tramo — ADR-055), `anomaly_raw_snippets` (FK a su score), artefactos de modelos (el sobre de ADR-053, `artifact_format = envelope_v1`) y firmware.
 - **Hora (ADR-056):** las series guardan la hora en UTC; `sessions` guarda la recta con que el host la tradujo (`clock_*`) y `gait_events.t_device` conserva la cuenta original de la cintura.
 
 Diagrama ER en `docs/arquitectura/esquema_base_de_datos.mermaid`; definición conceptual en la Vista 4 (`docs/arquitectura/vistas/4_vista_backend_app.md`).

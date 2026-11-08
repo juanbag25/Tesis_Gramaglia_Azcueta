@@ -4,8 +4,8 @@ flowchart TB
 
     subgraph BORDE["PLANO DE BORDE - 3x Raspberry Pi Pico 2 W (C/C++)"]
         direction TB
-        PI["PLANTILLA IZQ<br/>MPU-6050 + 2 FSR (punta+talon) + motor PWM<br/>100 Hz (ADC+DMA sobremuestreo -> decimacion)<br/>features por-pie + eventos IC/TO<br/>timestamp + seq por muestra"]
-        PD["PLANTILLA DER<br/>MPU-6050 + 2 FSR (punta+talon) + motor PWM<br/>100 Hz (ADC+DMA sobremuestreo -> decimacion)<br/>features por-pie + eventos IC/TO<br/>timestamp + seq por muestra"]
+        PI["PLANTILLA IZQ<br/>MPU-6050 + 2 FSR (punta+talon) + motor PWM<br/>100 Hz (ADC+DMA sobremuestreo -> decimacion)<br/>features por-pie + eventos IC/TO/MS<br/>timestamp + seq por muestra"]
+        PD["PLANTILLA DER<br/>MPU-6050 + 2 FSR (punta+talon) + motor PWM<br/>100 Hz (ADC+DMA sobremuestreo -> decimacion)<br/>features por-pie + eventos IC/TO/MS<br/>timestamp + seq por muestra"]
         CI["UNIDAD CINTURA - HUB<br/>MPU-6050<br/>AP WiFi - maestro de sync (beacon+drift)<br/>fusion bilateral (simetria, double support)<br/>detector L/E - sensor de drift - uplink BLE"]
     end
 
@@ -23,10 +23,10 @@ flowchart TB
     end
 
     %% Flujos de sensado (plantillas -> cintura) por WiFi
-    PI -->|"WiFi UDP: features+eventos (edge) / crudo (captura)"| CI
-    PD -->|"WiFi UDP: features+eventos (edge) / crudo (captura)"| CI
-    PI -.->|"WiFi: TCP control"| CI
-    PD -.->|"WiFi: TCP control"| CI
+    PI -->|"WiFi UDP: crudo 100 Hz (capturas)"| CI
+    PD -->|"WiFi UDP: crudo 100 Hz (capturas)"| CI
+    PI -.->|"WiFi TCP: eventos + features por-pie (ADR-050) + control"| CI
+    PD -.->|"WiFi TCP: eventos + features por-pie (ADR-050) + control"| CI
 
     %% Sincronizacion
     CI -->|"beacon de sync (broadcast)"| PI

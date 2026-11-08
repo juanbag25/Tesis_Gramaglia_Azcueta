@@ -34,7 +34,7 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 
 | Clase | Inferencia | Reentrena | Granularidad | Ejemplos candidatos | ¿OTA? |
 |---|---|---|---|---|---|
-| **L — Local-Local** | Cintura (hub) | **Cintura** | Dato a dato (online) | Mahalanobis (EMA de μ + Σ), z-score/EWMA, probabilísticos simples | No (se auto-actualiza) |
+| **L — Local-Local** | Cintura (hub) | **Cintura** | Dato a dato (online) | Mahalanobis (EMA de μ + Σ), z-score/EWMA, probabilísticos simples | Sí, en el provisioning de cada sesión (baja la última versión de la DB); no lo produce el worker (ADR-043 rev) |
 | **E — Edge + Worker** | Cintura (hub) | **Worker** | Periódico / async | Autoencoder denso int8, **Isolation Forest** | Sí (recibe pesos) |
 | **H — Host** | **Host** (celular/laptop), tiempo real | **Worker** | Periódico / async | Modelos que no entran en la cintura pero sí en el host | Sí (al host) |
 | **W — Worker-only (offline)** | **Worker** (batch, **no** tiempo real) | **Worker** | Batch | Análisis/reportes, re-scoring histórico | — |
@@ -46,7 +46,7 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 - La clase **W** queda para lo **estrictamente offline** (análisis/reportes, re-scoring).
 - El anteproyecto **§6** mencionaba **SST-AD, SVR, Random Forest**: **descartados** (ADR-030, que cerró CP-11). Se adopta la lista del **§4.3** — Mahalanobis, Isolation Forest, AE denso, LSTM AE — más los candidatos declarables de ADR-029. *SST-AD no está definido en ninguna fuente del corpus; SVR/RF eran referencias bibliográficas, no elecciones.*
 
-*(Esquema de la tabla `models` → `src/db/schema.sql` (ADR-037); mapa de entidades → maestro §11; definición canónica → Vista 4.)*
+*(Esquema de la tabla `models` → `src/db/schema.sql`, el snapshot de las migraciones (ADR-045); mapa de entidades → maestro §11; definición canónica → Vista 4.)*
 
 ---
 
@@ -54,7 +54,7 @@ La arquitectura es **agnóstica al modelo**: cada modelo declara su **clase** en
 
 La distancia de Mahalanobis cumple **doble función**:
 
-1. **Detector de clase L:** z-score multivariado con matriz de covarianza inversa y **umbral calibrado por chi-cuadrado** (percentil ~99 de la calibración). Es el **caballo de batalla del feedback en tiempo real** (<100 µs) y **lo primero a implementar**. Se adapta continuamente (EMA de μ, Σ) en el micro, sin tocar el worker.
+1. **Detector de clase L:** z-score multivariado con matriz de covarianza inversa y **umbral** sobre la distribución de la calibración (percentil ~99; el método —χ² teórico, percentil empírico o la corrección de Hotelling— está en **CP-37**, ver ADR-060). Es el **caballo de batalla del feedback en tiempo real** (<100 µs) y **lo primero a implementar**. Se adapta continuamente (EMA de μ, Σ) en el micro, sin tocar el worker.
 2. **Sensor de drift:** cuando la distribución de la marcha se aleja del baseline, **dispara el reentrenamiento** de los modelos de clase E/H/W (en el worker). Los de clase L no necesitan disparo: se adaptan dato a dato.
 
 ---
@@ -69,9 +69,9 @@ El baseline es **por paciente** (`patient_id` no nulo en el registry): se define
 
 La calibración es, a la vez, el **entrenamiento inicial personalizado** y una **captura operativa** (ADR-005 rev c): el micro ya calcula sus features → *skew-free* por construcción.
 
-- **Protocolo:** ~**100 zancadas** de marcha normal/estable del paciente. Las plantillas calculan features por-pie; la cintura fusiona bilateral. Se suben **features del micro + crudo continuo**.
-- **Construcción del baseline:** ajuste inicial de **μ y Σ** (Mahalanobis) + baseline de los demás modelos; **umbral** = percentil (chi-cuadrado) de la calibración.
-- **Calibraciones físicas (por hardware / por paciente):** curva **fuerza-resistencia por-FSR**; **alineación del frame del IMU** (estática "dejar quieto" + re-zero de giro en stance por FSR + alineación anatómica pie-plano — SPEC-04).
+- **Protocolo:** ~**200 zancadas por pie** de marcha normal/estable del paciente, que pueden hacerse en tandas descartando giros y arranques (ADR-060; antes ~100: con pocas zancadas la covarianza de Mahalanobis sale inestable). Las plantillas calculan features por-pie; la cintura fusiona bilateral. Se suben **features del micro + crudo continuo**.
+- **Construcción del baseline:** el **worker** calcula el ajuste inicial de **μ y Σ** (Mahalanobis), el baseline de los demás modelos y los **umbrales**, y lo registra como **versión 1** (ADR-057). Un paciente nuevo no tiene modelo: las capturas arrancan sin él. Método del umbral: CP-37.
+- **Calibraciones físicas (por hardware / por paciente):** la curva fuerza–cuentas de cada FSR **no se mide por ahora** (ADR-058: los FSR se trabajan en cuentas); cómo se fijan el cero y los umbrales de cada FSR en cada sesión está en **CP-35**; **alineación del frame del IMU** (estática "dejar quieto" + re-zero de giro en stance por FSR + alineación anatómica pie-plano — SPEC-04).
 - **Recalibración:** disparada por **drift** (Mahalanobis) → reentrenamiento E/H/W en el worker.
 - **Adaptación conmutable:** `sessions.adaptation_enabled` decide si la sesión adapta μ/Σ o corre **congelada** en la versión vigente. Congelada no produce versión nueva; adaptada produce **exactamente una**. Es lo que habilita la comparación pareada con y sin adaptación, y deja la trayectoria del baseline del paciente como serie consultable [ADR-043 rev].
 
@@ -85,7 +85,7 @@ Nivel conceptual (dónde entrena, disparo, versionado). La **mecánica de despli
 
 - **Dónde entrena:** clase **L en el micro** (dato a dato, nunca toca el worker); clases **E/H/W en el worker** = laptop en la mínima / nube en la máxima (jala datos de Supabase, reentrena, publica el artefacto y notifica al host, que despliega por OTA). **Supabase no entrena** (es el sistema de registro; sus Edge Functions sólo disparan jobs).
 - **Disparo de reentrenamiento:** por **drift** (Mahalanobis), **schedule** (periódico) o **manual**; queda registrado en `retrain_jobs`.
-- **Versionado / respaldo / rollback:** los modelos **E/H/W** se respaldan en la DB (fila en `models` + artefacto en object storage) con versión, métricas y linaje (`parent_version`), y la versión anterior queda como **last-known-good** para rollback. Los de clase **L** no viajan por OTA: su estado adaptado (μ, Σ) vive en **RAM durante la sesión**, se sube en el **check-in** y se versiona igual en `models` — una versión nueva por sesión adaptada, con `parent_version` = la de arranque. **La DB es la fuente de verdad en los dos casos**; el flash del micro es una copia de trabajo que se reescribe desde la DB al abrir cada sesión [ADR-043 rev; Vista 4 §4.1].
+- **Versionado / respaldo / rollback:** los modelos **E/H/W** se respaldan en la DB (fila en `models` + artefacto en object storage) con versión, métricas y linaje (`parent_version`), y la versión anterior queda como **last-known-good** para rollback. Los de clase **L** no pasan por el worker: su estado adaptado (μ, Σ) vive en **RAM durante la sesión**, se sube en el **check-in** y se versiona igual en `models` — una versión nueva por sesión adaptada, con `parent_version` = la de arranque — y en el provisioning siguiente vuelve a bajar a la cintura por el protocolo de OTA, como cualquier modelo. **La DB es la fuente de verdad en los dos casos**; el flash del micro es una copia de trabajo que se reescribe desde la DB al abrir cada sesión [ADR-043 rev; Vista 4 §4.1].
 
 **Diagrama:** `../ciclo_de_vida_modelos.mermaid`.
 

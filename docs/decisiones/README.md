@@ -17,5 +17,5 @@ Al tomar o cambiar una decisión de arquitectura:
 
 1. Agregá un nuevo ADR (numeración correlativa) o marcá el anterior como `revisada`/`reemplazada`.
 2. Incluí: contexto, opciones con pros/cons, decisión, justificación y consecuencias.
-3. Reflejá el cambio en el `Resumen de decisiones` de `docs/arquitectura/Arquitectura_Sistema_Marcha.md`.
+3. Agregá o actualizá su fila en el **índice** al inicio de la bitácora. El maestro ya no mantiene un "Resumen de decisiones" (ADR-039): el índice es la única lista.
 4. Registrá el cambio en `memoria/changelog.md`.

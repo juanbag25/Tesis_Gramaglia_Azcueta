@@ -1,6 +1,6 @@
 # Esquema de alimentación — guía de cableado
 
-> **Qué es esto.** Guía de construcción del subsistema de alimentación de cada nodo (plantilla y cintura): cómo debe quedar cableada la batería, el cargador, el Pico 2 W y los sensores. Es una **guía de banco**, no un ADR: las decisiones de fondo están en **CP-19** (encendido/apagado, *en análisis*) y **CP-09** (presupuesto de energía).
+> **Qué es esto.** Guía de construcción del subsistema de alimentación de cada nodo (plantilla y cintura): cómo debe quedar cableada la batería, el cargador, el Pico 2 W y los sensores. Es una **guía de banco**, no un ADR: las decisiones de fondo están en **ADR-035 rev** (encendido/apagado; cerró CP-19) y **CP-09** (presupuesto de energía).
 >
 > **Estado:** objetivo a implementar. Reemplaza el cableado inicial (celda → módulo → boost 5 V → **VBUS**), que se descartó por tres motivos documentados abajo.
 >
@@ -103,7 +103,7 @@ flowchart TB
 |---|---|---|---|
 | MPU-6050 **SDA** | GP20 | 26 | I²C0 |
 | MPU-6050 **SCL** | GP21 | 27 | I²C0 |
-| MPU-6050 **INT** | GPIO libre | — | **A rutear en la próxima rev del PCB** (CP-01): habilita DATA_READY (ADR-026) y *wake-on-motion* (CP-19) |
+| MPU-6050 **INT** | GPIO libre | — | **A rutear en la próxima rev del PCB** (CP-01): habilita DATA_READY (ADR-026) y deja abierto el *wake-on-motion* de la máxima (ADR-035) |
 | Nodo divisor FSR **punta** | GP26 / ADC0 | 31 | 0–3,3 V |
 | Nodo divisor FSR **talón** | GP27 / ADC1 | 32 | 0–3,3 V |
 | GP18 | Base del NPN (con resistencia de base) | 24 | PWM del motor |
