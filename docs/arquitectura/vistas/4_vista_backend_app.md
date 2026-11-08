@@ -54,7 +54,7 @@ Una fila = **un vector de features por zancada** (con `time`, `session_id`, `pat
 
 ### 1.5 Series particionadas [ADR-044, resuelve CP-26]
 
-Las cuatro tablas de series —`strides`, `gait_events`, `feature_vectors` y `anomaly_scores`— usan **particionado nativo** de Postgres 17: una partición por **mes de inicio de la sesión**. Cada fila lleva `session_started_at`, una copia de `sessions.started_at`, que es la clave de partición.
+Las cinco tablas de series —`strides`, `gait_events`, `feature_vectors`, `anomaly_scores` y `device_status` (ADR-059)— usan **particionado nativo** de Postgres 17: una partición por **mes de inicio de la sesión**. Cada fila lleva `session_started_at`, una copia de `sessions.started_at`, que es la clave de partición.
 
 - **Por qué el inicio de la sesión y no la hora del dato:** la sesión queda entera en una partición; reenviar datos no duplica, porque la clave no depende de la hora corregida por la sincronización; y las FK entre series usan el mismo valor en las dos puntas (§1.6).
 - **`pg_partman`** crea las particiones por adelantado (cuatro meses) más una *default*; **`pg_cron`** corre el mantenimiento todos los días y, después, la rutina que cierra las particiones nuevas (§2).

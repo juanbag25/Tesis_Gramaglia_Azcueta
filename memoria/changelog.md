@@ -2,6 +2,10 @@
 
 > Registro cronológico de cambios en el proyecto (arquitectura, docs, código, decisiones). Entrada más reciente arriba. Formato: fecha — qué cambió — por qué / referencia.
 
+## 2026-11-08 — Vista 4 §1.5: las tablas de series son cinco
+
+- La Vista 4 §1.5 decía "las cuatro tablas de series" y no nombraba `device_status`, que ADR-059 sumó como serie particionada. Ahora dice cinco, como `src/db/schema.sql` y la §1.1 de la misma vista. Archivo: `docs/arquitectura/vistas/4_vista_backend_app.md`.
+
 ## 2026-11-08 — Cierre de la revisión: ADR-062 a 064, CP-31/36/38 resueltas y la validación a trabajo futuro
 
 Dos tandas del mismo día. La primera, en la sesión de Juan (commit `e17b44f`), se cortó por el límite de uso antes de registrar el cambio y de actualizar cuestiones, cronograma y contadores; la segunda, en la de Tobías, la completó.
