@@ -1,6 +1,6 @@
 # Tesis — Plantillas inteligentes bilaterales para detección de anomalías de marcha post-ACV
 
-Sistema wearable que detecta desviaciones **personalizadas** en la marcha de pacientes post-ACV mediante **dos plantillas instrumentadas** (FSR + IMU) y una **unidad de cintura**, con **feedback vibrotáctil en tiempo real** e **inferencia en el borde**. Proyecto Final de Carrera de Bioingeniería (ITBA, 16.30). **Entrega: 1 de marzo de 2027.**
+Sistema wearable que detecta desviaciones **personalizadas** en la marcha de pacientes post-ACV mediante **dos plantillas instrumentadas** (FSR + IMU) y una **unidad de cintura**, con **feedback vibrotáctil en tiempo real** e **inferencia en el borde**. Proyecto Final de Carrera de Bioingeniería (ITBA, 16.30).
 
 ## Estado
 
@@ -11,7 +11,6 @@ Sistema wearable que detecta desviaciones **personalizadas** en la marcha de pac
 - ✅ **Esquema de la base diseñado** — Postgres 17 con **series particionadas** + `pg_partman` (ADR-044), **migraciones versionadas** con la CLI de Supabase y CI (ADR-045), **la zancada como entidad** con FK reales e ingesta idempotente (ADR-046) y **grants explícitos + RLS en todas las tablas** (ADR-047). El diseño está en `src/db/schema.sql`; se crea como migraciones al implementar la base.
 - ✅ **Contratos de interfaz definidos** — mensajes en Protocol Buffers, enlace BLE, protocolo de OTA, formato de los artefactos, catálogo en TOML, crudo en Parquet y traducción de la hora a UTC (ADR-050 a 056; tabla en la Vista 1 §4).
 - 🔄 **Hardware en banco** — 2 FSR conectados (punta + talón); la próxima revisión del PCB suma medial y lateral con mux (ADR-041) y el cargador de corriente limitada. Checklist en `docs/arquitectura/esquema_alimentacion.md` §7.
-- 🔄 **Cronograma y roadmap hasta la entrega (1/3/2027)** — propuesta en `docs/cronograma.md` (2026-11-08): qué está hecho, qué falta, qué entra y el Gantt. Reemplaza el calendario del anteproyecto (abr–nov 2026).
 - ⏳ **Firmware y worker** — aún no iniciados (`src/firmware/`, `src/host/`, `src/worker/`).
 
 **Cuestiones abiertas (13):** ver `docs/cuestiones_pendientes.md`, que es la **única fuente de verdad** — este archivo no duplica la lista. Ninguna bloquea el diseño. **CP-21** (`pico-tflmicro` en RP2350) es la única que puede voltear una decisión ya tomada. Y hay una fecha límite: la base tiene que **existir como migraciones antes de la primera captura** (ADR-045).

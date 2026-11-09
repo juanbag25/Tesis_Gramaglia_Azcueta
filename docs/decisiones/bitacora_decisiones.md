@@ -2018,7 +2018,7 @@ Dato relevado el 2026-10-17: el bootrom del RP2350 maneja **tablas de particione
 2. El primer modelo y los umbrales T1–T3 de `feedback_config` los calcula el worker con las features de la sesión de calibración y se registran como **versión 1**, con `models.source_session_id` = esa sesión (ADR-059). Si el modelo se va a desplegar en la cintura, esas features tienen que ser las del micro (captura operativa, ADR-018); para los experimentos offline alcanzan las de Python.
 3. Desde la versión 1 rige el ciclo de ADR-043 rev sin cambios.
 
-**Consecuencias.** Cambian SPEC-11 (regla 2 y `provision`), la Vista 4 §4.1 (fases 3 y 6) y `pipeline_sesion.mermaid`. Cierra el hueco 1 de la revisión del 2026-10-17 (`docs/cronograma.md` §3).
+**Consecuencias.** Cambian SPEC-11 (regla 2 y `provision`), la Vista 4 §4.1 (fases 3 y 6) y `pipeline_sesion.mermaid`. Cierra el hueco 1 de la revisión del 2026-10-17.
 
 **Apéndice conceptual (en llano).** El control de "modelo = paciente" existe para que nunca se compare la marcha de una persona contra la marcha normal aprendida de otra. Esa comparación sólo ocurre cuando el equipo puntúa en vivo. Mientras graba —que es lo que hace en las primeras sesiones de un paciente— no compara nada, así que no necesita modelo. El primer modelo se arma después, en la laptop, con las zancadas de la calibración.
 
@@ -2033,7 +2033,7 @@ Dato relevado el 2026-10-17: el bootrom del RP2350 maneja **tablas de particione
 
 **Opciones evaluadas.**
 - **A — Cuentas del ADC, sin curva (elegida).** *Pros:* cero trabajo de banco; el crudo queda tal como lo midió el micro, así que si un día se miden las curvas, la fuerza se puede recalcular. *Contras:* las features de fuerza quedan en una unidad relativa (ver abajo).
-- **B — Medir ahora la curva de cada sensor.** *Pros:* features en newtons. *Contras:* un procedimiento de banco por sensor (pesos, soporte, repeticiones) que no entra en el cronograma.
+- **B — Medir ahora la curva de cada sensor.** *Pros:* features en newtons. *Contras:* un procedimiento de banco por sensor (pesos, soporte, repeticiones) que por ahora no se va a hacer (Juan).
 - **C — Fuerza estimada con la curva típica del fabricante.** *Pros:* sin banco. *Contras:* la dispersión entre piezas es grande: daría newtons con un error desconocido, peor que admitir que son cuentas.
 
 **Decisión.**
@@ -2052,7 +2052,7 @@ Dato relevado el 2026-10-17: el bootrom del RP2350 maneja **tablas de particione
 
 **Consecuencias.** Cambian SPEC-01 (entradas y parámetros), la Vista 1 §4 (qué llevan los casilleros), la Vista 3 (§5 y el bloque C de la Parte A), `calibracion_baseline.mermaid` y `pinout_pico2.md`; notas en ADR-042 y ADR-055. Cierra el hueco 3 de la revisión del 2026-10-17. Si más adelante se miden las curvas, un ADR nuevo define cómo se aplican, sin tocar lo ya grabado.
 
-**Trabajo futuro (Juan, 2026-11-08).** En algún momento se debería medir la curva fuerza–cuentas de cada sensor y pasar las features de fuerza a newtons; por ahora no. Como el crudo queda en cuentas, la conversión se podrá aplicar después a las sesiones ya grabadas. Figura en la lista de trabajo futuro del cronograma (`docs/cronograma.md` §4).
+**Trabajo futuro (Juan, 2026-11-08).** En algún momento se debería medir la curva fuerza–cuentas de cada sensor y pasar las features de fuerza a newtons; por ahora no. Como el crudo queda en cuentas, la conversión se podrá aplicar después a las sesiones ya grabadas.
 
 **Apéndice conceptual (en llano).** El micro no mide newtons: mide una tensión y la convierte en un número de 0 a 4095, las "cuentas". Para saber a cuántos newtons corresponde cada número habría que cargar cada sensor con pesos conocidos y armar su curva. Sin esa curva, los números siguen sirviendo para lo que hace el sistema —comparar la marcha del paciente con su propia marcha normal, medida con los mismos sensores—, pero no para decir "pisó con 600 N" ni para comparar dos sensores distintos como si fueran iguales. Lo que depende sólo de *cuándo* pasa algo —cuándo apoya, cuándo despega, cuándo llega al pico— no cambia.
 
@@ -2161,7 +2161,7 @@ Dato relevado el 2026-10-17: el bootrom del RP2350 maneja **tablas de particione
    La interfaz muestra la instrucción, espera que la persona esté quieta y repite la pose si se movió.
 2. **Umbrales por pie, sobre `F_total` en cuentas:** `F_on = cero + 0,15 × (carga − cero)` y `F_off = cero + 0,10 × (carga − cero)`. Juan subió los valores propuestos (10 % y 5 %) en 5 puntos cada uno; se ajustan en el piloto. Ejemplo: si el talón marca 200 sin carga y 2.200 parado, el pie toca al pasar de 500 y despega al bajar de 400.
 3. **Se guardan con la sesión** (`sessions.fsr_calibration`): el cero y la carga de cada FSR y los umbrales calculados, para que el análisis offline use exactamente los mismos valores y la sesión se pueda reprocesar.
-4. **Quién calcula:** la interfaz, con el promedio de cada FSR en cada pose que devuelve el micro. En la parte central del cronograma los pasos se detectan en Python, que lee los umbrales de la sesión; si el micro detecta los eventos (captura operativa o edge), la interfaz se los manda antes de armar la sesión.
+4. **Quién los calcula y quién los usa:** la interfaz los calcula con el promedio de cada FSR en cada pose que devuelve el micro, y se los manda a las plantillas antes de armar la sesión, **en todas las sesiones**: la plantilla detecta los eventos y numera las zancadas en toda captura (ADR-015, ADR-046; Vista 1 §6). El análisis offline usa los mismos valores, leídos de la sesión. *(Corregido el 2026-11-08: la primera redacción decía que en la captura exploratoria los pasos se detectaban en Python. Venía de un cronograma que después se descartó y contradecía ADR-015 y ADR-046.)*
 5. **Queda abierta (CP-35)** la normalización de cada FSR por su carga de pie para comparar sensores distintos.
 
 **Consecuencias.** Cierra **CP-31** y la parte de umbrales de **CP-35**. Cambian SPEC-01 (parámetros), SPEC-04 (calibración), SPEC-11 (`calibrate()` y un comando para los umbrales), la Vista 4 §4.1 (fase 5), la Vista 3 §5, `pipeline_sesion.mermaid`, `calibracion_baseline.mermaid` y `src/db/schema.sql` (`sessions.fsr_calibration`).

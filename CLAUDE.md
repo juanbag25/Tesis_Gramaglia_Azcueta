@@ -6,14 +6,14 @@
 
 ## Qué es este proyecto (en una línea)
 
-Sistema de **plantillas inteligentes bilaterales** para **detección personalizada de anomalías de marcha en pacientes post-ACV**, con **feedback vibrotáctil en tiempo real** e **inferencia en el borde (edge)**. Proyecto Final de Carrera de Bioingeniería (ITBA, 16.30), al que el repo llama "la tesis". **Entrega: 1 de marzo de 2027** (`docs/cronograma.md`).
+Sistema de **plantillas inteligentes bilaterales** para **detección personalizada de anomalías de marcha en pacientes post-ACV**, con **feedback vibrotáctil en tiempo real** e **inferencia en el borde (edge)**. Proyecto Final de Carrera de Bioingeniería (ITBA, 16.30), al que el repo llama "la tesis".
 
-**Estado actual:** arquitectura **cerrada** en 4 vistas consolidadas; **diseño detallado terminado**. Decisiones en **ADR-000 a 064**; specs de firmware **SPEC-01 a SPEC-11**. El backlog de investigación **#1–#10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) requieren firmware y dataset. El **esquema de la base está diseñado** (`src/db/schema.sql`: Postgres 17 con series particionadas, zancada como entidad, grants explícitos — ADR-044 a 047) y se crea como **migraciones** al implementar la base (ADR-045). Los **contratos de interfaz** entre firmware, host, worker y base también están definidos (ADR-050 a 056). **Firmware, worker y base todavía no existen.** Próximo paso: ejecutar el **cronograma** (`docs/cronograma.md`, confirmado por los dos el 2026-11-08): cerrar las decisiones de diseño que quedan, presentar el protocolo al comité de ética e iniciar `src/`.
+**Estado actual:** arquitectura **cerrada** en 4 vistas consolidadas; **diseño detallado terminado**. Decisiones en **ADR-000 a 064**; specs de firmware **SPEC-01 a SPEC-11**. El backlog de investigación **#1–#10 está resuelto**; **#11** (footprint/latencia) y **#12** (selección de features) requieren firmware y dataset. El **esquema de la base está diseñado** (`src/db/schema.sql`: Postgres 17 con series particionadas, zancada como entidad, grants explícitos — ADR-044 a 047) y se crea como **migraciones** al implementar la base (ADR-045). Los **contratos de interfaz** entre firmware, host, worker y base también están definidos (ADR-050 a 056). **Firmware, worker y base todavía no existen.** Próximo paso: iniciar `src/`; en paralelo, el protocolo de captura y el trámite con el comité de ética (CP-33, CP-18).
 
 ## Orden de lectura recomendado (onboarding)
 
 1. `docs/Anteproyecto_Tesis.pdf` — el anteproyecto oficial (problema, objetivos mínima/máxima, metodología). Define la tesis.
-2. `docs/objetivos.md` — objetivos consolidados y filosofía. `docs/cronograma.md` — calendario hasta la entrega, qué está hecho, qué falta y qué entra.
+2. `docs/objetivos.md` — objetivos consolidados y filosofía.
 3. `docs/arquitectura/Arquitectura_Sistema_Marcha.md` — **índice + overview** del sistema. Da la foto completa en una lectura y enlaza las **4 vistas** en `docs/arquitectura/vistas/` (1 sistema · 2 firmware · 3 datos-ml · 4 backend), donde vive el detalle.
 4. `docs/decisiones/bitacora_decisiones.md` — por qué cada decisión, con opciones y pros/cons (ADRs). **Tiene índice al inicio.**
 5. `docs/investigacion/resumen_investigacion.md` + `features_anomaly_detection_stroke.md` + `docs/marco_teorico/marco_teorico_documento_de_trabajo.md` — la evidencia que fundamenta el diseño.
@@ -62,7 +62,6 @@ tesis/
 ├── README.md                  # descripción humana + setup
 ├── docs/
 │   ├── objetivos.md
-│   ├── cronograma.md          # calendario y alcance hasta la entrega (1/3/2027)
 │   ├── cuestiones_pendientes.md  # registro vivo de cuestiones abiertas (única fuente de verdad)
 │   ├── Anteproyecto_Tesis.pdf    # anteproyecto oficial (define la tesis)
 │   ├── descripcion_proyecto.md   # HISTÓRICO, previo a la arquitectura: no se actualiza (ante discrepancia, manda la arquitectura)

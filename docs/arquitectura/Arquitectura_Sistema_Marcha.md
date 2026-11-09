@@ -32,7 +32,7 @@ El sistema captura la marcha de un paciente mediante **dos plantillas instrument
 
 La arquitectura se define en **dos horizontes**: un **objetivo de mínima** (entorno controlado, con una laptop cerca, orientado a capturar dataset y entrenar/evaluar algoritmos) y un **objetivo de máxima** (uso diario continuo, con un celular reemplazando a la laptop y un backend de reentrenamiento en la nube). Todo lo que se construye para la mínima está diseñado para **escalar sin reescrituras estructurales** hacia la máxima; los puntos donde la mínima y la máxima difieren están explícitamente aislados detrás de interfaces.
 
-Este documento fija las decisiones de arquitectura, su justificación, y el detalle de implementación (topología, protocolos, sincronización, pipeline de datos, modelos, ciclo de vida, base de datos y seguridad). El **roadmap de implementación** y el calendario hasta la entrega están en un documento aparte: `../cronograma.md`.
+Este documento fija las decisiones de arquitectura, su justificación, y el detalle de implementación (topología, protocolos, sincronización, pipeline de datos, modelos, ciclo de vida, base de datos y seguridad).
 
 ---
 
@@ -303,4 +303,4 @@ Se llevan en un **registro vivo aparte**, que es la única fuente de verdad: **`
 
 ---
 
-*Próximo paso: el roadmap de implementación por fases y el calendario hasta la entrega (1/3/2027) están en `../cronograma.md`.*
+*Próximo paso: iniciar `src/`.*

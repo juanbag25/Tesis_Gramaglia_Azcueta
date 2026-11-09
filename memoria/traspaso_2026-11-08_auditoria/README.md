@@ -1,5 +1,7 @@
 # Traspaso: auditoría previa a programar (2026-11-08)
 
+> **Obsoleto (2026-11-08, Juan). No seguir las instrucciones de abajo.** El diagnóstico partía del cronograma, que Juan descartó junto con todo lo que se había decidido por él. Los cuatro puntos quedaron así: (1) la plantilla detecta los eventos y numera las zancadas en toda captura, como decidieron ADR-015 y ADR-046; (2) descartado; (3) ya estaba decidido en ADR-042; (4) ADR-028 tal cual, con el gesto. La carpeta queda sólo como registro.
+
 > **Para qué existe esta carpeta.** Tobías tuvo en su computadora una conversación con un agente (Claude) en la que cinco subagentes auditaron el repo para responder *"¿queda alguna cuestión pendiente o inconsistencia que impida empezar a programar?"*. Esta carpeta guarda esa conversación y los informes, para que **otro agente, en otra computadora, retome exactamente donde quedó**. Es temporal: cuando los hallazgos se registren en `docs/cuestiones_pendientes.md` (o se decidan en ADRs), la carpeta se puede borrar.
 
 ## Qué tenés que hacer (agente que retoma)

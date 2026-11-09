@@ -44,7 +44,7 @@ Desarrollar un **sistema de plantillas inteligentes bilaterales** para la **dete
 
 ## 7. Validación (referencia)
 
-- **ICC** (>0,90 = concordancia excelente) contra gold standard (MoCap/GaitRite). *(2026-11-08: la validación contra un gold standard pasó a trabajo futuro, porque no hay acceso al MoCap — `docs/cronograma.md` §4, CP-33.)*
+- **ICC** (>0,90 = concordancia excelente) contra gold standard (MoCap/GaitRite). *(2026-11-08, Juan y Tobías: por ahora no se hace la validación contra un gold standard, porque no hay acceso al MoCap del ITBA — CP-33.)*
 - **AUC-ROC** como métrica probabilística independiente de umbral.
 - Sesión de **calibración inicial** por paciente para definir la "normalidad" personalizada.
 

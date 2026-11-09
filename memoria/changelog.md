@@ -2,6 +2,19 @@
 
 > Registro cronológico de cambios en el proyecto (arquitectura, docs, código, decisiones). Entrada más reciente arriba. Formato: fecha — qué cambió — por qué / referencia.
 
+## 2026-11-08 — Se descarta el cronograma
+
+- **Decisión de Juan:** `docs/cronograma.md` se borra y no se reemplaza. La idea eran fechas aproximadas, pero el cronograma terminó cambiando cómo funciona el sistema. Desde ahora no hay cronograma ni fechas: las cosas salen cuando tengan que salir. Un plan de fechas no puede cambiar decisiones de código, de funcionamiento ni de producto; eso se decide sólo con un ADR.
+- **Cuándo entró:** en `e1f40f5`, la primera tanda del 8/11 (sesión de Juan). Lo siguieron `e17b44f`, donde ADR-062 y SPEC-11 lo usaron para pasar la detección de pasos a Python, y en la compu de Tobías `9d01824`, `9915e02` (lo confirmó) y `69f281d` (el traspaso de la auditoría, armado sobre el recorte de alcance).
+- **Qué se deshace:**
+  - **La detección de eventos y la numeración de zancadas vuelven a la plantilla en toda captura**, como decidieron ADR-015 (16/7), ADR-038 (18/8) y ADR-046 (17/10) y como dice la Vista 1 §6. La interfaz manda los umbrales de ADR-062 a las plantillas en todas las sesiones: ADR-062 punto 4 (con nota de corrección), SPEC-01, SPEC-11 (`set_step_thresholds`) y la fase 5 de la Vista 4.
+  - **El recorte de alcance:** el OTA, la adaptación online, el modo edge con snippets, las features del micro con sus tests de paridad y el emparejamiento con gesto y varios hosts vuelven a ser parte del diseño, como dicen ADR-012/052, ADR-043, ADR-005 rev c, ADR-018/021 y ADR-028. Desaparecen el "demostrador del borde opcional", los pacientes opcionales, las fases, los hitos, las fechas y la de entrega.
+  - **Las referencias al cronograma** en `CLAUDE.md`, `README.md`, `docs/objetivos.md`, el maestro (sin "próximo paso: roadmap"), CP-33, CP-37, CP-38, ADR-057, ADR-058 y `memoria/memory.md`.
+- **Qué queda, porque lo decidieron Juan y Tobías aparte del cronograma:** la validación contra una referencia no se hace por ahora, porque no hay acceso al MoCap (CP-33, `objetivos.md`), y la curva fuerza–cuentas de los FSR tampoco (ADR-058).
+- **Emparejamiento BLE:** Juan confirmó ADR-028 tal cual, con el gesto.
+- **Auditoría del traspaso:** de sus cuatro puntos, el 1, el 3 y el 4 ya estaban decididos (ADR-015/046, ADR-042 y ADR-028) y el 2 se descartó. `memoria/traspaso_2026-11-08_auditoria/README.md` queda marcado como obsoleto; la carpeta sigue como registro.
+- **Archivos:** `docs/cronograma.md` (borrado) · `CLAUDE.md` · `README.md` · `docs/objetivos.md` · `docs/arquitectura/Arquitectura_Sistema_Marcha.md` · `docs/cuestiones_pendientes.md` · `docs/decisiones/bitacora_decisiones.md` · `docs/arquitectura/vistas/2_specs_algoritmos_firmware.md` · `docs/arquitectura/vistas/4_vista_backend_app.md` · `memoria/memory.md` · `memoria/traspaso_2026-11-08_auditoria/README.md`.
+
 ## 2026-11-08 — Cronograma confirmado
 
 - `docs/cronograma.md` deja de ser propuesta: lo confirmaron Juan y Tobías (el OK de Juan lo transmitió Tobías), con la validación contra una referencia ya pasada a trabajo futuro. Cambian el encabezado y la §4 del cronograma, el *Estado actual* de `CLAUDE.md` y `memoria/memory.md`.
